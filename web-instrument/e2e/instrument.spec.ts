@@ -1,10 +1,44 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
-test.describe("ESTEPS Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
+const runtimeFailures = new WeakMap<Page, string[]>();
+test.beforeEach(({ page }) => {
+  const failures: string[] = [];
+  runtimeFailures.set(page, failures);
+  page.on("pageerror", (error) => failures.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400 && !response.url().endsWith("/favicon.ico")) {
+      failures.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  page.on("requestfailed", (request) => {
+    if (!request.failure()?.errorText.includes("ERR_ABORTED")) {
+      failures.push(`${request.failure()?.errorText}: ${request.url()}`);
+    }
+  });
+});
+test.afterEach(({ page }) => {
+  expect(runtimeFailures.get(page), "No browser errors or missing runtime assets").toEqual([]);
+});
+
+async function openInstrument(page: Page) {
+  await page.goto("./");
+  await expect.poll(async () => {
+    try {
+      return await page.evaluate(() => window.crossOriginIsolated &&
+        Boolean((window as any).estepsTerminal?.status().ready));
+    } catch { return false; } // A first-visit service worker may reload the page.
+  }, { timeout: 30_000 }).toBe(true);
+  if (page.url().includes("/cranklink/")) {
+    await expect.poll(() => page.evaluate(() =>
+      navigator.serviceWorker.controller?.scriptURL || "")).toContain("/cranklink/coi-serviceworker.js");
+  }
+}
+
+test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
   test("zero-click connect, inline staging, atomic batch commit, and snapshot rollback", async ({
     page,
   }) => {
-    await page.goto("/");
+    await openInstrument(page);
 
     // Verify clean initial disconnected state
     await expect(page.getByTestId("header-status-badge")).toContainText("DISCONNECTED");
@@ -17,6 +51,13 @@ test.describe("ESTEPS Drive Unit Field Instrument (WASM + Wire Simulator)", () =
     await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.2.0.0");
+
+    // Reload under the existing service worker and reconnect to persisted storage.
+    await page.reload();
+    await openInstrument(page);
+    await page.getByTestId("btn-more-menu").click();
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
 
     // 2. Verify Bike Hardware & Geometry parameters are loaded with live values
     const tireRow = page.getByTestId("param-row-tire-circumference");
@@ -59,7 +100,7 @@ test.describe("ESTEPS Drive Unit Field Instrument (WASM + Wire Simulator)", () =
   });
 
   test("modern DU-EP600 / DU-EP801 session authentication and preset macros", async ({ page }) => {
-    await page.goto("/");
+    await openInstrument(page);
 
     // Select DU-EP801 flagship simulator (requires --ble-unit-auth and serial binding)
     await page.getByTestId("btn-more-menu").click();
@@ -81,7 +122,7 @@ test.describe("ESTEPS Drive Unit Field Instrument (WASM + Wire Simulator)", () =
   });
 
   test("synchronized Dual-MCU firmware workflow (DCAS + RX pair by default)", async ({ page }) => {
-    await page.goto("/");
+    await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
@@ -103,7 +144,7 @@ test.describe("ESTEPS Drive Unit Field Instrument (WASM + Wire Simulator)", () =
   });
 
   test("WebMCP external agent authorization flow", async ({ page }) => {
-    await page.goto("/");
+    await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");

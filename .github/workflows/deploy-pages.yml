@@ -1,19 +1,40 @@
-name: Validate Web Build (publishing disabled)
+name: Validate & Deploy Web Instrument
 
-# Manual diagnostics only. Publishing is intentionally disabled until the built
-# worker/WASM assets and cross-origin isolation work on the deployment host and
-# a browser smoke test proves the WASM handshake and simulator can initialize.
-# Do not restore automatic Pages deployment just because the Vite build passes.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'web-instrument/**'
+      - '.github/workflows/deploy-pages.yml'
+      - '.github/scripts/check-web-assets.py'
+      - '.github/scripts/serve-web-build.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'web-instrument/**'
+      - '.github/workflows/deploy-pages.yml'
+      - '.github/scripts/check-web-assets.py'
+      - '.github/scripts/serve-web-build.py'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
+    name: Build and test production web artifact
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,31 +42,61 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90.0
         with:
           targets: wasm32-unknown-unknown
-
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --locked --version 0.2.129
-
-      - name: Build WebAssembly core
+      - name: Build fresh WebAssembly runtime
         run: |
-          cargo build --release --locked --target wasm32-unknown-unknown --lib
+          RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=. --remap-path-prefix=$HOME=/build-home" \
+            cargo build --release --locked --target wasm32-unknown-unknown --lib
+          # wasm-bindgen must never inherit a local package's documentation or binary.
+          rm -rf web-instrument/pkg
+          mkdir web-instrument/pkg
           wasm-bindgen target/wasm32-unknown-unknown/release/cranklink.wasm \
             --out-dir web-instrument/pkg --target web
-
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web-instrument/package-lock.json
-
       - name: Test and build web instrument
         working-directory: web-instrument
         run: |
           npm ci
           npm test
           npm run build
-
-      - name: Verify runtime assets were packaged
+      - name: Verify production asset contents
         run: python3 .github/scripts/check-web-assets.py web-instrument/dist
+      - name: Install Chromium for production smoke tests
+        working-directory: web-instrument
+        run: npx playwright install --with-deps chromium
+      - name: Verify Pages subpath, service-worker isolation and WASM settings workflow
+        working-directory: web-instrument
+        # Uses the exact dist behind a headerless /cranklink/ static server.
+        # A development server with COOP/COEP headers would conceal hosting bugs.
+        run: npm run test:production
+      - name: Upload verified Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-instrument/dist
 
-      # There is deliberately no deploy job, Pages artifact, Pages write access,
-      # or OIDC token. Asset validation alone does not authorize publication.
+  deploy:
+    name: Deploy verified artifact
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Verify existing Pages configuration
+        uses: actions/configure-pages@v6
+        with:
+          enablement: false
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

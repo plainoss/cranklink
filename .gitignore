@@ -10,3 +10,8 @@
 web-instrument/dist/
 web-instrument/node_modules/
 web-instrument/test-results/
+.playwright-cli/
+
+/web-instrument/pkg/
+
+/web-instrument/playwright-report/

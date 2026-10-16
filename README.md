@@ -94,11 +94,17 @@ BLE flashing requires `--ble-firmware`, and BLE recovery is unavailable.
 
 ## Browser instrument
 
-The separate [web instrument](web-instrument/) uses the Rust WASM core for
-USB/serial/BLE operations. Hosted deployment is paused pending runtime asset and
-cross-origin isolation validation. Local development requires the WASM package,
-Node.js, and an isolated browser context; see the build-validation workflow for
-the current build commands. Browser/device compatibility is platform-dependent.
+The [web instrument](https://plainoss.github.io/cranklink/) runs the same Rust
+core as the CLI through WASM. It provides motor discovery, firmware inspection,
+settings reads/writes with backups and restore, and a terminal for ordered batch
+plans. USB/serial firmware operations retain the CLI's recovery and identity
+checks; firmware files are supplied separately.
+
+Use desktop Chrome or Edge where the required WebUSB, Web Serial, or Web
+Bluetooth API is available. Hardware access depends on the browser and platform;
+mobile support is not universal. BLE settings and opt-in BLE firmware remain
+experimental; BLE recovery is unavailable. See [browser setup and local build](web-instrument/README.md),
+[settings and batches](docs/settings-protocol.md), and [BLE limits](docs/bluetooth.md).
 
 ## License
 

@@ -1,7 +1,7 @@
 //! The browser runs the same synchronous CLI in a dedicated worker. Host RPC
 //! bridges WebUSB and durable browser files; no firmware logic lives in JS.
 use wasm_bindgen::prelude::*;
-#[wasm_bindgen(raw_module = "/host.js")]
+#[wasm_bindgen(raw_module = "../host.js")]
 extern "C" {
     #[wasm_bindgen(catch)]
     pub fn host_call(op: &str, payload: &[u8], timeout_ms: u32) -> Result<Vec<u8>, JsValue>;
