@@ -1,0 +1,51 @@
+name: Validate Web Build (publishing disabled)
+
+# Manual diagnostics only. Publishing is intentionally disabled until the built
+# worker/WASM assets and cross-origin isolation work on the deployment host and
+# a browser smoke test proves the WASM handshake and simulator can initialize.
+# Do not restore automatic Pages deployment just because the Vite build passes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --locked --version 0.2.129
+
+      - name: Build WebAssembly core
+        run: |
+          cargo build --release --locked --target wasm32-unknown-unknown --lib
+          wasm-bindgen target/wasm32-unknown-unknown/release/cranklink.wasm \
+            --out-dir web-instrument/pkg --target web
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-instrument/package-lock.json
+
+      - name: Test and build web instrument
+        working-directory: web-instrument
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Verify runtime assets were packaged
+        run: python3 .github/scripts/check-web-assets.py web-instrument/dist
+
+      # There is deliberately no deploy job, Pages artifact, Pages write access,
+      # or OIDC token. Asset validation alone does not authorize publication.

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f4f3ef" />
+    <title>cranklink — Drive Unit Field Instrument</title>
+    <link rel="stylesheet" href="/css/instrument.css" />
+  </head>
+  <body>
+    <cranklink-instrument id="instrument-root"></cranklink-instrument>
+
+    <!-- Hidden host elements used by the underlying WASM/GATT/USB bridge (app.js) -->
+    <div style="display: none" aria-hidden="true">
+      <pre id="output" role="log"></pre>
+      <form id="command-form" autocomplete="off">
+        <input id="command" type="text" disabled />
+      </form>
+      <input id="file-picker" type="file" multiple />
+    </div>
+
+    <!-- Native Bluetooth 6-digit Passkey Dialog -->
+    <dialog id="ble-passkey-dialog" style="margin: auto; padding: 20px; border: 1px solid #b8b5ab; border-radius: 4px; max-width: 340px;">
+      <form method="dialog">
+        <p style="margin-bottom: 10px; font-weight: 600;">Bluetooth Passkey</p>
+        <p style="font-size: 12px; color: #52525b; margin-bottom: 12px;">
+          Enter the 6-digit passkey for the Shimano E-TUBE Bluetooth gateway.
+        </p>
+        <input
+          id="ble-passkey"
+          type="password"
+          inputmode="numeric"
+          pattern="[0-9]{6}"
+          minlength="6"
+          maxlength="6"
+          autocomplete="off"
+          required
+          style="width: 100%; padding: 8px; font-family: monospace; font-size: 16px; margin-bottom: 12px; border: 1px solid #b8b5ab; border-radius: 3px;"
+        />
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button id="ble-passkey-cancel" type="button" class="btn btn-sm">Cancel</button>
+          <button type="submit" value="authenticate" class="btn btn-primary btn-sm">Authenticate</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

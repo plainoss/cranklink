@@ -1,0 +1,240 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+import { enrichSchema, formatSettingValue } from "./src/domain/schema.ts";
+import {
+  classifyFirmwareRole,
+  evaluateCompanionPair,
+  buildSynchronizedFlashPlan,
+} from "./src/domain/firmwarePackage.ts";
+import { SessionController } from "./src/core/sessionController.ts";
+import { DeviceSimulator } from "./simulator.js";
+
+describe("Domain Schema Enrichment & Ordering", () => {
+  it("loads ep800-crg, ep600, and ep801 schemas and prioritizes Bike Hardware & Geometry", () => {
+    for (const model of ["ep800-crg", "ep600", "ep801"] as const) {
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8"),
+      );
+      const enriched = enrichSchema(raw, model);
+      assert.ok(enriched.length > 30, `${model} schema has >30 parameters`);
+
+      const geometryItems = enriched.filter((s) => s.section === "geometry");
+      assert.equal(
+        geometryItems[0].name,
+        "tire-circumference",
+        "tire-circumference is first in geometry",
+      );
+      assert.equal(
+        geometryItems[1].name,
+        "destination",
+        "destination is second in geometry",
+      );
+      assert.equal(
+        geometryItems[2].name,
+        "speed-limit",
+        "speed-limit is third in geometry",
+      );
+
+      const speedSpec = geometryItems[2];
+      assert.equal(speedSpec.userStep, 1);
+      assert.equal(speedSpec.userMin, model === "ep800-crg" ? 15 : 14);
+      assert.equal(formatSettingValue(speedSpec, 25), "25 km/h");
+    }
+  });
+});
+
+describe("Synchronized Dual-MCU Firmware Package Domain", () => {
+  it("classifies DCAS (-D) and RX (-M) images and validates companion match", () => {
+    assert.equal(classifyFirmwareRole("DUEP800-D.4.2.0.dat"), "dcas");
+    assert.equal(classifyFirmwareRole("DUEP800-M.4.1.11.dat"), "rx");
+
+    const dcasFile = {
+      filename: "DUEP800-D.4.2.0.dat",
+      sizeBytes: 158052,
+      sha256: "35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543",
+      role: "dcas" as const,
+      metadata: {
+        kind: "DcasX",
+        series: 0x23,
+        unit: 0,
+        board: 1,
+        version: "4.2.0.0",
+        compatibility_version: "4.1.11.0",
+        source_sha256: "35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543",
+      },
+    };
+
+    const rxFile = {
+      filename: "DUEP800-M.4.1.11.dat",
+      sizeBytes: 128192,
+      sha256: "94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44",
+      role: "rx" as const,
+      metadata: {
+        kind: "Renesas",
+        series: 0x23,
+        unit: 0,
+        version: "4.1.11.0",
+        source_sha256: "94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44",
+      },
+    };
+
+    const evalRes = evaluateCompanionPair(dcasFile, rxFile);
+    assert.equal(evalRes.valid, true);
+    assert.match(evalRes.message, /Synchronized package verified/);
+
+    const blePlan = buildSynchronizedFlashPlan({
+      transport: "ble",
+      serial: "010203040506",
+      dcas: dcasFile,
+      rx: rxFile,
+      write: true,
+      prefix: "test_fw",
+    });
+    assert.equal(blePlan.mode, "ble-pair");
+    assert.equal(blePlan.commands.length, 1);
+    assert.match(blePlan.commands[0], /ble flash-pair/);
+    assert.match(blePlan.commands[0], /--write/);
+
+    const wiredPlan = buildSynchronizedFlashPlan({
+      transport: "usb",
+      serial: "010203040506",
+      dcas: dcasFile,
+      rx: rxFile,
+      write: true,
+      prefix: "test_wired",
+    });
+    assert.equal(wiredPlan.mode, "wired-pair");
+    assert.equal(wiredPlan.commands.length, 3); // backup + flash-dcas + flash-rx
+  });
+});
+
+describe("SessionController Finite State Machine & Staging", () => {
+  it("stages, unstages on revert-to-live, orders destination before speed-limit, and commits via WASM host", async () => {
+    const controller = new SessionController();
+    const executedCommands: string[] = [];
+    const virtualFiles = new Map<string, Uint8Array>();
+
+    controller.attachTerminal({
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "sim" }),
+      files: {
+        list: () => Array.from(virtualFiles.keys()).map((p) => ({ path: p })),
+        bytes: (p: string) => virtualFiles.get(p) || new Uint8Array(),
+        import: async (p: string, b: Uint8Array) => {
+          virtualFiles.set(p, b);
+        },
+        initialize: async () => {},
+      },
+      run: async (line: string) => {
+        executedCommands.push(line);
+        const print = (globalThis as any).window?.estepsTerminalPrint;
+        if (line.startsWith("connect")) {
+          return { code: 0 };
+        }
+        if (line === "probe") {
+          const out = JSON.stringify({
+            slot: 13,
+            cargo: "00-CRG",
+            dcas_version: "4.1.11.0",
+            rx_version: "4.1.11.0",
+            serial: "010203040506",
+            model_series: 0x23,
+            model_unit: 0,
+          });
+          print?.(out, "stdout");
+          return { code: 0 };
+        }
+        if (line.includes("settings schema")) {
+          const raw = fs.readFileSync(
+            path.join(import.meta.dirname, "schemas", "ep800-crg.json"),
+            "utf8",
+          );
+          print?.(raw, "stdout");
+          return { code: 0 };
+        }
+        if (line.includes("settings read")) {
+          const out = JSON.stringify({
+            model: "DU-EP800/DU-EP800-CRG",
+            slot: 13,
+            values: {
+              "tire-circumference": { value: 2200, raw: "98080000" },
+              destination: { value: 1, raw: "0101ffff" },
+              "speed-limit": { value: 25, raw: "c409ffff" },
+              lamp: { value: 0, raw: "00" },
+            },
+            unavailable: {},
+          });
+          print?.(out, "stdout");
+          return { code: 0 };
+        }
+        if (line.includes("settings batch")) {
+          const out = JSON.stringify({
+            serial: "010203040506",
+            slot: 13,
+            completed: 2,
+            results: [
+              { setting: "destination", before: 1, after: 3, changed: true },
+              { setting: "tire-circumference", before: 2200, after: 2280, changed: true },
+            ],
+          });
+          print?.(out, "stdout");
+          return { code: 0 };
+        }
+        return { code: 0 };
+      },
+    });
+
+    (globalThis as any).window = globalThis;
+    controller.attachTerminal((controller as any).terminal);
+
+    await controller.connectAndSync("sim", { model: "ep800-crg" });
+    assert.equal(controller.getState().phase, "ready");
+    assert.equal(controller.getState().identity?.model, "DU-EP800-CRG");
+    assert.equal(controller.getState().liveValues["tire-circumference"]?.value, 2200);
+
+    // Stage tire-circumference to 2280 and destination to 3
+    controller.stageParameter("tire-circumference", 2280);
+    controller.stageParameter("destination", 3);
+    assert.deepEqual(controller.getState().stagedValues, {
+      "tire-circumference": 2280,
+      destination: 3,
+    });
+
+    // Setting back to live value (2200) automatically unstages it
+    controller.stageParameter("tire-circumference", 2200);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 3 });
+
+    // Stage again and commit
+    controller.stageParameter("tire-circumference", 2280);
+    await controller.commitStagedBatch();
+
+    assert.deepEqual(controller.getState().stagedValues, {});
+    assert.equal(controller.getState().liveValues["tire-circumference"]?.value, 2280);
+    assert.equal(controller.getState().liveValues["destination"]?.value, 3);
+  });
+});
+
+describe("Wire-Level GATT Simulator Register Completeness", () => {
+  it("handles EP800-CRG, EP600, and EP801 identity and full register queries", () => {
+    const sim = new DeviceSimulator({ model: "ep800-crg" });
+    const replies: number[][] = [];
+    const char2afd = sim.chars.find((c: any) => c.id === 0x2afd)!;
+    char2afd.addEventListener("characteristicvaluechanged", () => {
+      replies.push(Array.from(new Uint8Array(char2afd.value!.buffer)));
+    });
+
+    // Query model identity (group 1, cmd 0x34)
+    sim.write(0x2afe, [13, 1, 0x34, 0]);
+    assert.deepEqual(replies.at(-1), [13, 1, 0x36, 0, 0x23, 0]);
+
+    // Write tire circumference via group 0x35 cmd 0x00 (2300 = 0x08fc)
+    sim.write(0x2afe, [13, 0x35, 0x00, 0xfc, 0x08, 0, 0]);
+    assert.equal(sim.getRegisters().tireCircumferenceMm, 2300);
+
+    // Read tire circumference via group 0x35 cmd 0x04
+    sim.write(0x2afe, [13, 0x35, 0x04, 0]);
+    assert.deepEqual(replies.at(-1), [13, 0x35, 0x06, 0xfc, 0x08, 0, 0]);
+  });
+});

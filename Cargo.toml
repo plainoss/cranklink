@@ -1,0 +1,48 @@
+[package]
+name = "cranklink"
+default-run = "cranklink"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Cross-platform e-bike diagnostic, recovery, and configuration CLI with BLE & USB/serial support"
+license = "MIT"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+ble = ["dep:btleplug", "dep:tokio", "dep:futures-util", "dep:uuid", "dep:rpassword", "dep:dbus"]
+
+[dependencies]
+anyhow = "1"
+aes = { version = "0.8", features = ["zeroize"] }
+md-5 = "0.10"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+zeroize = "1"
+
+[profile.release]
+lto = true
+strip = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serialport = { version = "4", default-features = false }
+nusb = "0.2.8"
+btleplug = { version = "0.11.8", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"], optional = true }
+futures-util = { version = "0.3", optional = true }
+uuid = { version = "1", optional = true }
+rpassword = { version = "7", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = { version = "0.9", features = ["vendored"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"

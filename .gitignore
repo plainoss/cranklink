@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+*.wire.jsonl
+*.journal.jsonl
+*.dat
+*.bin
+.DS_Store
+
+# Web build artifacts
+web-instrument/dist/
+web-instrument/node_modules/
+web-instrument/test-results/
