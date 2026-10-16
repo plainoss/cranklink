@@ -100,10 +100,11 @@ settings reads/writes with backups and restore, and a terminal for ordered batch
 plans. USB/serial firmware operations retain the CLI's recovery and identity
 checks; firmware files are supplied separately.
 
-Use desktop Chrome or Edge where the required WebUSB, Web Serial, or Web
-Bluetooth API is available. Hardware access depends on the browser and platform;
-mobile support is not universal. BLE settings and opt-in BLE firmware remain
-experimental; BLE recovery is unavailable. See [browser setup and local build](web-instrument/README.md),
+The layout adapts to phones, tablets, and desktops. Use a browser with the
+required WebUSB, Web Serial, or Web Bluetooth API, such as Chrome or Edge where
+supported. Hardware access depends on the browser and platform; unavailable
+device buttons are disabled, and the simulator remains available. BLE settings
+and opt-in BLE firmware remain experimental; BLE recovery is unavailable. See [browser setup and local build](web-instrument/README.md),
 [settings and batches](docs/settings-protocol.md), and [BLE limits](docs/bluetooth.md).
 
 ## License

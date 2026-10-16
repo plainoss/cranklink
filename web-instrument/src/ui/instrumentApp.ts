@@ -31,6 +31,7 @@ export class EstepsInstrumentElement extends HTMLElement {
   private unsubscribe: (() => void) | null = null;
   private fileInputEl: HTMLInputElement | null = null;
   private handleDocumentClick: ((e: MouseEvent) => void) | null = null;
+  private consoleDraft = "";
 
   public bindController(controller: SessionController): void {
     this.controller = controller;
@@ -174,6 +175,12 @@ export class EstepsInstrumentElement extends HTMLElement {
       case "discard-all":
         this.controller.discardAllStaged();
         break;
+      case "review-changes": {
+        const rail = this.querySelector<HTMLElement>(".transaction-rail");
+        rail?.scrollIntoView({ block: "start" });
+        rail?.focus({ preventScroll: true });
+        break;
+      }
       case "commit-batch":
         this.controller.commitStagedBatch().catch(() => {});
         break;
@@ -231,6 +238,12 @@ export class EstepsInstrumentElement extends HTMLElement {
   private handleChange(e: Event): void {
     const target = e.target as HTMLElement;
     if (!target || !this.controller) return;
+
+    if (target.dataset.role === "parameter-group") {
+      this.controller.setSection("parameters");
+      this.controller.setParameterGroup((target as HTMLSelectElement).value as SettingSectionId);
+      return;
+    }
 
     if (target.dataset.role === "sim-model") {
       const model = (target as HTMLSelectElement).value as SimulatedModel;
@@ -292,10 +305,14 @@ export class EstepsInstrumentElement extends HTMLElement {
   }
 
   private render(state: InstrumentState): void {
-    // Preserve active search input cursor if user is typing in search filter
-    const activeEl = document.activeElement as HTMLInputElement | null;
-    const isSearching = activeEl?.dataset?.role === "search-filter";
-    const selectionStart = isSearching ? activeEl?.selectionStart : null;
+    // Keep mobile keyboards and unfinished console commands stable during updates.
+    const activeEl = document.activeElement as HTMLInputElement | HTMLSelectElement | null;
+    const activeRole = activeEl?.dataset?.role;
+    const preserveFocus = ["search-filter", "console-input", "parameter-group", "sim-model", "sim-fault"].includes(activeRole || "");
+    const selectionStart = preserveFocus && activeEl instanceof HTMLInputElement ? activeEl.selectionStart : null;
+    const selectionEnd = preserveFocus && activeEl instanceof HTMLInputElement ? activeEl.selectionEnd : null;
+    const existingConsoleInput = this.querySelector<HTMLInputElement>('[data-role="console-input"]');
+    if (existingConsoleInput) this.consoleDraft = existingConsoleInput.value;
 
     const stagedCount = Object.keys(state.stagedValues).length;
     const busy = this.isBusy(state);
@@ -319,14 +336,22 @@ export class EstepsInstrumentElement extends HTMLElement {
         ${stagedCount > 0 ? this.renderTransactionRail(state, busy) : ""}
       </div>
       ${this.renderConsoleDock(state)}
+      ${stagedCount > 0 ? `
+        <button type="button" class="mobile-review-dock btn btn-amber"
+          data-action="review-changes" data-testid="btn-review-changes">
+          Review ${stagedCount} staged change${stagedCount > 1 ? "s" : ""}
+        </button>
+      ` : ""}
     `;
 
-    if (isSearching) {
-      const nextSearch = this.querySelector<HTMLInputElement>('[data-role="search-filter"]');
-      if (nextSearch) {
-        nextSearch.focus();
-        if (selectionStart !== null && selectionStart !== undefined) {
-          nextSearch.setSelectionRange(selectionStart, selectionStart);
+    const consoleInput = this.querySelector<HTMLInputElement>('[data-role="console-input"]');
+    if (consoleInput) consoleInput.value = this.consoleDraft;
+    if (preserveFocus) {
+      const nextInput = this.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-role="${activeRole}"]`);
+      if (nextInput) {
+        nextInput.focus({ preventScroll: true });
+        if (nextInput instanceof HTMLInputElement && selectionStart !== null && selectionStart !== undefined) {
+          nextInput.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
         }
       }
     }
@@ -380,6 +405,8 @@ export class EstepsInstrumentElement extends HTMLElement {
 
   private renderConnectionBar(state: InstrumentState, busy: boolean, isMoreMenuOpen = false): string {
     const isConnected = !!state.identity;
+    const available = { ble: "bluetooth" in navigator, usb: "usb" in navigator, serial: "serial" in navigator };
+    const unavailable = [!available.ble && "Bluetooth", !available.usb && "USB", !available.serial && "Serial"].filter(Boolean);
 
     return `
       <section class="connection-bar" aria-label="Adapter Connection">
@@ -390,7 +417,8 @@ export class EstepsInstrumentElement extends HTMLElement {
               class="btn ${state.transport === "ble" ? "btn-primary" : ""}"
               data-action="connect-ble"
               data-testid="btn-connect-ble"
-              ${busy ? "disabled" : ""}
+              title="${available.ble ? "Connect a Bluetooth gateway" : "Web Bluetooth is unavailable in this browser"}"
+              ${busy || !available.ble ? "disabled" : ""}
             >
               Connect Bluetooth
             </button>
@@ -399,7 +427,8 @@ export class EstepsInstrumentElement extends HTMLElement {
               class="btn ${state.transport === "usb" ? "btn-primary" : ""}"
               data-action="connect-usb"
               data-testid="btn-connect-usb"
-              ${busy ? "disabled" : ""}
+              title="${available.usb ? "Connect an SM-PCE02 adapter" : "WebUSB is unavailable in this browser"}"
+              ${busy || !available.usb ? "disabled" : ""}
             >
               Connect USB (SM-PCE02)
             </button>
@@ -408,7 +437,8 @@ export class EstepsInstrumentElement extends HTMLElement {
               class="btn ${state.transport === "serial" ? "btn-primary" : ""}"
               data-action="connect-serial"
               data-testid="btn-connect-serial"
-              ${busy ? "disabled" : ""}
+              title="${available.serial ? "Connect a serial adapter" : "Web Serial is unavailable in this browser"}"
+              ${busy || !available.serial ? "disabled" : ""}
             >
               Connect Serial
             </button>
@@ -473,7 +503,7 @@ export class EstepsInstrumentElement extends HTMLElement {
             </details>
           </div>
 
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="connection-status">
             <span style="font-size: 12px; color: var(--text-secondary);" data-testid="status-message">
               ${escapeHtml(state.statusMessage)}
             </span>
@@ -503,6 +533,7 @@ export class EstepsInstrumentElement extends HTMLElement {
             }
           </div>
         </div>
+        ${unavailable.length ? `<p class="browser-support-note">${unavailable.join(", ")} device access is unavailable in this browser. Use a browser with the required device API, or try the simulator.</p>` : ""}
       </section>
     `;
   }
@@ -548,8 +579,18 @@ export class EstepsInstrumentElement extends HTMLElement {
 
     return `
       <aside class="nav-rail" aria-label="Workspace Navigation">
-        <div class="nav-group">
+        <div class="nav-group parameter-navigation">
           <div class="nav-group-header">Parameter Groups</div>
+          <label class="mobile-group-picker" for="mobile-parameter-group">Parameter group
+            <select id="mobile-parameter-group" class="select-input"
+              data-role="parameter-group" data-testid="mobile-parameter-group">
+              ${state.activeSection !== "parameters" ? '<option value="" selected disabled>Choose parameter group…</option>' : ""}
+              ${[...PARAMETER_GROUPS, { id: "all", title: "All Parameters" }].filter((g) =>
+                g.id === "all" || !state.schema.length || counts[g.id] > 0).map((g) => `
+                <option value="${g.id}" ${state.activeSection === "parameters" && state.activeParameterGroup === g.id ? "selected" : ""}>${escapeHtml(g.title)} (${counts[g.id] || 0})</option>
+              `).join("")}
+            </select>
+          </label>
           <div class="nav-list">
             ${PARAMETER_GROUPS.map((g) => {
               const count = counts[g.id] || 0;
@@ -582,7 +623,7 @@ export class EstepsInstrumentElement extends HTMLElement {
           </div>
         </div>
 
-        <div class="nav-group">
+        <div class="nav-group system-navigation">
           <div class="nav-group-header">System Operations</div>
           <div class="nav-list">
             <button
@@ -623,18 +664,21 @@ export class EstepsInstrumentElement extends HTMLElement {
 
   private renderParametersView(state: InstrumentState, busy: boolean): string {
     if (!state.identity) {
+      const hasBluetooth = "bluetooth" in navigator;
+      const hasUsb = "usb" in navigator;
       return `
         <div class="section-card" style="padding: 32px 20px; text-align: center;">
           <h2 style="font-size: 16px; font-weight: 600; margin-bottom: 6px;">No Drive Unit Connected</h2>
           <p style="font-size: 13px; color: var(--text-secondary); max-width: 520px; margin: 0 auto 16px;">
             Connect a Shimano Bluetooth gateway, an SM-PCE02 USB adapter, or a serial diagnostic cable to inspect and configure the drive unit.
           </p>
-          <div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 16px;">
+          <div class="empty-state-actions">
             <button
               type="button"
               class="btn btn-primary"
               data-action="connect-ble"
-              ${busy ? "disabled" : ""}
+              title="${hasBluetooth ? "Connect a Bluetooth gateway" : "Web Bluetooth is unavailable in this browser"}"
+              ${busy || !hasBluetooth ? "disabled" : ""}
             >
               Connect Bluetooth
             </button>
@@ -642,7 +686,8 @@ export class EstepsInstrumentElement extends HTMLElement {
               type="button"
               class="btn"
               data-action="connect-usb"
-              ${busy ? "disabled" : ""}
+              title="${hasUsb ? "Connect an SM-PCE02 adapter" : "WebUSB is unavailable in this browser"}"
+              ${busy || !hasUsb ? "disabled" : ""}
             >
               Connect USB
             </button>
@@ -711,7 +756,9 @@ export class EstepsInstrumentElement extends HTMLElement {
           value="${escapeHtml(state.searchFilter)}"
           data-role="search-filter"
           data-testid="search-filter-input"
-          style="min-width: 210px;"
+          aria-label="Filter parameters"
+          autocapitalize="off"
+          spellcheck="false"
         />
       </div>
 
@@ -819,7 +866,6 @@ export class EstepsInstrumentElement extends HTMLElement {
               <button
                 type="button"
                 class="btn btn-sm"
-                style="min-height: 20px; padding: 0 6px; font-size: 11px;"
                 data-action="revert-param"
                 data-name="${escapeHtml(spec.name)}"
                 data-testid="revert-${spec.name}"
@@ -914,6 +960,7 @@ export class EstepsInstrumentElement extends HTMLElement {
         <div class="stepper-input-wrap">
           <input
             type="number"
+            inputmode="decimal"
             class="stepper-input"
             min="${spec.userMin}"
             max="${spec.userMax}"
@@ -922,6 +969,7 @@ export class EstepsInstrumentElement extends HTMLElement {
             data-role="param-input"
             data-name="${escapeHtml(spec.name)}"
             data-testid="input-${spec.name}"
+            aria-label="${escapeHtml(spec.label)}"
             ${busy ? "disabled" : ""}
           />
           ${spec.displayUnit ? `<span class="stepper-unit">${escapeHtml(spec.displayUnit)}</span>` : ""}
@@ -971,7 +1019,7 @@ export class EstepsInstrumentElement extends HTMLElement {
     const entries = Object.entries(state.stagedValues);
 
     return `
-      <aside class="transaction-rail" aria-label="Staged Transaction" data-testid="transaction-rail">
+      <aside class="transaction-rail" aria-label="Staged Transaction" tabindex="-1" data-testid="transaction-rail">
         <div class="transaction-header">
           <span class="transaction-title">Staged Changes (${entries.length})</span>
           <button
@@ -1007,6 +1055,7 @@ export class EstepsInstrumentElement extends HTMLElement {
                     class="btn btn-sm"
                     data-action="revert-param"
                     data-name="${escapeHtml(name)}"
+                    aria-label="Revert ${escapeHtml(label)}"
                     ${busy ? "disabled" : ""}
                   >
                     ×
@@ -1308,14 +1357,15 @@ export class EstepsInstrumentElement extends HTMLElement {
     return `
       <footer class="console-dock">
         <div class="console-panel">
-          <div
+          <button type="button"
             class="console-header"
             data-action="toggle-console"
             data-testid="console-toggle"
+            aria-expanded="${state.consoleExpanded}"
           >
             <span>Diagnostic CLI & Protocol Trace (${state.logs.length} lines)</span>
             <span>${state.consoleExpanded ? "Hide ▲" : "Expand ▼"}</span>
-          </div>
+          </button>
           ${
             state.consoleExpanded
               ? `
@@ -1339,6 +1389,11 @@ export class EstepsInstrumentElement extends HTMLElement {
                   placeholder="Run raw cranklink command (e.g. probe, units, settings read)..."
                   data-role="console-input"
                   data-testid="console-input"
+                  aria-label="CLI command"
+                  autocapitalize="off"
+                  autocomplete="off"
+                  spellcheck="false"
+                  enterkeyhint="send"
                 />
                 <button type="submit" class="btn btn-sm">Execute</button>
               </form>
