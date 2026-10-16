@@ -107,9 +107,9 @@ export class SessionController {
     this.terminal = term;
     if (typeof window !== "undefined") {
       const prevPrint = (window as any).estepsTerminalPrint;
-      (window as any).estepsTerminalPrint = (text: string, stream: "stdout" | "stderr" = "stdout") => {
+      (window as any).estepsTerminalPrint = (text: string, stream: "stdout" | "stderr" | "notice" = "stdout") => {
         if (prevPrint) prevPrint(text, stream);
-        if (this.activeCapture) {
+        if (this.activeCapture && stream !== "notice") {
           this.activeCapture[stream] += text;
         }
         this.appendLog(stream, text);
@@ -118,7 +118,7 @@ export class SessionController {
     this.refreshSnapshots();
   }
 
-  public appendLog(stream: "stdout" | "stderr" | "cmd", text: string): void {
+  public appendLog(stream: "stdout" | "stderr" | "notice" | "cmd", text: string): void {
     const trimmed = text.replace(/\n$/, "");
     if (!trimmed) return;
     const entry = {

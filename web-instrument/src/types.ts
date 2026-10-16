@@ -130,7 +130,7 @@ export interface MCPApprovalRequest {
 export interface LogEntry {
   id: number;
   timestamp: string;
-  stream: "stdout" | "stderr" | "cmd";
+  stream: "stdout" | "stderr" | "notice" | "cmd";
   text: string;
 }
 

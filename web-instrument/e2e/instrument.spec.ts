@@ -176,3 +176,95 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2150 mm");
   });
 });
+
+// Only the browser chooser is replaced. The selected device is the production
+// GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
+async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false) {
+  await page.addInitScript(() => {
+    sessionStorage.setItem("esteps_ble_passkey", "000000");
+  });
+  await openInstrument(page);
+  const setup = await page.evaluate(async (reject) => {
+    const host = (window as any).estepsTerminal;
+    const result = await host.run(reject ? "connect sim ep801" : "connect sim ep800-crg");
+    const device = host.simulator;
+    if (reject) device.setFault("auth_reject");
+    let chooserCalls = 0;
+    Object.defineProperty(navigator, "bluetooth", {
+      configurable: true,
+      value: {
+        requestDevice: async () => {
+          chooserCalls++;
+          return device;
+        },
+      },
+    });
+    (window as any).testBluetoothChooserCalls = () => chooserCalls;
+    // Re-evaluate supported browser transports after installing the chooser.
+    (window as any).estepsInstrumentController.setSection("parameters");
+    return result.code;
+  }, rejectAuthentication);
+  expect(setup).toBe(0);
+  await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
+  await page.getByTestId("btn-connect-ble").click();
+}
+
+test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page);
+  await expect(page.getByTestId("status-message")).toContainText("74 parameters read");
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  const state = await page.evaluate(() => {
+    const state = (window as any).estepsInstrumentController.getState();
+    return {
+      phase: state.phase,
+      transport: state.transport,
+      errorBanner: state.errorBanner,
+      settings: Object.keys(state.liveValues),
+      logs: state.logs as { stream: string; text: string }[],
+      chooserCalls: (window as any).testBluetoothChooserCalls(),
+    };
+  });
+  expect(state.phase).toBe("ready");
+  expect(state.transport).toBe("ble");
+  expect(state.errorBanner).toBeNull();
+  expect(state.settings).toHaveLength(74);
+  expect(state.chooserCalls).toBe(1);
+  const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
+  expect(commands).toHaveLength(3);
+  expect(commands[0]).toBe("cranklink> connect ble");
+  expect(commands[1]).toBe("cranklink> probe");
+  expect(commands[2]).toMatch(/^cranklink> (?:--[^\n]+ )?settings read$/);
+  expect(state.logs.filter((entry) => entry.stream === "stderr")).toEqual([]);
+  expect(state.logs.some((entry) => entry.stream === "notice" && /Bluetooth/i.test(entry.text))).toBe(true);
+  expect(state.logs.map((entry) => entry.text).join("\n")).not.toMatch(/firmware operations disabled/i);
+  await expect(page.getByTestId("param-row-tire-circumference")).toBeVisible();
+  await page.getByTestId("console-toggle").click();
+  await expect(page.locator(".console-log-line.stderr")).toHaveCount(0);
+  await expect(page.locator(".console-log-line.notice").first()).toBeVisible();
+});
+
+test("Bluetooth authentication rejection still reports a real error", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page, true);
+  await expect(page.getByTestId("error-banner")).toBeVisible();
+  await expect(page.getByTestId("status-message")).toContainText("Handshake failed:");
+  const state = await page.evaluate(() => {
+    const state = (window as any).estepsInstrumentController.getState();
+    return {
+      phase: state.phase,
+      settings: Object.keys(state.liveValues),
+      logs: state.logs as { stream: string; text: string }[],
+      chooserCalls: (window as any).testBluetoothChooserCalls(),
+    };
+  });
+  expect(state.phase).toBe("error");
+  expect(state.settings).toHaveLength(0);
+  expect(state.chooserCalls).toBe(1);
+  const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
+  expect(commands).toHaveLength(3);
+  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> probe"]);
+  expect(commands[2]).toMatch(/^cranklink> --ble-expect-serial [A-F0-9]+ --ble-unit-auth settings read$/);
+  expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
+    .toBe(true);
+  await page.getByTestId("console-toggle").click();
+  await expect(page.locator(".console-log-line.stderr").first()).toBeVisible();
+});

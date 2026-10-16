@@ -341,7 +341,7 @@ async function run(line) {
   const command = tokens[0];
   if (command === "help") {
     print(
-      "Browser commands: connect [auto|usb|serial|ble|sim [model]], disconnect, usb-info, ble-info, import, files, download FILE, cat FILE, clear\nRust commands: ble authenticate, ble units, probe, boot-probe, rx-probe, inspect FILE, flash-dcas, flash-rx, power-cycle, settings ...\nUse --help after any Rust command. Firmware, backups, traces and journals live in durable browser storage.\nConnect auto prefers Web Serial on Windows; other platforms use WebUSB. Bluetooth is experimental and explicit: connect ble. Simulator mode: connect sim [model]. The selected transport sets --port webserial, webusb or webble. Firmware/boot commands over BLE are disabled.\n",
+      "Browser commands: connect [auto|usb|serial|ble|sim [model]], disconnect, usb-info, ble-info, import, files, download FILE, cat FILE, clear\nRust commands: ble authenticate, ble units, probe, boot-probe, rx-probe, inspect FILE, flash-dcas, flash-rx, power-cycle, settings ...\nUse --help after any Rust command. Firmware, backups, traces and journals live in durable browser storage.\nConnect auto prefers Web Serial on Windows; other platforms use WebUSB. Bluetooth is experimental and explicit: connect ble. Simulator mode: connect sim [model]. The selected transport sets --port webserial, webusb or webble. Supported EP800 motor firmware relay requires --ble-firmware; BLE recovery and radio DFU are unavailable. Connecting and reading settings do not enter firmware mode.\n",
     );
     return { code: 0 };
   }

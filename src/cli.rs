@@ -2,6 +2,18 @@
 macro_rules! out_print {($($arg:tt)*)=>{crate::cli::emit("stdout",format_args!($($arg)*))};}
 macro_rules! out_println {($($arg:tt)*)=>{crate::cli::emit("stdout",format_args!("{}\n",format_args!($($arg)*)))};}
 macro_rules! err_println {($($arg:tt)*)=>{crate::cli::emit("stderr",format_args!("{}\n",format_args!($($arg)*)))};}
+macro_rules! notice_println {($($arg:tt)*)=>{crate::cli::emit_notice(format_args!("{}\n",format_args!($($arg)*)))};}
+fn emit_notice(args: std::fmt::Arguments<'_>) {
+    // Keep native JSON stdout clean; the browser can display notices separately.
+    emit(
+        if cfg!(target_arch = "wasm32") {
+            "notice"
+        } else {
+            "stderr"
+        },
+        args,
+    );
+}
 fn emit(stream: &str, args: std::fmt::Arguments<'_>) {
     #[cfg(target_arch = "wasm32")]
     crate::wasm::host_emit(stream, &args.to_string());
@@ -682,7 +694,7 @@ fn execute_ble(cli: Cli) -> Result<()> {
         return execute_ble_firmware(cli);
     }
     // Guard before credential/file access, radio discovery, or journal creation.
-    ensure!(ble_command_allowed(&cli.command), "Firmware, bootloader, recovery, power-cycle and raw operations over Bluetooth are disabled pending hardware validation");
+    ensure!(ble_command_allowed(&cli.command), "Command unavailable in a BLE settings session. Supported EP800 motor firmware relay requires --ble-firmware; BLE recovery, radio DFU, power-cycle and raw operations are disabled");
     let auth_only = matches!(
         cli.command,
         Command::Ble {
@@ -718,7 +730,7 @@ fn execute_ble(cli: Cli) -> Result<()> {
         );
     }
     let passkey = read_ble_passkey(&cli)?;
-    err_println!("Experimental Bluetooth transport: hardware validation pending; firmware operations disabled.");
+    notice_println!("Experimental Bluetooth transport: hardware validation pending.");
     let mut session =
         crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
     session.set_master_routing(cli.ble_master)?;
@@ -1141,7 +1153,7 @@ fn execute_ble_firmware(cli: Cli) -> Result<()> {
         )?;
     }
     let passkey = read_ble_passkey(&cli)?;
-    err_println!("Experimental BLE motor firmware: first verify a non-erasing probe; no automatic erase/program retries.");
+    notice_println!("Experimental BLE motor firmware: first verify a non-erasing probe; no automatic erase/program retries.");
     let mut session =
         crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
     session.set_master_routing(true)?;
@@ -1637,7 +1649,8 @@ mod ble_tests {
                 cmd.extend(args.into_iter().map(str::to_owned));
                 let err = execute(cmd).unwrap_err().to_string();
                 assert!(
-                    err.contains("disabled pending hardware validation"),
+                    err.contains("Command unavailable in a BLE settings session")
+                        && err.contains("requires --ble-firmware"),
                     "{err}"
                 );
             }

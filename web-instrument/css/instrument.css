@@ -1017,6 +1017,10 @@ select {
   color: #fca5a5;
 }
 
+.console-log-line.notice {
+  color: #bfdbfe;
+}
+
 .console-log-line.cmd {
   color: #fcd34d;
 }
