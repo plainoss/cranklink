@@ -34,6 +34,14 @@ impl Gatt for BrowserGatt {
         )?;
         Ok(())
     }
+    fn write_batch(&mut self, id: u16, batch: &[Vec<u8>], without_response: bool) -> Result<()> {
+        self.request(
+            "ble.write-batch",
+            serde_json::json!({"id":id,"batch":batch,"withoutResponse":without_response}),
+            30000,
+        )?;
+        Ok(())
+    }
     fn subscribe(&mut self, id: u16) -> Result<()> {
         self.request("ble.subscribe", serde_json::json!({"id":id}), 10000)?;
         Ok(())

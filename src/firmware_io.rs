@@ -12,6 +12,13 @@ pub(crate) trait FirmwareIo {
         sleep(duration);
     }
     fn send(&mut self, control: u8, payload: &[u8]) -> Result<()>;
+    fn send_batch(&mut self, control: u8, payloads: &[Vec<u8>]) -> Result<()> {
+        for payload in payloads {
+            self.send(control, payload)?;
+            self.pace(Duration::from_millis(2));
+        }
+        Ok(())
+    }
     fn wait(&mut self, timeout: Duration, check: impl Fn(&Frame) -> bool) -> Result<Frame>;
     fn discard_matching(&mut self, check: impl Fn(&Frame) -> bool);
     fn discard_unindexed(&mut self) {

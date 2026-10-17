@@ -231,6 +231,49 @@ impl Gatt for NativeGatt {
         let result = self.rt.block_on(bounded(self.peripheral.subscribe(&c)));
         self.finish(result)
     }
+    fn model_read_batch(&mut self, slot: u8, count: usize) -> Result<()> {
+        let c = self.characteristic(FREE_COMMAND)?;
+        ensure!(
+            c.properties.contains(CharPropFlags::WRITE),
+            "benchmark requires acknowledged writes"
+        );
+        let bytes = [slot, 1, 0x1c, 0];
+        let result = self.rt.block_on(async {
+            futures_util::future::try_join_all(
+                (0..count)
+                    .map(|_| bounded(self.peripheral.write(&c, &bytes, WriteType::WithResponse))),
+            )
+            .await?;
+            Ok(())
+        });
+        self.finish(result)
+    }
+    fn write_batch(&mut self, id: u16, batch: &[Vec<u8>], without_response: bool) -> Result<()> {
+        let c = self.characteristic(id)?;
+        let write_type = if without_response {
+            ensure!(
+                c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE),
+                "characteristic does not support write without response"
+            );
+            WriteType::WithoutResponse
+        } else {
+            ensure!(
+                c.properties.contains(CharPropFlags::WRITE),
+                "characteristic does not support write with response"
+            );
+            WriteType::WithResponse
+        };
+        let result = self.rt.block_on(async {
+            futures_util::future::try_join_all(
+                batch
+                    .iter()
+                    .map(|bytes| bounded(self.peripheral.write(&c, bytes, write_type))),
+            )
+            .await?;
+            Ok(())
+        });
+        self.finish(result)
+    }
     fn receive(&mut self, duration: Duration) -> Result<Option<Notification>> {
         self.ready()?;
         ensure!(

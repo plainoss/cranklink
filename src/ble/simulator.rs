@@ -170,6 +170,30 @@ impl Gatt for SimulatorGatt {
         self.rpc(json!({"op":"subscribe", "id":id}), IO_TIMEOUT)?;
         Ok(())
     }
+    fn model_read_batch(&mut self, slot: u8, count: usize) -> Result<()> {
+        let bytes = [slot, 1, 0x1c, 0];
+        for _ in 0..count {
+            self.write(FREE_COMMAND, &bytes, false)?;
+        }
+        Ok(())
+    }
+    fn write_batch(&mut self, id: u16, batch: &[Vec<u8>], without_response: bool) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        for bytes in batch {
+            if bytes.len() > 20 {
+                self.terminate();
+                bail!("oversized BLE simulator write in batch");
+            }
+        }
+        self.rpc(
+            json!({"op":"write_batch", "id":id, "packets":batch,
+            "without_response":without_response}),
+            IO_TIMEOUT,
+        )?;
+        Ok(())
+    }
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>> {
         if timeout > Duration::from_secs(30) {
             self.terminate();

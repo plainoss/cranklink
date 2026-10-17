@@ -527,6 +527,51 @@ impl FirmwareIo for MotorFirmware<'_> {
         }
         Ok(())
     }
+    fn send_batch(&mut self, control: u8, payloads: &[Vec<u8>]) -> Result<()> {
+        ensure!(
+            !self.session.poisoned && self.session.firmware_active,
+            "BLE firmware session is fenced"
+        );
+        if control == 0x48 && self.rx_mode {
+            let width = self.session.queue_width.clamp(1, 8);
+            let (write_without_response, write) = {
+                let c = self
+                    .session
+                    .chars
+                    .get(&FREE_COMMAND)
+                    .context("missing RX relay characteristic")?;
+                (c.write_without_response, c.write)
+            };
+            for chunk in payloads.chunks(width) {
+                let mut batch = Vec::with_capacity(chunk.len());
+                for p in chunk {
+                    ensure!(
+                        p.len() == 7 && matches!(p[1], 0xf0 | 0xf8),
+                        "invalid RX bridge request"
+                    );
+                    let mut value = p.clone();
+                    value[0] = self.slot;
+                    let streaming = p[1] == 0xf8;
+                    let without_response = (streaming && write_without_response) || !write;
+                    self.session.log("tx", FREE_COMMAND, &value)?;
+                    batch.push((value, without_response));
+                }
+                // Group contiguous packets by their without_response flag
+                let values: Vec<Vec<u8>> = batch.iter().map(|(v, _)| v.clone()).collect();
+                let without = batch[0].1;
+                if let Err(e) = self.session.io.write_batch(FREE_COMMAND, &values, without) {
+                    self.session.poisoned = true;
+                    return Err(e).context("RX bridge batch dispatch uncertain");
+                }
+            }
+            return Ok(());
+        }
+        for payload in payloads {
+            self.send(control, payload)?;
+            self.pace(Duration::from_millis(2));
+        }
+        Ok(())
+    }
     fn wait(&mut self, timeout: Duration, check: impl Fn(&Frame) -> bool) -> Result<Frame> {
         let start = Instant::now();
         loop {
@@ -716,6 +761,27 @@ mod transport_tests {
         );
         assert_eq!(s.writes[4].0, FREE_COMMAND);
         assert_eq!(s.writes[4].1, [13, 0xf8, 0, 1, 2, 3, 4]);
+    }
+    #[test]
+    fn send_batch_respects_queue_width_and_batches_free_writes() {
+        let state = Rc::new(RefCell::new(State::default()));
+        let mut session = session(state.clone());
+        session.set_queue_width(4).unwrap();
+        let mut link = link(&mut session, true);
+        let payloads = vec![
+            vec![0, 0xf8, 1, 10, 11, 12, 13],
+            vec![0, 0xf8, 2, 14, 15, 16, 17],
+            vec![0, 0xf8, 3, 18, 19, 20, 21],
+            vec![0, 0xf8, 4, 22, 23, 24, 25],
+            vec![0, 0xf8, 5, 26, 27, 28, 29],
+        ];
+        link.send_batch(0x48, &payloads).unwrap();
+        let s = state.borrow();
+        assert_eq!(s.writes.len(), 5);
+        for (i, p) in payloads.iter().enumerate() {
+            assert_eq!(s.writes[i].0, FREE_COMMAND);
+            assert_eq!(s.writes[i].1, [13, 0xf8, p[2], p[3], p[4], p[5], p[6]]);
+        }
     }
     #[test]
     fn stale_ack_cannot_verify_finish_and_timeout_fences_dispatch() {

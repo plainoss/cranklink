@@ -73,6 +73,17 @@ pub trait Gatt {
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>>;
     fn passkey(&mut self) -> Result<String>;
     fn clear_passkey(&mut self) {}
+    fn model_read_batch(&mut self, slot: u8, count: usize) -> Result<()> {
+        let _ = (slot, count);
+        bail!("model read batching is only supported on native BLE and simulator");
+    }
+    /// Send a batch of writes to a characteristic, preserving order.
+    fn write_batch(&mut self, id: u16, batch: &[Vec<u8>], without_response: bool) -> Result<()> {
+        for bytes in batch {
+            self.write(id, bytes, without_response)?;
+        }
+        Ok(())
+    }
     fn close(&mut self) -> Result<()>;
 }
 
@@ -192,6 +203,7 @@ pub struct BleSession {
     gateway_started_slots: BTreeSet<u8>,
     master_pc_start_receipts: BTreeMap<u8, Vec<u8>>,
     firmware_active: bool,
+    queue_width: usize,
 }
 impl BleSession {
     pub fn new(io: Box<dyn Gatt>, trace: Option<&Path>) -> Result<Self> {
@@ -220,6 +232,7 @@ impl BleSession {
             gateway_started_slots: BTreeSet::new(),
             master_pc_start_receipts: BTreeMap::new(),
             firmware_active: false,
+            queue_width: 1,
         })
     }
     /// Select stock normal/master routing before component discovery.
@@ -237,6 +250,72 @@ impl BleSession {
     }
     pub fn is_master_routing(&self) -> bool {
         self.master_routing
+    }
+    /// Set pipelined ACK queue width (1, 2, 4, 8) for streaming writes.
+    pub fn set_queue_width(&mut self, width: usize) -> Result<()> {
+        ensure!(
+            [1, 2, 4, 8].contains(&width),
+            "queue width must be 1, 2, 4, or 8"
+        );
+        self.queue_width = width;
+        Ok(())
+    }
+    pub fn queue_width(&self) -> usize {
+        self.queue_width
+    }
+    /// Non-erasing model-read queueing benchmark: compare sequential and prequeued acknowledged GETs.
+    pub fn benchmark_acknowledged_reads(&mut self) -> Result<serde_json::Value> {
+        ensure!(
+            self.authenticated
+                && self.gateway_mode
+                && self.master_routing_active
+                && !self.poisoned
+                && !self.firmware_active,
+            "benchmark requires a healthy normal master session"
+        );
+        let slot = self
+            .linked_slot
+            .context("start the motor before benchmarking")?;
+        let expected = self.model_identity(slot)?;
+        let mut results = Vec::new();
+        for width in [1usize, 2, 4, 8] {
+            let mut elapsed = 0u128;
+            let mut acknowledged = 0u128;
+            for _ in 0..8 / width {
+                self.drain()?;
+                for _ in 0..width {
+                    self.log("tx", FREE_COMMAND, &[slot, 1, 0x1c, 0])?;
+                }
+                let started = Instant::now();
+                if let Err(e) = self.io.model_read_batch(slot, width) {
+                    self.poisoned = true;
+                    return Err(e);
+                }
+                acknowledged += started.elapsed().as_micros();
+                for _ in 0..width {
+                    let n = self.wait(|n| {
+                        n.characteristic == FREE_RESPONSE && n.value.starts_with(&[slot, 1, 0x1e])
+                    })?;
+                    ensure!(
+                        n.value.get(3..5) == expected.get(1..3),
+                        "benchmark model identity changed"
+                    );
+                }
+                elapsed += started.elapsed().as_micros();
+            }
+            results.push(serde_json::json!({
+                "queued_width": width,
+                "reads": 8,
+                "all_motor_receipts_validated": true,
+                "att_acknowledgements_ms": acknowledged as f64 / 1000.0,
+                "end_to_end_ms": elapsed as f64 / 1000.0,
+            }));
+        }
+        Ok(serde_json::json!({
+            "scope": "read-only model GET benchmark; does not validate M streaming",
+            "model_reads_only": true,
+            "results": results,
+        }))
     }
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn configure_command_trace(&mut self, path: Option<&Path>) -> Result<()> {
