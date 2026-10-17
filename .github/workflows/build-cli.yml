@@ -6,6 +6,8 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -20,20 +22,34 @@ jobs:
     name: Linux default and BLE tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      has_changes: ${{ steps.filter.outputs.has_changes }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Check changed paths
+        id: filter
+        run: python3 .github/scripts/check-changed-paths.py cli
       - uses: dtolnay/rust-toolchain@1.90.0
+        if: steps.filter.outputs.has_changes == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: steps.filter.outputs.has_changes == 'true'
       - name: Test default CLI and core
+        if: steps.filter.outputs.has_changes == 'true'
         run: cargo test --locked --lib --bin cranklink
       - name: Test BLE CLI and core
+        if: steps.filter.outputs.has_changes == 'true'
         run: cargo test --locked --features ble --lib --bin cranklink
+      - name: Log skip summary
+        if: steps.filter.outputs.has_changes != 'true'
+        run: echo "No CLI or Rust core changes detected; skipped CLI test suite." >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build on Linux (${{ matrix.target }})
     needs: test
+    if: needs.test.outputs.has_changes == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:

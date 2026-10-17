@@ -22,3 +22,13 @@ Always prefer fast local tooling over slow manual loops:
 - **No CI Busy-Polling**: Never run `gh pr checks` in loops (it exits with code 1 while checks are still pending). Use `./tools/ci-watch.sh [PR_NUM]` or `gh pr checks --watch`, or launch as a background task.
 - **No Subagent Polling**: Never run `manage_subagents Action="list"` in polling loops; the agent environment automatically delivers messages and wakeups when subagents complete or reply.
 - **Scratch Scripts**: When doing firmware analysis, disassembly, or complex data processing, write temporary scripts in `<conversation-id>/scratch/` or `tools/` instead of executing fragile inline multi-line Python snippets in shell commands.
+
+## 5. Concurrent PRs & Merge Queue Protocol
+- **Auto-Merge to Queue**: After creating a PR, mark it for auto-merging:
+  ```bash
+  gh pr merge <PR_NUMBER> --auto --squash --delete-branch
+  # Or use the helper:
+  ./tools/queue-pr.sh [PR_NUMBER]
+  ```
+- **Speculative Merge Testing**: The repository enforces a Merge Queue on `main`. Once required checks pass, GitHub speculatively tests the PR in a batch and merges it to `main` without manual intervention.
+- **No Manual Rebase Stampedes**: If another PR merges while yours is in flight, do not frantically rebase in loops. The merge queue automatically handles ordering and speculative merges.
