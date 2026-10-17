@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Bluetooth,
@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { detectPlatform } from "../../core/platform.ts";
+import {
+  detectPlatform,
+  isBraveBrowser,
+  checkBluetoothAvailability,
+} from "../../core/platform.ts";
 import { Button } from "../ui/Button.tsx";
 
 interface ConnectViewProps {
@@ -24,8 +28,27 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
   const [simFault, setSimFault] = useState<FaultInjectionType>("none");
 
   const platform = detectPlatform();
+  const [isBrave, setIsBrave] = useState<boolean>(() => platform.isBrave);
+  const [bleAvailable, setBleAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    isBraveBrowser().then((brave) => {
+      if (active && brave !== isBrave) setIsBrave(brave);
+    });
+    checkBluetoothAvailability().then((avail) => {
+      if (active) setBleAvailable(avail);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const isBusy = ["connecting", "probing", "reading"].includes(state.phase);
-  const canUseBluetooth = platform.supportsBluetooth && (!platform.isIOS || platform.isBluefy);
+  const canUseBluetooth =
+    platform.supportsBluetooth &&
+    (!platform.isIOS || platform.isBluefy) &&
+    (!isBrave || bleAvailable === true);
   const primaryTransport = canUseBluetooth
     ? "ble"
     : platform.supportsUsb
@@ -33,10 +56,11 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
       : platform.supportsSerial
         ? "serial"
         : null;
+  const hasBleOption = platform.supportsBluetooth && primaryTransport !== "ble";
   const hasWiredOptions =
     (platform.supportsUsb && primaryTransport !== "usb") ||
     (platform.supportsSerial && primaryTransport !== "serial");
-  const hasOptions = hasWiredOptions || import.meta.env.DEV;
+  const hasOptions = hasWiredOptions || hasBleOption || import.meta.env.DEV;
 
   const connect = (transport: "ble" | "usb" | "serial") => {
     controller.connectAndSync(transport).catch(() => {});
@@ -52,7 +76,9 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           ? "Connect with cable"
           : platform.isIOS && !platform.isBluefy
             ? "Open in Bluefy to connect"
-            : "Connection unavailable";
+            : isBrave && bleAvailable !== true
+              ? "Open in Chrome or Edge to connect"
+              : "Connection unavailable";
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 bg-[#f4f3ef] text-stone-900 font-sans">
@@ -71,6 +97,24 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           </div>
         )}
 
+        {isBrave && bleAvailable !== true && (
+          <div
+            className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-sm leading-relaxed"
+            data-testid="brave-bluetooth-warning"
+            role="status"
+          >
+            <AlertCircle size={20} className="text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <strong className="block font-semibold">Brave disables Web Bluetooth by default</strong>
+              <span>
+                To connect wirelessly, use a browser that supports Web Bluetooth (such as Google Chrome or Microsoft Edge),
+                or enable Web Bluetooth in Brave by opening <code className="bg-amber-100 px-1.5 py-0.5 rounded text-xs font-mono select-all">brave://flags/#enable-web-bluetooth</code> and relaunching.
+                {platform.supportsUsb && " You can also connect directly via USB using an SM-PCE02 adapter."}
+              </span>
+            </div>
+          </div>
+        )}
+
         {platform.isIOS && !platform.isBluefy && (
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-sm leading-relaxed">
             <Smartphone size={20} className="text-amber-700 shrink-0 mt-0.5" />
@@ -83,7 +127,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           </div>
         )}
 
-        {!primaryTransport && !(platform.isIOS && !platform.isBluefy) && (
+        {!primaryTransport && !(platform.isIOS && !platform.isBluefy) && !(isBrave && bleAvailable !== true) && (
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-sm leading-relaxed">
             This browser does not provide a compatible connection. Try Chrome or Edge on a supported desktop device.
           </div>
@@ -124,6 +168,20 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
 
               {showOptions && (
                 <div className="mt-2 pt-3 border-t border-stone-100 flex flex-col gap-2 menu-dropdown">
+                  {hasBleOption && (
+                    <Button
+                      variant="outline"
+                      size="md"
+                      disabled={isBusy}
+                      onClick={() => connect("ble")}
+                      data-action="connect-ble"
+                      data-testid="btn-connect-ble"
+                      className="w-full justify-start gap-2"
+                    >
+                      <Bluetooth size={16} />
+                      <span>Bluetooth gateway</span>
+                    </Button>
+                  )}
                   {platform.supportsUsb && primaryTransport !== "usb" && (
                     <Button
                       variant="outline"

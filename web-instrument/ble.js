@@ -15,10 +15,23 @@ export class WebBleGatt {
         "Web Bluetooth requires a supported browser in a secure context. USB and Serial remain available.",
       );
     // Chooser is invoked in the user action; no background discovery/pairing.
-    return bluetooth.requestDevice({
-      filters: [{ services: [ETUBE_SERVICE] }],
-      optionalServices: [ETUBE_SERVICE],
-    });
+    return bluetooth
+      .requestDevice({
+        filters: [{ services: [ETUBE_SERVICE] }],
+        optionalServices: [ETUBE_SERVICE],
+      })
+      .catch((err) => {
+        if (
+          err &&
+          typeof err.message === "string" &&
+          /globally disabled/i.test(err.message)
+        ) {
+          throw new Error(
+            "Web Bluetooth is disabled globally in this browser. Use Google Chrome or Microsoft Edge to connect wirelessly, or enable brave://flags/#enable-web-bluetooth in Brave.",
+          );
+        }
+        throw err;
+      });
   }
   constructor(device, requestPasskey) {
     this.device = device;

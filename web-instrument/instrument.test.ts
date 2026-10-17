@@ -347,3 +347,107 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
     assert.equal(sim.unitAuthenticated, true);
   });
 });
+
+describe("Brave Browser Detection & Web Bluetooth Availability", () => {
+  const origNav = globalThis.navigator;
+
+  it("detects Brave browser via navigator.brave", async () => {
+    const { detectPlatform, isBraveBrowser } = await import("./src/core/platform.ts");
+
+    // Simulate Brave
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        brave: { isBrave: async () => true },
+        bluetooth: {},
+      },
+      configurable: true,
+    });
+
+    assert.equal(detectPlatform().isBrave, true);
+    assert.equal(await isBraveBrowser(), true);
+
+    // Simulate standard Chrome
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        bluetooth: {},
+      },
+      configurable: true,
+    });
+
+    assert.equal(detectPlatform().isBrave, false);
+    assert.equal(await isBraveBrowser(), false);
+
+    Object.defineProperty(globalThis, "navigator", { value: origNav, configurable: true });
+  });
+
+  it("checks Bluetooth availability properly in Brave vs Chrome", async () => {
+    const { checkBluetoothAvailability } = await import("./src/core/platform.ts");
+
+    // Brave with Bluetooth disabled globally (default)
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        brave: { isBrave: async () => true },
+        bluetooth: {
+          getAvailability: async () => false,
+        },
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), false);
+
+    // Brave without getAvailability implemented
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        brave: { isBrave: async () => true },
+        bluetooth: {},
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), false);
+
+    // Brave with Web Bluetooth flag enabled by user
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        brave: { isBrave: async () => true },
+        bluetooth: {
+          getAvailability: async () => true,
+        },
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), true);
+
+    // Standard Chrome with Bluetooth available
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        bluetooth: {
+          getAvailability: async () => true,
+        },
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), true);
+
+    Object.defineProperty(globalThis, "navigator", { value: origNav, configurable: true });
+  });
+
+  it("WebBleGatt.choose provides actionable guidance on globally disabled error", async () => {
+    const { WebBleGatt } = await import("./ble.js");
+    (globalThis as any).isSecureContext = true;
+
+    const mockBluetooth = {
+      requestDevice: async () => {
+        const err = new Error("Web Bluetooth API globally disabled.");
+        err.name = "NotFoundError";
+        throw err;
+      },
+    };
+
+    await assert.rejects(
+      WebBleGatt.choose(mockBluetooth),
+      /Web Bluetooth is disabled globally in this browser\. Use Google Chrome or Microsoft Edge to connect wirelessly, or enable brave:\/\/flags\/#enable-web-bluetooth in Brave\./,
+    );
+  });
+});

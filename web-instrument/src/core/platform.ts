@@ -6,6 +6,7 @@
 export interface PlatformInfo {
   isIOS: boolean;
   isBluefy: boolean;
+  isBrave: boolean;
   isWindows: boolean;
   isMacOS: boolean;
   isAndroid: boolean;
@@ -20,6 +21,7 @@ export function detectPlatform(): PlatformInfo {
     return {
       isIOS: false,
       isBluefy: false,
+      isBrave: false,
       isWindows: false,
       isMacOS: false,
       isAndroid: false,
@@ -39,6 +41,7 @@ export function detectPlatform(): PlatformInfo {
     (/Macintosh|MacIntel/.test(navPlatform) && navigator.maxTouchPoints > 1);
 
   const isBluefy = /Bluefy/i.test(ua);
+  const isBrave = typeof navigator !== "undefined" && Boolean((navigator as any).brave);
   const isWindows = /Win/i.test(navPlatform) || /Windows/i.test(ua);
   const isMacOS = /Mac/i.test(navPlatform) && !isIOS;
   const isAndroid = /Android/i.test(ua);
@@ -51,6 +54,7 @@ export function detectPlatform(): PlatformInfo {
   return {
     isIOS,
     isBluefy,
+    isBrave,
     isWindows,
     isMacOS,
     isAndroid,
@@ -59,6 +63,37 @@ export function detectPlatform(): PlatformInfo {
     supportsBluetooth,
     supportsUsb,
   };
+}
+
+export async function isBraveBrowser(): Promise<boolean> {
+  if (typeof navigator === "undefined") return false;
+  if ((navigator as any).brave?.isBrave) {
+    try {
+      return Boolean(await (navigator as any).brave.isBrave());
+    } catch {
+      return true;
+    }
+  }
+  return Boolean((navigator as any).brave);
+}
+
+export async function checkBluetoothAvailability(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !("bluetooth" in navigator)) {
+    return false;
+  }
+  const isBrave = typeof navigator !== "undefined" && Boolean((navigator as any).brave);
+  if (typeof (navigator as any).bluetooth?.getAvailability === "function") {
+    try {
+      return Boolean(await (navigator as any).bluetooth.getAvailability());
+    } catch {
+      return false;
+    }
+  }
+  // In Brave, Web Bluetooth is disabled globally by default if getAvailability is not present
+  if (isBrave) {
+    return false;
+  }
+  return true;
 }
 
 let activeWakeLock: any = null;
