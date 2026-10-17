@@ -251,9 +251,26 @@ export class WebMCPServer {
               .filter((op: any) => op.op === "set")
               .map((op: any) => ({ name: op.name, value: op.value }));
 
+      while (
+        this.controller.getState().phase === "connecting" ||
+        this.controller.getState().phase === "probing" ||
+        this.controller.getState().phase === "reading"
+      ) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      let currentLive = this.controller.getState().liveValues;
+      if (
+        Object.keys(currentLive).length === 0 &&
+        this.controller.getState().transport &&
+        this.controller.getState().phase === "ready"
+      ) {
+        currentLive = await this.controller.readAllParameters();
+      }
+
       const diff = ops.map((op) => ({
         name: op.name,
-        before: state.liveValues[op.name]?.value ?? null,
+        before: currentLive[op.name]?.value ?? null,
         after: op.value,
       }));
 

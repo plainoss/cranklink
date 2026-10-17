@@ -1,24 +1,24 @@
 /**
- * main.ts - Bootstrap for esteps Field Instrument (`web-instrument/`).
+ * main.ts - Bootstrap for cranklink Field Instrument (`web-instrument/`).
  */
 
+import { h, render } from "preact";
 import "../app.js";
 import { SessionController } from "./core/sessionController.ts";
 import { WebMCPServer } from "./core/webMcpServer.ts";
-import "./ui/instrumentApp.ts";
-import type { EstepsInstrumentElement } from "./ui/instrumentApp.ts";
+import { App } from "./App.tsx";
 
 const controller = new SessionController();
 const mcpServer = new WebMCPServer(controller);
 
 (window as any).estepsInstrumentController = controller;
+(window as any).cranklinkInstrumentController = controller;
 (window as any).webMcpServer = mcpServer;
 (window as any).mcp = mcpServer;
 
-const mount = document.getElementById("instrument-root") as EstepsInstrumentElement | null;
+const mount = document.getElementById("instrument-root") || document.getElementById("app");
 if (mount) {
-  customElements.upgrade(mount);
-  mount.bindController(controller);
+  render(h(App, { controller }), mount);
 }
 
 // Wait for WASM worker host (`window.estepsTerminal`) to initialize and attach

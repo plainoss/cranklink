@@ -24,6 +24,11 @@ import {
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
 } from "../domain/firmwarePackage.ts";
+import {
+  detectPlatform,
+  requestScreenWakeLock,
+  releaseScreenWakeLock,
+} from "./platform.ts";
 
 export interface TerminalHost {
   run: (line: string) => Promise<{ code: number }>;
@@ -49,6 +54,8 @@ export class SessionController {
   private terminal: TerminalHost | null = null;
   private logCounter = 0;
   private activeCapture: { stdout: string; stderr: string } | null = null;
+  private execQueue: Promise<any> = Promise.resolve();
+  private syncInProgress: Promise<DeviceIdentity> | null = null;
 
   constructor() {
     this.state = {
@@ -98,6 +105,11 @@ export class SessionController {
 
   private update(patch: Partial<InstrumentState>): void {
     this.state = { ...this.state, ...patch };
+    if (patch.phase === "flashing" || patch.phase === "committing") {
+      requestScreenWakeLock().catch(() => {});
+    } else if (patch.phase === "ready" || patch.phase === "error" || patch.phase === "disconnected") {
+      releaseScreenWakeLock();
+    }
     for (const listener of this.listeners) {
       listener(this.state);
     }
@@ -137,23 +149,29 @@ export class SessionController {
     if (!this.terminal) {
       throw new Error("WASM host is not initialized.");
     }
-    this.appendLog("cmd", `cranklink> ${commandLine}`);
-    const capture = { stdout: "", stderr: "" };
-    this.activeCapture = capture;
-    try {
-      const res = await this.terminal.run(commandLine);
-      // Strip echoed prompt line from stdout
-      const cleanStdout = capture.stdout
-        .replace(/^(cranklink|esteps)> [^\n]*\n/, "")
-        .trim();
-      return {
-        code: res.code,
-        stdout: cleanStdout,
-        stderr: capture.stderr.trim(),
-      };
-    } finally {
-      this.activeCapture = null;
-    }
+    const runTask = async () => {
+      this.appendLog("cmd", `cranklink> ${commandLine}`);
+      const capture = { stdout: "", stderr: "" };
+      this.activeCapture = capture;
+      try {
+        const res = await this.terminal!.run(commandLine);
+        // Strip echoed prompt line from stdout
+        const cleanStdout = capture.stdout
+          .replace(/^(cranklink|esteps)> [^\n]*\n/, "")
+          .trim();
+        return {
+          code: res.code,
+          stdout: cleanStdout,
+          stderr: capture.stderr.trim(),
+        };
+      } finally {
+        this.activeCapture = null;
+      }
+    };
+
+    const nextPromise = this.execQueue.then(runTask, runTask);
+    this.execQueue = nextPromise.catch(() => {});
+    return nextPromise;
   }
 
   /**
@@ -165,6 +183,21 @@ export class SessionController {
    *    and populates all live parameter values
    */
   public async connectAndSync(
+    transport: TransportType,
+    simOpts?: Partial<SimulatorOptions>,
+  ): Promise<DeviceIdentity> {
+    const task = this.doConnectAndSync(transport, simOpts);
+    this.syncInProgress = task;
+    try {
+      return await task;
+    } finally {
+      if (this.syncInProgress === task) {
+        this.syncInProgress = null;
+      }
+    }
+  }
+
+  private async doConnectAndSync(
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
   ): Promise<DeviceIdentity> {
@@ -194,7 +227,14 @@ export class SessionController {
           this.terminal.simulator.setFault(mergedSim.fault);
         }
       } else {
-        const conn = await this.exec(`connect ${transport}`);
+        let conn = await this.exec(`connect ${transport}`);
+        if (conn.code !== 0 && transport === "usb" && typeof navigator !== "undefined") {
+          const plat = detectPlatform();
+          if (plat.isWindows) {
+            this.appendLog("notice", "WebUSB unavailable or claimed by driver. Attempting WebSerial fallback...");
+            conn = await this.exec("connect serial");
+          }
+        }
         if (conn.code !== 0) {
           throw new Error(conn.stderr || `Connection failed (${conn.code})`);
         }
@@ -226,10 +266,12 @@ export class SessionController {
       await this.readAllParameters(transport, identity);
       this.refreshSnapshots();
 
-      this.update({
-        phase: "ready",
-        statusMessage: `Synced with ${identity.model} (${Object.keys(this.state.liveValues).length} parameters read).`,
-      });
+      if (this.state.phase === "reading" || this.state.phase === "probing") {
+        this.update({
+          phase: "ready",
+          statusMessage: `Synced with ${identity.model} (${Object.keys(this.state.liveValues).length} parameters read).`,
+        });
+      }
 
       return identity;
     } catch (err: any) {
@@ -242,6 +284,7 @@ export class SessionController {
       throw err;
     }
   }
+
 
   private async probeIdentity(transport: TransportType): Promise<DeviceIdentity> {
     const probeRes = await this.exec("probe");
@@ -344,12 +387,19 @@ export class SessionController {
         }
       }
 
-      this.update({
-        liveValues,
-        unavailableValues,
-        phase: "ready",
-        statusMessage: `Synced ${Object.keys(liveValues).length} parameters from ${identity.model}.`,
-      });
+      if (this.state.phase === "reading") {
+        this.update({
+          liveValues,
+          unavailableValues,
+          phase: "ready",
+          statusMessage: `Synced with ${identity.model} (${Object.keys(liveValues).length} parameters read).`,
+        });
+      } else {
+        this.update({
+          liveValues,
+          unavailableValues,
+        });
+      }
       return liveValues;
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -365,17 +415,14 @@ export class SessionController {
   private buildSessionFlags(
     transport: TransportType,
     identity: DeviceIdentity,
-    requiresUnitAuth: boolean,
+    requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    if (transport === "ble" || transport === "sim") {
-      const isModern = identity.modelSlug === "ep600" || identity.modelSlug === "ep801";
-      if (isModern || requiresUnitAuth) {
-        return `--ble-expect-serial ${cleanSerial} ${isModern ? "--ble-unit-auth " : ""}`;
-      }
-      return `--ble-expect-serial ${cleanSerial} `;
+    const isModern = identity.modelSlug === "ep600" || identity.modelSlug === "ep801";
+    if (isModern && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
+      return `--expect-serial ${cleanSerial} --ble-unit-auth `;
     }
-    return `--expect-motor-serial ${cleanSerial} `;
+    return `--expect-serial ${cleanSerial} `;
   }
 
   public async disconnect(): Promise<void> {
@@ -425,7 +472,7 @@ export class SessionController {
   public applyPresetMacro(preset: "eu_commute" | "trail_85nm" | "cargo_utility"): void {
     const nextStaged = { ...this.state.stagedValues };
     const stageIfPresent = (name: string, val: number | string) => {
-      if (this.state.schema.some((s) => s.name === name)) {
+      if (this.state.schema.length === 0 || this.state.schema.some((s) => s.name === name)) {
         const live = this.state.liveValues[name]?.value;
         if (String(live) === String(val)) {
           delete nextStaged[name];
@@ -460,6 +507,9 @@ export class SessionController {
    * Automatically creates pre-state backup snapshots and journals every operation.
    */
   public async commitStagedBatch(): Promise<any> {
+    if (this.syncInProgress) {
+      await this.syncInProgress.catch(() => {});
+    }
     const { transport, identity, stagedValues } = this.state;
     if (!transport || !identity) {
       throw new Error("No active drive unit session.");
@@ -546,6 +596,9 @@ export class SessionController {
   }
 
   public async captureManualSnapshot(): Promise<string> {
+    if (this.syncInProgress) {
+      await this.syncInProgress.catch(() => {});
+    }
     const { transport, identity } = this.state;
     if (!transport || !identity) {
       throw new Error("Connect to a drive unit to capture a snapshot.");
@@ -581,6 +634,9 @@ export class SessionController {
   }
 
   public async restoreBackupFile(filename: string): Promise<void> {
+    if (this.syncInProgress) {
+      await this.syncInProgress.catch(() => {});
+    }
     const { transport, identity } = this.state;
     if (!transport || !identity) {
       throw new Error("Connect to the target drive unit before restoring a backup.");
@@ -704,7 +760,7 @@ export class SessionController {
         }
       }
 
-      const inspectRes = await this.exec(`inspect '${file.name}'`);
+      const inspectRes = await this.exec(`firmware inspect '${file.name}'`);
       let metadata = null;
       let inspectErr: string | undefined;
       if (inspectRes.code === 0) {
@@ -738,7 +794,7 @@ export class SessionController {
     let companionEval = evaluateCompanionPair(dcasFile, rxFile);
     if (dcasFile && rxFile && !dcasFile.error && !rxFile.error) {
       const pairCheck = await this.exec(
-        `inspect '${dcasFile.filename}' --companion '${rxFile.filename}'`,
+        `firmware inspect '${dcasFile.filename}' --companion '${rxFile.filename}'`,
       );
       if (pairCheck.code !== 0) {
         companionEval = {
@@ -906,6 +962,12 @@ export class SessionController {
         },
       });
     });
+  }
+
+  public respondMcpApproval(approved: boolean): void {
+    if (this.state.mcpApproval) {
+      this.state.mcpApproval.resolve(approved);
+    }
   }
 
   private extractLastJsonObject(text: string): any | null {
