@@ -45,7 +45,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
   const primaryLabel = isBusy
     ? state.statusMessage || "Connecting…"
     : primaryTransport === "ble"
-      ? "Connect"
+      ? "Connect Cranklink via Bluetooth"
       : primaryTransport === "usb"
         ? "Connect with USB"
         : primaryTransport === "serial"

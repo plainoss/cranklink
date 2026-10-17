@@ -672,7 +672,7 @@ export function App({ controller }: AppProps) {
                 <span className="font-bold text-sm sm:text-base tracking-tight text-stone-900 truncate">
                   {currentGoal === "tune"
                     ? activeCategory === "geometry"
-                      ? "Hardware & Geometry"
+                      ? "Bike & Geometry"
                       : activeCategory === "profiles"
                       ? "Assist Profiles"
                       : activeCategory === "drivetrain"

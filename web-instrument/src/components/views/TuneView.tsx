@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   Plus,
   Minus,
-  Globe,
   Compass,
   Lightbulb,
   Cog,
@@ -228,19 +227,9 @@ export function TuneView({
     <div className="w-full flex flex-col gap-6 py-2">
       {/* 1. Bike Hardware, Region & Geometry Section */}
       {showGeometry && (
-        <Card className="p-4 sm:p-5 flex flex-col gap-4 shadow-xs border-stone-200">
-          <div>
-            <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
-              <Globe size={18} className="text-blue-600" />
-              <span>Market Region & Speed Standards</span>
-            </h3>
-            <p className="text-xs text-stone-500 mt-0.5">
-              Select your market regulatory jurisdiction to unlock regional assist speeds.
-            </p>
-          </div>
-
+        <Card className="p-0 flex flex-col divide-y divide-stone-200 shadow-xs border-stone-200">
           {/* Region / Destination Selector */}
-          <div className="p-3 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3">
+          <div className="px-4 py-4 sm:px-5 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-sm font-semibold text-stone-900 block">
@@ -272,7 +261,7 @@ export function TuneView({
 
           {/* Speed Assist Limit Slider */}
           <div
-            className="p-3 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3"
+            className="px-4 py-4 sm:px-5 flex flex-col gap-3"
             data-testid="param-row-speed-limit"
           >
             <div className="flex items-center justify-between">
@@ -327,7 +316,7 @@ export function TuneView({
 
           {/* Tire Circumference Stepper & Presets */}
           <div
-            className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3"
+            className="px-4 py-4 sm:px-5 flex flex-col gap-3"
             data-testid="param-row-tire-circumference"
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -403,7 +392,7 @@ export function TuneView({
           </div>
 
           {/* Wired Light Terminal (Lamp) */}
-          <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex items-center justify-between">
+          <div className="px-4 py-4 sm:px-5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Lightbulb size={18} className="text-amber-600" />
               <div>
@@ -439,9 +428,9 @@ export function TuneView({
           </div>
 
           {/* Advanced Geometry & Installation Details */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4 px-4 py-4 sm:px-5">
             {/* Motor Mounting Angle */}
-            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-semibold text-stone-900 block">
@@ -468,7 +457,7 @@ export function TuneView({
             </div>
 
             {/* Speedometer Display Offset */}
-            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-semibold text-stone-900 block">
@@ -495,7 +484,7 @@ export function TuneView({
             </div>
 
             {/* Lighting Reserve Time */}
-            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-semibold text-stone-900 block">
@@ -522,7 +511,7 @@ export function TuneView({
             </div>
 
             {/* Walk Assist Toggle */}
-            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-semibold text-stone-900 block">
                   Walk Assist Mode
