@@ -27,7 +27,7 @@ The concrete duplicate-start change is in [`src/ble.rs:678`](https://github.com/
 | Before: `0cfb180f576544d75a63a7fbe36f38670ae8679c` | Pass | 1 | 1 | Fail |
 | Fixed: `158e8f5bc8d5e379c08ee3fa4ca4d59c9af10789` | Pass | 1 | 0 | Pass |
 
-This simulator branch started at PR #9 and retains the earlier client session behavior: its three representative CLI probes also record the extra start. The 17-case GATT success report checks reads and error handling; it does not enforce the single-start contract. Run the separate pinned-revision check for that regression.
+The initial simulator branch started at PR #9; its three representative CLI probes recorded the extra start despite successful reads. The PR branch has since been rebased onto main including PR #11. Historical before/after evidence remains pinned to the source revisions above. The GATT integration report checks reads and error handling; run the separate pinned-revision check for the single-start regression.
 
 The assertion therefore fails before PR #11 and passes after it. Both probes succeed, so ordinary read success would not have detected this difference. This separate probe check establishes the sequence contract; the repeated browser-worker save comparison follows below. The compact [validation report](../tools/firmware-sim/pr11-validation.json) contains counts and source revisions without raw firmware or traces.
 

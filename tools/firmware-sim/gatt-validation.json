@@ -800,5 +800,273 @@
       }
     ],
     "client_binary_sha256": "3fdddaed008d7fee535530cb145db85dfe0d182135707442d0ec91a55e87ad27"
+  },
+  "post_rebase_verification": {
+    "passed": true,
+    "client_binary_sha256": "6fd2d264633a73617421665e01f6f61d5235cc029b8a443f7e05e4a371491537",
+    "stock_lifecycle_validation": {
+      "passed": true,
+      "gateway_motor_pairs": 60,
+      "profiles": [
+        {
+          "id": "sc-em800-4.0.0",
+          "sha256": "6239988c78ea734cee44c7c61477a9498dfa79f38e392d6c38db580687482bc8"
+        },
+        {
+          "id": "sc-em800-4.1.0",
+          "sha256": "9a5e8212034c17cb3ce56db59edacf99c69971f952ff13b03fb55ca59e9b3c82"
+        },
+        {
+          "id": "sc-em800-4.3.0",
+          "sha256": "0f2c469d62803df67df6bd09d46fdaa4201c71b8f8d9fec6c84ef964b6415e32"
+        },
+        {
+          "id": "sc-em800-4.4.0",
+          "sha256": "e473f3326615d83cd2e60124ebe7df73541b4e23bb417b3ac8615ca4dd970617"
+        },
+        {
+          "id": "sc-em800-4.5.0",
+          "sha256": "8aa8bbe626c44daefb56b386f616d68146001dfd60fd284c0c2ba6770c17877d"
+        },
+        {
+          "id": "sc-em800-4.6.0",
+          "sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f"
+        },
+        {
+          "id": "ep800-4.1.10",
+          "sha256": "4ab93e74332427de4f035b32bee35a9fe4600d281f4434d39ddc5de8f4b379fb"
+        },
+        {
+          "id": "ep800-4.2.0",
+          "sha256": "f2f2d18441b7651620a0aacfd4f9f31b2a97b6397bf0f03b2171ff9652cf2551"
+        },
+        {
+          "id": "ep600-4.6.0",
+          "sha256": "ccea58cacf7588b0d1a9c6037cde81f25510b4b2fbf59fdaf99b8099d16f3b80"
+        },
+        {
+          "id": "ep600-4.4.1",
+          "sha256": "c2bdeb052b7f5d89190674346d1d4f3491e1a7eb05b3c79f17f86983e4fff6ac"
+        },
+        {
+          "id": "ep500-4.1.1",
+          "sha256": "6dd6ebf14f04a2d363cced8f77a8c8f86b64583c71e2abb9b2cc0fe64e2d1952"
+        },
+        {
+          "id": "ep500-4.1.0",
+          "sha256": "b273042b1f0e69aa35db227e5d590efc845acd6c40381e0ba0aab4d3e5a2333c"
+        },
+        {
+          "id": "ep800-4.1.11",
+          "sha256": "0afc6abc21ee462197f1f420e40b398cf86bf8230724ffc4cc48dc89b5fe2aa9"
+        },
+        {
+          "id": "e6100-4.8.0",
+          "sha256": "47fa9c5d52d03987c919d623ee6cb9aae7182548084c51115cffbe7cb3dade7c"
+        },
+        {
+          "id": "e5000-4.5.0",
+          "sha256": "44806bd54aedff95a88bb73fafe0f0581297f2f67b2ea35545cea012899d90bb"
+        },
+        {
+          "id": "e5100-4.1.0",
+          "sha256": "f3bcba12ac9685123fac3bc4c5198b8ae7da64753b8f8804bbfdbee87e0207fe"
+        }
+      ],
+      "repeated_gets_per_pair": 20,
+      "total_repeated_gets": 1200,
+      "checks": "modeled auth; actual PCE discovery/link; repeated firmware GETs; actual post-handoff motor stop; radio boundary negative tests",
+      "diagnostic": ".........\n----------------------------------------------------------------------\nRan 9 tests in 12.037s\n\nOK"
+    },
+    "base_revision": "8cf69780e297bf5106d1aef915f13bef41f709f7",
+    "cases": [
+      {
+        "gateway": "sc-em800-4.0.0",
+        "motor": "ep800-4.1.10",
+        "case": "probe",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.0.0",
+        "motor": "ep800-4.1.10",
+        "case": "settings read destination",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.0.0",
+        "motor": "ep800-4.1.10",
+        "case": "settings read lamp",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.0.0",
+        "motor": "ep800-4.1.10",
+        "case": "units",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.4.0",
+        "motor": "ep800-4.2.0",
+        "case": "probe",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.4.0",
+        "motor": "ep800-4.2.0",
+        "case": "settings read destination",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.4.0",
+        "motor": "ep800-4.2.0",
+        "case": "settings read lamp",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.4.0",
+        "motor": "ep800-4.2.0",
+        "case": "units",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "dropped normal responses",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "duplicate FREE notifications",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "normal topology unsupported",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "probe",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "settings read destination",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "settings read lamp",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "stale FREE notification before actual response",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "units",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 1,
+          "explicit_motor_starts": 0,
+          "total": 1
+        }
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "motor": "ep600-4.6.0",
+        "case": "wrong synthetic PIN",
+        "passed": true,
+        "pc_start_contract": {
+          "gateway_starts": 0,
+          "explicit_motor_starts": 0,
+          "total": 0
+        }
+      }
+    ]
   }
 }

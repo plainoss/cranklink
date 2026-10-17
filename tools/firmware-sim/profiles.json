@@ -284,7 +284,10 @@
     "sha256": "ccea58cacf7588b0d1a9c6037cde81f25510b4b2fbf59fdaf99b8099d16f3b80",
     "group1_table": 73000,
     "series_ram": 536871844,
-    "rx_cache": 536881564
+    "rx_cache": 536881564,
+    "cargo_ram": 536881952,
+    "cargo_fixture": "00",
+    "cargo_provenance": "Synthetic standard EP600 model variant 00, not recovered device NVM. Stock GET16/7C reply builder0x1BFF0 calls0x1D20A, which calls0x2676A and seven-byte copy0x27AB4 from RAM0x20002B20 through scratch0x20002C44; reply construction and transport execute unchanged."
   },
   {
     "id": "sc-e6100-4.1.0",

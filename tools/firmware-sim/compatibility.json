@@ -3,7 +3,7 @@
   "passed": true,
   "level": "function-level packet co-simulation",
   "hardware_access": false,
-  "profiles_sha256": "135d3b536767661d1bc87b2bfd9405fc61eeb13e9aea1d9f2c18d33bd8b6ae7d",
+  "profiles_sha256": "1a4f4536171613941a797f418ef71d35c2dbbb628bb6366fae653994e0c3d1ad",
   "modeled": [
     "initialized RAM/plain-memory MMIO",
     "motor RX entry",
@@ -40,7 +40,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -49,7 +49,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -58,7 +58,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -67,7 +67,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -76,7 +76,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -85,7 +85,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -94,7 +94,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -103,7 +103,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -112,7 +112,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.4.0",
@@ -121,7 +121,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -130,7 +130,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -139,7 +139,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -148,7 +148,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -157,7 +157,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -166,7 +166,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -175,7 +175,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -184,7 +184,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -193,7 +193,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -202,7 +202,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.6.0",
@@ -211,7 +211,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -220,7 +220,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -229,7 +229,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -238,7 +238,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -247,7 +247,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -256,7 +256,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -265,7 +265,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -274,7 +274,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -283,7 +283,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -292,7 +292,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.0.0",
@@ -301,7 +301,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -310,7 +310,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -319,7 +319,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -328,7 +328,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -337,7 +337,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -346,7 +346,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -355,7 +355,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -364,7 +364,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -373,7 +373,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -382,7 +382,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.1.0",
@@ -391,7 +391,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -400,7 +400,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -409,7 +409,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -418,7 +418,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -427,7 +427,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -436,7 +436,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -445,7 +445,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -454,7 +454,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -463,7 +463,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -472,7 +472,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.3.0",
@@ -481,7 +481,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -490,7 +490,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -499,7 +499,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -508,7 +508,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -517,7 +517,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -526,7 +526,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -535,7 +535,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -544,7 +544,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -553,7 +553,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -562,7 +562,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-em800-4.5.0",
@@ -571,7 +571,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -580,7 +580,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -589,7 +589,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -598,7 +598,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -607,7 +607,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -616,7 +616,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -625,7 +625,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -634,7 +634,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -643,7 +643,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -652,7 +652,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e6100-4.1.0",
@@ -661,7 +661,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": null,
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -670,7 +670,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -679,7 +679,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -688,7 +688,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+      "trace_sha256": "40a2bc0b89aa59bcf4e1227ba8827f6a3b2e548e4fb67f7489f67442d28b4624"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -697,7 +697,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -706,7 +706,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "a4aef2909869ea93b460cb875ff5ab0517c9a8261d9aaf1df55892c49c25a4f0"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -715,7 +715,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -724,7 +724,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -733,7 +733,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -742,7 +742,7 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     },
     {
       "gateway": "sc-e7000-4.1.0",
@@ -751,7 +751,8 @@
       "all_passed": true,
       "cleanup_verified": true,
       "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
-      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+      "trace_sha256": "2a7e0bb54f0b42e09caa4c29d7bc554045da3536d26ba19f0bc1056316b54d38"
     }
-  ]
+  ],
+  "trace_sha256_encoding": "UTF-8 canonical JSON (sorted keys, compact separators), ordered list of fault/trace objects per combination"
 }

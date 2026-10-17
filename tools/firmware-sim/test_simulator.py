@@ -358,6 +358,30 @@ class StockFirmwareTests(unittest.TestCase):
         cls.gateway = cls.fixtures['sc-em800-4.0.0' if 'sc-em800-4.0.0' in gateways else gateways[0]]
         cls.motor = cls.fixtures['ep800-4.1.10' if 'ep800-4.1.10' in motors else motors[0]]
 
+    def test_ep600_standard_model_fixture_is_read_by_stock_get_handler(self):
+        if not {'sc-em800-4.6.0','ep600-4.6.0'} <= self.fixtures.keys():
+            self.skipTest('requires SC-EM8004.6.0 and EP6004.6.0 fixtures')
+        from fw_sim.scenarios import setup
+        gateway,motor = setup(self.fixtures['sc-em800-4.6.0'],self.fixtures['ep600-4.6.0'])
+        bus = Bus(gateway,motor)
+        for packet in gateway.start(): bus.enqueue(packet)
+        bus.drain()
+        self.assertEqual(motor.profile['cargo_fixture'],'00')
+        before = len(bus.replies)
+        bus.enqueue(gateway.send(bytes.fromhex('167c00')))
+        bus.drain()
+        self.assertEqual(bytes.fromhex(bus.replies[before]['payload']),b'\x16\x7e00'+b'\0'*5)
+        # The recovered cache address, rather than an injected response, feeds
+        # the unmodified firmware builder and the gateway's reassembly path.
+        motor.u.mem_write(motor.profile['cargo_ram'],b'01'+b'\0'*5)
+        before = len(bus.replies)
+        bus.enqueue(gateway.send(bytes.fromhex('167c00')))
+        bus.drain()
+        self.assertEqual(bytes.fromhex(bus.replies[before]['payload']),b'\x16\x7e01'+b'\0'*5)
+        for packet in gateway.link_stop(): bus.enqueue(packet)
+        bus.drain()
+        self.assertFalse(motor.connected)
+
     def test_native_endpoint_consumes_more_than_one_host_ring_of_replies(self):
         from fw_sim.endpoint import Endpoint
         endpoint = Endpoint(self.gateway, self.motor)
