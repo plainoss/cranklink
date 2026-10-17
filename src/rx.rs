@@ -87,16 +87,35 @@ pub fn flash(
     session: &mut Session,
     slot: u8,
     image: &Firmware,
+    progress: impl FnMut(usize, usize),
+) -> Result<Receipt> {
+    flash_with_policy(session, slot, image, false, progress)
+}
+
+pub fn flash_with_policy(
+    session: &mut Session,
+    slot: u8,
+    image: &Firmware,
+    allow_unverified_model: bool,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Receipt> {
     ensure!(
         image.metadata.kind == FirmwareKind::Renesas,
         "RX requires a plaintext M/Renesas image"
     );
-    ensure!(
-        image.metadata.series == 0x23 && image.metadata.unit == 0,
-        "RX writer supports only the documented DU-EP800 family 23/00"
-    );
+    if !allow_unverified_model {
+        ensure!(
+            image.metadata.series == 0x23 && image.metadata.unit == 0,
+            "RX writer supports only the documented DU-EP800 family 23/00 without --allow-unverified-model"
+        );
+    } else {
+        ensure!(
+            crate::firmware::is_supported_rx_target(image.metadata.series, image.metadata.unit),
+            "RX writer does not support firmware family {:02X}/{:02X}",
+            image.metadata.series,
+            image.metadata.unit
+        );
+    }
     ensure!(!image.data.is_empty(), "empty RX image");
     ensure!(
         BASE.checked_add(image.data.len().div_ceil(SECTOR) * SECTOR)
@@ -105,7 +124,7 @@ pub fn flash(
     );
     let boot = read_boot(session, slot)?;
     if boot.transport == Transport::Smpce02 {
-        return flash_fast(session, slot, image, boot, &mut progress);
+        return flash_fast(session, slot, image, boot, allow_unverified_model, &mut progress);
     }
     // All capability and size checks above precede this destructive start.
     legacy(session, 0x21, [0, 0x0e, 0], 0x31, 6)
@@ -218,10 +237,10 @@ fn fast_transfer_reply(frame: &Frame, slot: u8, response: u8, packet_id: u8) -> 
         && frame.payload[3] == packet_id
 }
 
-fn validate_fast_capabilities(boot: &Boot) -> Result<()> {
+fn validate_fast_capabilities(boot: &Boot, allow_unverified_model: bool) -> Result<()> {
     ensure!(
-        !boot.retry_capable,
-        "retry-capable RX fast bootloader is not hardware validated; refusing before erase"
+        !boot.retry_capable || allow_unverified_model,
+        "retry-capable RX fast bootloader is not hardware validated; refusing before erase (pass --allow-unverified-model to authorize)"
     );
     Ok(())
 }
@@ -231,9 +250,10 @@ fn flash_fast(
     slot: u8,
     image: &Firmware,
     boot: Boot,
+    allow_unverified_model: bool,
     progress: &mut impl FnMut(usize, usize),
 ) -> Result<Receipt> {
-    validate_fast_capabilities(&boot)?;
+    validate_fast_capabilities(&boot, allow_unverified_model)?;
     // Both protocol variants share the transfer wrapper and erase value. The
     // retry capability changes the checksum block from1080 to2100 bytes.
     let block_len = if boot.retry_capable { 2100 } else { 1080 };
@@ -431,9 +451,8 @@ pub(crate) fn flash_legacy(
     );
     ensure!(
         image.metadata.kind == FirmwareKind::Renesas
-            && image.metadata.series == 0x23
-            && image.metadata.unit == 0,
-        "BLE RX requires EP800 M firmware"
+            && crate::firmware::is_supported_rx_target(image.metadata.series, image.metadata.unit),
+        "BLE RX requires a supported drive unit M firmware"
     );
     ensure!(
         !image.data.is_empty() && image.data.len().div_ceil(SECTOR) * SECTOR <= 0x40000,
@@ -842,13 +861,14 @@ mod tests {
             capability_sequence: 0,
             retry_capable: false,
         };
-        validate_fast_capabilities(&boot).unwrap();
+        validate_fast_capabilities(&boot, false).unwrap();
         boot.capability_sequence = 1;
         boot.retry_capable = true;
-        assert!(validate_fast_capabilities(&boot)
+        assert!(validate_fast_capabilities(&boot, false)
             .unwrap_err()
             .to_string()
             .contains("before erase"));
+        validate_fast_capabilities(&boot, true).unwrap();
     }
     #[test]
     fn eof_checksum_includes_padding_only_in_window() {

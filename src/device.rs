@@ -626,7 +626,7 @@ impl Session {
         self.fast_boot_command(slot, 0x4c, slot, 0x55)?;
         let board = self.fast_boot_command(slot, 0x2f, 0, 0x3b)?;
         ensure!(
-            board.payload.len() >= 4 && board.payload[3] == 1,
+            board.payload.len() >= 4 && crate::firmware::is_allowed_motor_board(board.payload[3]),
             "fast bridge board mismatch: {}",
             hex::encode(&board.payload)
         );
