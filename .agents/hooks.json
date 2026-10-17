@@ -1,0 +1,11 @@
+{
+  "safeguards": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./tools/agent-stop-hook.sh",
+        "timeout": 30
+      }
+    ]
+  }
+}

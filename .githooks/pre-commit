@@ -1,29 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "==> [pre-commit] Checking Rust formatting..."
-if command -v cargo-fmt >/dev/null 2>&1 || cargo fmt --version >/dev/null 2>&1; then
-  cargo fmt --check || {
-    echo "Error: Rust code formatting check failed. Run 'cargo fmt' to fix."
-    exit 1
-  }
+# Use nano-staged for fast file-level checks on staged files
+if [ -d "web-instrument/node_modules" ]; then
+  npx --prefix web-instrument nano-staged --quiet --bail
+else
+  # Fast fallback if web-instrument has not yet run npm ci
+  cargo fmt --check
 fi
-
-echo "==> [pre-commit] Running quick cargo check..."
-cargo check --locked --features ble --bin cranklink
-
-# If web-instrument files changed in the git commit, check TypeScript & tests
-if git diff --cached --name-only | grep -q '^web-instrument/'; then
-  echo "==> [pre-commit] Checking web-instrument types & unit tests..."
-  (
-    cd web-instrument
-    if [ ! -d "node_modules" ]; then
-      echo "Installing node_modules..."
-      npm ci
-    fi
-    npm run typecheck
-    npm test
-  )
-fi
-
-echo "==> [pre-commit] All pre-commit checks passed!"
