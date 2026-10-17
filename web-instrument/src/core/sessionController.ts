@@ -18,7 +18,7 @@ import type {
   WorkspaceSection,
   SettingSectionId,
 } from "../types.ts";
-import { enrichSchema, formatSettingValue } from "../domain/schema.ts";
+import { enrichSchema, formatSettingValue, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
@@ -56,6 +56,7 @@ export class SessionController {
   private activeCapture: { stdout: string; stderr: string } | null = null;
   private execQueue: Promise<any> = Promise.resolve();
   private syncInProgress: Promise<DeviceIdentity> | null = null;
+  private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
 
   constructor() {
     this.state = {
@@ -140,7 +141,12 @@ export class SessionController {
       text: trimmed,
     };
     const nextLogs = [...this.state.logs.slice(-299), entry];
-    this.update({ logs: nextLogs });
+    this.update({
+      logs: nextLogs,
+      ...(stream === "notice" && ["connecting", "probing"].includes(this.state.phase)
+        ? { statusMessage: trimmed }
+        : {}),
+    });
   }
 
   private async exec(
@@ -431,6 +437,7 @@ export class SessionController {
         await this.exec("disconnect");
       }
     } finally {
+      this.speedDestinationBeforeAuto = null;
       this.update({
         phase: "disconnected",
         transport: null,
@@ -449,23 +456,60 @@ export class SessionController {
    * If the new value equals the live value on the motor, it automatically unstages.
    */
   public stageParameter(name: string, value: number | string): void {
-    const live = this.state.liveValues[name]?.value;
     const nextStaged = { ...this.state.stagedValues };
-    if (live !== undefined && String(live) === String(value)) {
-      delete nextStaged[name];
-    } else {
-      nextStaged[name] = value;
+    const stage = (key: string, next: number | string) => {
+      const live = this.state.liveValues[key]?.value;
+      if (live !== undefined && String(live) === String(next)) delete nextStaged[key];
+      else nextStaged[key] = next;
+    };
+    const model = this.state.identity?.modelSlug;
+    if (name === "speed-limit") {
+      const priorAuto = this.speedDestinationBeforeAuto;
+      // Recompute from the user's destination choice, so reverting speed also
+      // removes a destination change that was only needed by the faster speed.
+      if (this.speedDestinationBeforeAuto) {
+        const previous = this.speedDestinationBeforeAuto.staged;
+        if (previous === undefined) delete nextStaged.destination;
+        else nextStaged.destination = previous;
+        this.speedDestinationBeforeAuto = null;
+      }
+      const current = Number(nextStaged.destination ?? this.state.liveValues.destination?.value);
+      const choices = this.state.schema.find((s) => s.name === "destination")?.choices;
+      const compatible = destinationForSpeed(model, Number(value), current, choices);
+      if (compatible === undefined) {
+        this.speedDestinationBeforeAuto = priorAuto;
+        this.update({ errorBanner: `No supported destination permits ${value} km/h.` });
+        return;
+      }
+      if (compatible !== current) {
+        this.speedDestinationBeforeAuto = { staged: nextStaged.destination };
+        stage("destination", compatible);
+      }
+    } else if (name === "destination") {
+      this.speedDestinationBeforeAuto = null;
+      const range = destinationSpeedRange(model, Number(value));
+      const speed = Number(nextStaged["speed-limit"] ?? this.state.liveValues["speed-limit"]?.value);
+      if (range && Number.isFinite(speed)) {
+        stage("speed-limit", Math.min(range.max, Math.max(range.min, speed)));
+      }
     }
+    stage(name, value);
     this.update({ stagedValues: nextStaged, errorBanner: null });
   }
 
   public revertParameter(name: string): void {
+    const live = this.state.liveValues[name]?.value;
+    if ((name === "speed-limit" || name === "destination") && live !== undefined && live !== null) {
+      this.stageParameter(name, live);
+      return;
+    }
     const nextStaged = { ...this.state.stagedValues };
     delete nextStaged[name];
     this.update({ stagedValues: nextStaged });
   }
 
   public discardAllStaged(): void {
+    this.speedDestinationBeforeAuto = null;
     this.update({ stagedValues: {}, errorBanner: null });
   }
 
@@ -483,6 +527,7 @@ export class SessionController {
     };
 
     if (preset === "eu_commute") {
+      this.speedDestinationBeforeAuto = null;
       stageIfPresent("destination", this.state.identity?.modelSlug === "ep800-crg" ? 3 : 3);
       stageIfPresent("speed-limit", 25);
       stageIfPresent("tire-circumference", 2280);
@@ -575,6 +620,7 @@ export class SessionController {
       }
 
       this.refreshSnapshots();
+      this.speedDestinationBeforeAuto = null;
       this.update({
         phase: "ready",
         liveValues: nextLive,
@@ -587,7 +633,7 @@ export class SessionController {
       const msg = err?.message || String(err);
       this.refreshSnapshots();
       this.update({
-        phase: "error",
+        phase: "ready",
         errorBanner: msg,
         statusMessage: `Transaction halted: ${msg}`,
       });

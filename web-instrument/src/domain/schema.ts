@@ -73,6 +73,31 @@ export const MODERN_DESTINATION_LABELS: Record<number, string> = {
   5: "US Class 3 (45 km/h)",
 };
 
+// Keep these ranges aligned with the destination validation in src/settings.rs.
+export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
+  const modern = model === "ep600" || model === "ep801";
+  if (destination === 1) return { min: 19, max: 32 };
+  if (destination === 0 || destination === 3 || (!modern && destination === 4)) {
+    return { min: 15, max: 25 };
+  }
+  if (modern && destination === 2) return { min: 14, max: 24 };
+  if (modern && destination === 5) return { min: 19, max: 45 };
+  return undefined;
+}
+
+export function modelSpeedRange(model: string | undefined): { min: number; max: number } {
+  return model === "ep600" || model === "ep801" ? { min: 14, max: 45 } : { min: 15, max: 32 };
+}
+
+export function destinationForSpeed(model: string | undefined, speed: number, preferred: number, choices?: number[]): number | undefined {
+  const candidates = [preferred, 0, 1, 2, 3, 4, 5];
+  return candidates.find((destination) => {
+    if (choices?.length && !choices.includes(destination)) return false;
+    const range = destinationSpeedRange(model, destination);
+    return range && Number.isFinite(speed) && speed >= range.min && speed <= range.max;
+  });
+}
+
 interface SettingAnnotation {
   label: string;
   description: string;

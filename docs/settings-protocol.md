@@ -60,4 +60,6 @@ Use the schema's input units: speed in km/h, cadence in rpm, torque in Nm, light
 
 Speed and maximum power are checked against the motor's destination and model limits. EP800 does not expose an independent OEM speed-ceiling setting. An unset EP800 destination stops speed/power validation; select an explicit supported destination with the required authentication first. EP600/EP801 can use the factory destination when the OEM destination is unset; missing or malformed values stop the write. The device may impose further limits.
 
+In the browser, speed sliders and presets share the full model-supported range. Selecting a speed automatically stages a compatible destination if needed; the save review shows both changes, and the batch writes destination before speed. Selecting a destination explicitly adjusts the staged speed to its allowed range. Failed saves retain staged changes and display the transaction error in the settings screen.
+
 Unset maintenance date/distance reads as JSON `null`. `maintenance-date` accepts `YYYY-MM-DD` in 2000–2099 or `unset`; `maintenance-distance` also accepts `unset`. Initialize an unset calendar with `maintenance-date` before editing individual year/month/day fields.

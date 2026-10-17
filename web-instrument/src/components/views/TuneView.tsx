@@ -28,6 +28,7 @@ import {
   LEGACY_DESTINATION_LABELS,
   MODERN_DESTINATION_LABELS,
   TIRE_PRESETS,
+  modelSpeedRange,
 } from "../../domain/schema.ts";
 
 export type TuneCategory =
@@ -156,8 +157,10 @@ export function TuneView({
       ? LEGACY_DESTINATION_LABELS
       : MODERN_DESTINATION_LABELS;
 
-  const maxSpeedCeiling =
-    destinationVal === 5 ? 45 : destinationVal === 1 ? 32 : 25;
+  const speedRange = modelSpeedRange(state.identity?.modelSlug);
+  const speedSpec = state.schema.find((setting) => setting.name === "speed-limit");
+  const minSpeed = speedSpec?.userMin ?? speedRange.min;
+  const maxSpeed = speedSpec?.userMax ?? speedRange.max;
 
   const stagedCount = Object.keys(state.stagedValues).length;
 
@@ -286,18 +289,22 @@ export function TuneView({
             <Slider
               label="Assist Cutoff Velocity"
               value={speedLimit}
-              min={15}
-              max={maxSpeedCeiling}
+              min={minSpeed}
+              max={maxSpeed}
               step={1}
               unit="km/h"
               onChange={(val) => handleStage("speed-limit", val)}
               valueFormatter={(val) => `${val} km/h`}
             />
 
+            <p className="text-xs text-stone-500" data-testid="speed-destination-hint">
+              A compatible region is staged automatically when needed. Review both changes before saving.
+            </p>
+
             {/* Quick Speed Presets */}
             <div className="flex items-center gap-2 flex-wrap pt-1">
               <span className="text-[11px] font-medium text-stone-500">Presets:</span>
-              {[20, 25, 32].map((spd) => (
+              {[20, 25, 32].filter((spd) => spd >= minSpeed && spd <= maxSpeed).map((spd) => (
                 <button
                   type="button"
                   key={spd}
@@ -1104,8 +1111,12 @@ export function TuneView({
               variant="custom"
               size="sm"
               onClick={async () => {
-                await controller.commitStagedBatch();
-                onMobileReviewOpenChange(false);
+                try {
+                  await controller.commitStagedBatch();
+                  onMobileReviewOpenChange(false);
+                } catch {
+                  // Keep the staged values and display the transaction error.
+                }
               }}
               data-testid="btn-commit-batch"
               className="bg-white text-stone-950 hover:bg-stone-200 text-xs font-bold min-h-[44px] min-w-[44px]"

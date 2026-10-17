@@ -56,7 +56,7 @@ pub(super) fn open_device(info: nusb::DeviceInfo) -> Result<Box<dyn Port>> {
         info.vendor_id() == VID && info.product_id() == PID,
         "only SM-PCE02 1E44:7151 is supported"
     );
-    if !matches!(info.device_version(), 0x0400 | 0x0600 | 0x1000) {
+    if !matches!(info.device_version(), 0x0400 | 0x0600 | 0x0A00 | 0x1000) {
         bail!(
             "unsupported FTDI revision {:04X}; no motor command sent",
             info.device_version()
