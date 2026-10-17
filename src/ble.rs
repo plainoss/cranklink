@@ -463,8 +463,11 @@ impl BleSession {
         );
         let stock = self.gateway(0x13, &[1, 0x1c, 0], 0x33)?;
         ensure!(
-            stock.starts_with(&[1, 0x1e, 0x23, 2]),
-            "BLE master routing requires the supported SC-EM800 stock identity"
+            stock.len() >= 4
+                && stock.starts_with(&[1, 0x1e])
+                && !matches!(stock[2], 0 | 0xff)
+                && stock[3] != 0xff,
+            "truncated or invalid BLE gateway stock identity"
         );
         self.master_routing_active = true; // Also restore after a partial setup.
         let reply = self.gateway(3, &[0x20], 0x23)?;
@@ -1004,6 +1007,7 @@ mod tests {
         asynchronous_mode_completion: bool,
         motor_slot: Option<u8>,
         gateway_version: Option<Vec<u8>>,
+        gateway_stock: Option<Vec<u8>>,
         reject_pc_stop: bool,
         timeout_pc_stop: bool,
         reject_gateway_pc_stop: bool,
@@ -1069,7 +1073,13 @@ mod tests {
                     }
                     0x13 => {
                         assert_eq!(&data[2..], &[1, 0x1c, 0]);
-                        vec![0x33, 1, 0x1e, 0x23, 2, 0xff, 0xff]
+                        let mut reply = vec![0x33];
+                        reply.extend(
+                            s.gateway_stock
+                                .clone()
+                                .unwrap_or(vec![1, 0x1e, 0x23, 2, 0xff, 0xff]),
+                        );
+                        reply
                     }
                     4 if s.master_mode => vec![0x24, 0xa0],
                     4 if s.initial_extended_mode => hex::decode(if s.mode_negotiated {
@@ -1428,6 +1438,53 @@ mod tests {
         assert_eq!(session.pc_slot, 0);
         session.stop().unwrap();
         assert!(!session.master_routing_active);
+    }
+    #[test]
+    fn alternate_gateway_stock_identities_use_runtime_master_capabilities() {
+        for stock in [
+            vec![1, 0x1e, 0x31, 2, 0xff, 0xff], // SC-EN600
+            vec![1, 0x1e, 0x32, 2, 0xff, 0xff], // SC-EN610
+            vec![1, 0x1e, 0x2f, 0, 0xff, 0xff], // EW-EX310
+            vec![1, 0x1e, 0x11, 8, 0xff, 0xff], // EW-WU101
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().gateway_stock = Some(stock);
+            state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+            session.set_master_routing(true).unwrap();
+            session.authenticate().unwrap();
+            let id = session.start_component(None, Some("DU-EP800-CRG")).unwrap();
+            assert_eq!(id.slot, 13);
+            assert_eq!(session.pc_slot, 0);
+            session.stop().unwrap();
+            assert!(!session.master_routing_active);
+            assert!(!state.borrow().master_mode);
+        }
+    }
+    #[test]
+    fn invalid_or_truncated_gateway_stock_does_not_change_bus_role() {
+        for stock in [
+            vec![1, 0x1e, 0x23],
+            vec![1, 0x1f, 0x23, 2],
+            vec![1, 0x1e, 0, 2],
+            vec![1, 0x1e, 0xff, 2],
+            vec![1, 0x1e, 0x23, 0xff],
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().gateway_stock = Some(stock);
+            session.set_master_routing(true).unwrap();
+            session.authenticate().unwrap();
+            assert!(session
+                .discover_units()
+                .unwrap_err()
+                .to_string()
+                .contains("gateway stock identity"));
+            assert!(!session.master_routing_active);
+            assert!(!state
+                .borrow()
+                .writes
+                .contains(&(PCE_COMMAND, vec![0, 3, 0x20])));
+            session.stop().unwrap();
+        }
     }
     #[test]
     fn truncated_gateway_revision_does_not_change_bus_role() {
