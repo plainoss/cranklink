@@ -10,6 +10,10 @@ mod discovery;
 #[path = "native_usb.rs"]
 mod native_usb;
 
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[path = "simulator_port.rs"]
+mod simulator_port;
+
 /// The synchronous protocol engine owns one transport. Browser calls block only
 /// inside its dedicated worker; the main browser thread services USB requests.
 pub trait Port: Read + Write {
@@ -63,6 +67,12 @@ impl Port for NativePort {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_port(name: &str) -> Result<Box<dyn Port>> {
+    if let Some(path) = name.strip_prefix("sim:") {
+        #[cfg(unix)]
+        return Ok(Box::new(simulator_port::SimulatorPort::open(path)?));
+        #[cfg(not(unix))]
+        anyhow::bail!("firmware simulator sockets currently require Unix: {path}");
+    }
     let selected;
     let name = if name == "auto" {
         let serial = serialport::available_ports()

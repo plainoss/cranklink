@@ -18,3 +18,7 @@ web-instrument/test-results/
 /web-instrument/pkg/
 
 /web-instrument/playwright-report/
+
+# Optional firmware simulator local inputs and Python cache
+tools/firmware-sim/*.local.json
+__pycache__/

@@ -206,6 +206,13 @@ The [web instrument](https://plainoss.github.io/cranklink/) compiles the same co
 
 See the [web instrument documentation](web-instrument/README.md).
 
+## Offline firmware simulator
+
+The headless simulator executes stock display/gateway and motor D firmware over a deterministic virtual packet bus. It currently covers 18 firmware profiles across three display models and six motor families, with 720 protocol/fault scenarios across 80 combinations. The native CLI can connect on macOS/Linux with `--port sim:/absolute/socket` for offline probe and supported settings reads.
+
+See the [simulator setup, coverage and verification guide](docs/firmware-simulator.md). Images are user-supplied and hash-pinned; USB control, initialized parameter RAM and the absent motor M version peer are modeled. Full boot, persistent writes, BLE radio and physical bus timing remain planned. The browser's GATT simulator remains available for UI development.
+
+
 ## Installation & builds
 
 Prebuilt binaries for Linux, macOS (Intel & Apple Silicon), and Windows are attached to tagged GitHub releases.

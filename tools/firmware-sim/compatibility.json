@@ -1,0 +1,757 @@
+{
+  "schema_version": 2,
+  "passed": true,
+  "level": "function-level packet co-simulation",
+  "hardware_access": false,
+  "profiles_sha256": "135d3b536767661d1bc87b2bfd9405fc61eeb13e9aea1d9f2c18d33bd8b6ae7d",
+  "modeled": [
+    "initialized RAM/plain-memory MMIO",
+    "motor RX entry",
+    "motor packet TX acceptance",
+    "logical time",
+    "FIFO fragment delivery",
+    "host/radio TX ring consumption"
+  ],
+  "not_validated": [
+    "reset/boot",
+    "physical bus timing",
+    "M/RX MCU",
+    "radio",
+    "persistent writes"
+  ],
+  "pairs": 80,
+  "scenarios": 720,
+  "faults": [
+    "corrupt-sequence",
+    "delay-key",
+    "drop-key",
+    "drop-reply",
+    "duplicate-key",
+    "none",
+    "reorder",
+    "reorder-key",
+    "truncate"
+  ],
+  "combinations": [
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.0.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": null,
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep800-4.2.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep800-4.1.11",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep800-4.1.10",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "978d18e13b5aa72dcaa892f3c0dc01a9340a14d47e390ad2923fb07da2bcf00f"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep500-4.1.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep600-4.6.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "e5000-4.5.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "e5100-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "e6100-4.8.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep500-4.1.0",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "motor": "ep600-4.4.1",
+      "scenarios": 9,
+      "all_passed": true,
+      "cleanup_verified": true,
+      "modeled_peripheral": "UART channel3 ready/status MMIO; stock init and TX service at busy-poll, preserved CPU context, separate stack; logical completion, no cycle timing",
+      "trace_sha256": "943ace5fb5db75d7c465207cd8c2cc9a98a425da0ff05a6f0c81b3c8b7693168"
+    }
+  ]
+}

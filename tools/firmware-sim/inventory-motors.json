@@ -1,0 +1,410 @@
+{
+  "scope": "Locally available motor images only; filenames identify labels, hashes identify executable bytes. No worldwide/vendor catalog completeness claim.",
+  "files_scanned": 58,
+  "unique_images": 23,
+  "images": [
+    {
+      "model": "DU-E5000",
+      "component": "D",
+      "version": "4.5.0",
+      "variant_prefix": null,
+      "decoded_sha256": "44806bd54aedff95a88bb73fafe0f0581297f2f67b2ea35545cea012899d90bb",
+      "decoded_bytes": 138072,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "e5000-4.5.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUE5000-D.4.5.0.dat.decoded.bin",
+        "DUE5000-D.4.5.0.dat"
+      ]
+    },
+    {
+      "model": "DU-E5000",
+      "component": "M",
+      "version": "4.4.8",
+      "variant_prefix": null,
+      "decoded_sha256": "9ea350e988345a9d9fb41c1363562ca190f1a8d5e1cc8a38c6373f69b877f033",
+      "decoded_bytes": 119824,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUE5000-M.4.4.8.dat",
+        "DUE5000-M.4.4.8.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E5100",
+      "component": "D",
+      "version": "4.1.0",
+      "variant_prefix": null,
+      "decoded_sha256": "f3bcba12ac9685123fac3bc4c5198b8ae7da64753b8f8804bbfdbee87e0207fe",
+      "decoded_bytes": 137860,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "e5100-4.1.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUE5100-D.4.1.0.dat",
+        "DUE5100-D.4.1.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E5100",
+      "component": "M",
+      "version": "4.0.0",
+      "variant_prefix": null,
+      "decoded_sha256": "661cbd606207eb135300ba60bc52436269414f6af79bb383922e355658e9d9b2",
+      "decoded_bytes": 101216,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUE5100-M.4.0.0.dat.decoded.bin",
+        "DUE5100-M.4.0.0.dat"
+      ]
+    },
+    {
+      "model": "DU-E6100",
+      "component": "D",
+      "version": "4.8.0",
+      "variant_prefix": null,
+      "decoded_sha256": "47fa9c5d52d03987c919d623ee6cb9aae7182548084c51115cffbe7cb3dade7c",
+      "decoded_bytes": 136680,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "e6100-4.8.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUE6100-D.4.8.0.dat",
+        "DUE6100-D.4.8.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E6100",
+      "component": "M",
+      "version": "4.7.6",
+      "variant_prefix": null,
+      "decoded_sha256": "598a9c53abce5a40531acdbb61b4ba2721a0fcc7352abac9dfbe0e7855e923df",
+      "decoded_bytes": 149664,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUE6100-M.4.7.6.dat.decoded.bin",
+        "DUE6100-M.4.7.6.dat"
+      ]
+    },
+    {
+      "model": "DU-E8000",
+      "component": "D",
+      "version": "4.10.0",
+      "variant_prefix": "2",
+      "decoded_sha256": "0df812b21bf2b7f613e27e1e65de7dde60850284e3241c4d100a87b76bd17588",
+      "decoded_bytes": 88346,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Image layout/ISA and protocol entry points are not verified; ARM legacy/modern handler signatures did not match. A separate architecture/profile investigation is required.",
+      "local_sources": [
+        "2DUE8000-D.4.10.0.dat",
+        "2DUE8000-D.4.10.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E8000",
+      "component": "D",
+      "version": "4.10.0",
+      "variant_prefix": null,
+      "decoded_sha256": "50ee8cdfb65aca45e8ac1196626edd94eb2d5acf56f554f5c41eccc4189f86b3",
+      "decoded_bytes": 88346,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Image layout/ISA and protocol entry points are not verified; ARM legacy/modern handler signatures did not match. A separate architecture/profile investigation is required.",
+      "local_sources": [
+        "DUE8000-D.4.10.0.dat",
+        "DUE8000-D.4.10.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E8000",
+      "component": "M",
+      "version": "4.9.4",
+      "variant_prefix": null,
+      "decoded_sha256": "08505c29c87c834601d641d59b3b5cacfa51a3499e680f4df9c1585aa088a707",
+      "decoded_bytes": 116352,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUE8000-M.4.9.4.dat",
+        "DUE8000-M.4.9.4.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-E8000",
+      "component": "M",
+      "version": "4.9.4",
+      "variant_prefix": "2",
+      "decoded_sha256": "d7a0257498838dec25ea7543a0b030dfaa6920b97cf5f0c8d00f7245938cb219",
+      "decoded_bytes": 118320,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "2DUE8000-M.4.9.4.dat",
+        "2DUE8000-M.4.9.4.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP500",
+      "component": "D",
+      "version": "4.1.0",
+      "variant_prefix": null,
+      "decoded_sha256": "b273042b1f0e69aa35db227e5d590efc845acd6c40381e0ba0aab4d3e5a2333c",
+      "decoded_bytes": 160452,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep500-4.1.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP500-D.4.1.0.dat.decoded.bin",
+        "DUEP500-D.4.1.0.dat"
+      ]
+    },
+    {
+      "model": "DU-EP500",
+      "component": "D",
+      "version": "4.1.1",
+      "variant_prefix": null,
+      "decoded_sha256": "6dd6ebf14f04a2d363cced8f77a8c8f86b64583c71e2abb9b2cc0fe64e2d1952",
+      "decoded_bytes": 160448,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep500-4.1.1",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP500-D.4.1.1.dat.decoded.bin",
+        "DUEP500-D.4.1.1.dat"
+      ]
+    },
+    {
+      "model": "DU-EP500",
+      "component": "M",
+      "version": "4.1.0",
+      "variant_prefix": null,
+      "decoded_sha256": "14fd61ed41b013e2a39517aadeffca88ee8f05928f0ca69c56374fe690ecf7e9",
+      "decoded_bytes": 151024,
+      "architecture_candidate": "ARM Thumb / Cortex-M candidate (startup sequence)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP500-M.4.1.0.dat.decoded.bin",
+        "DUEP500-M.4.1.0.dat"
+      ]
+    },
+    {
+      "model": "DU-EP500",
+      "component": "M",
+      "version": "4.1.1",
+      "variant_prefix": null,
+      "decoded_sha256": "24722c252cafbe413c6ac4209ac7d9167a46c9e138bf718cf3317ed0d58ab32b",
+      "decoded_bytes": 151024,
+      "architecture_candidate": "ARM Thumb / Cortex-M candidate (startup sequence)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP500-M.4.1.1.dat",
+        "DUEP500-M.4.1.1.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP600",
+      "component": "D",
+      "version": "4.4.1",
+      "variant_prefix": null,
+      "decoded_sha256": "c2bdeb052b7f5d89190674346d1d4f3491e1a7eb05b3c79f17f86983e4fff6ac",
+      "decoded_bytes": 167880,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep600-4.4.1",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP600-D.4.4.1.dat",
+        "DUEP600-D.4.4.1.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP600",
+      "component": "D",
+      "version": "4.6.0",
+      "variant_prefix": null,
+      "decoded_sha256": "ccea58cacf7588b0d1a9c6037cde81f25510b4b2fbf59fdaf99b8099d16f3b80",
+      "decoded_bytes": 167620,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep600-4.6.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP600-D.4.6.0.dat",
+        "DUEP600-D.4.6.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP600",
+      "component": "M",
+      "version": "4.4.0",
+      "variant_prefix": null,
+      "decoded_sha256": "dba1ded5e2b8b94ae7c7353e68d16c0f467e2cd6e8a62f6c3ace7cb283661749",
+      "decoded_bytes": 142368,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP600-M.4.4.0.dat.decoded.bin",
+        "DUEP600-M.4.4.0.dat"
+      ]
+    },
+    {
+      "model": "DU-EP600",
+      "component": "M",
+      "version": "4.4.2",
+      "variant_prefix": null,
+      "decoded_sha256": "0596a5733075bc2270f4747e5fe22ee2a45613cb5330e070fab99295f516b413",
+      "decoded_bytes": 142368,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP600-M.4.4.2.dat",
+        "DUEP600-M.4.4.2.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP800",
+      "component": "D",
+      "version": "4.1.10",
+      "variant_prefix": null,
+      "decoded_sha256": "4ab93e74332427de4f035b32bee35a9fe4600d281f4434d39ddc5de8f4b379fb",
+      "decoded_bytes": 156284,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep800-4.1.10",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP800-D.4.1.10.dat",
+        "DUEP800-D.4.1.10.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP800",
+      "component": "D",
+      "version": "4.1.11",
+      "variant_prefix": null,
+      "decoded_sha256": "0afc6abc21ee462197f1f420e40b398cf86bf8230724ffc4cc48dc89b5fe2aa9",
+      "decoded_bytes": 156300,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep800-4.1.11",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP800-D.4.1.11.dat"
+      ]
+    },
+    {
+      "model": "DU-EP800",
+      "component": "D",
+      "version": "4.2.0",
+      "variant_prefix": null,
+      "decoded_sha256": "f2f2d18441b7651620a0aacfd4f9f31b2a97b6397bf0f03b2171ff9652cf2551",
+      "decoded_bytes": 157996,
+      "architecture_candidate": "ARM Thumb / Cortex-M (protocol execution verified)",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "supported",
+      "profile": "ep800-4.2.0",
+      "unsupported_reason": null,
+      "local_sources": [
+        "DUEP800-D.4.2.0.dat.decoded.bin",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.decoded.bin",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat",
+        "DUEP800-D.4.2.0.dat.decoded.bin"
+      ]
+    },
+    {
+      "model": "DU-EP800",
+      "component": "M",
+      "version": "4.1.10",
+      "variant_prefix": null,
+      "decoded_sha256": "bd889f5e3819fd6cafceb4bf38da0dca803cf7189924c10b1db4a5d651e44226",
+      "decoded_bytes": 128160,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP800-M.4.1.10.dat"
+      ]
+    },
+    {
+      "model": "DU-EP800",
+      "component": "M",
+      "version": "4.1.11",
+      "variant_prefix": null,
+      "decoded_sha256": "94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44",
+      "decoded_bytes": 128192,
+      "architecture_candidate": "unidentified",
+      "architecture_evidence": "no matching archived header assessment",
+      "status": "unsupported",
+      "profile": null,
+      "unsupported_reason": "Motor-control component has no verified executable communication profile or D-to-M coupling; current supported motor endpoint executes D firmware protocol handlers only.",
+      "local_sources": [
+        "DUEP800-M.4.1.11.dat.decoded.bin",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat",
+        "DUEP800-M.4.1.11.dat.decoded.bin"
+      ]
+    }
+  ]
+}
