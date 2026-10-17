@@ -6,15 +6,12 @@ import {
   Cpu,
   ChevronDown,
   AlertCircle,
-  RefreshCw,
   Smartphone,
-  ExternalLink,
 } from "lucide-preact";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { detectPlatform } from "../../core/platform.ts";
 import { Button } from "../ui/Button.tsx";
-import { Card } from "../ui/Card.tsx";
 import { Badge } from "../ui/Badge.tsx";
 
 interface ConnectViewProps {
@@ -35,8 +32,8 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
     state.phase === "reading";
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center py-12 px-6 sm:px-8 bg-[#f4f3ef] text-stone-900 font-sans">
-      <div className="w-full max-w-xl flex flex-col gap-8">
+    <div className="min-h-screen flex flex-col items-center justify-center py-12 px-4 sm:px-8 bg-[#f4f3ef] text-stone-900 font-sans">
+      <div className="w-full max-w-xl flex flex-col gap-6">
         {/* Branding header */}
         <div className="text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-stone-200/80 text-stone-700 text-xs font-mono font-medium mb-3">
@@ -85,17 +82,17 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           </div>
         )}
 
-        {/* Primary Action Card */}
-        <Card className="flex flex-col gap-4 shadow-sm border-stone-300">
+        {/* Connection Options */}
+        <div className="flex flex-col gap-4">
           {/* Option 1: USB Cable (Hidden on iOS) */}
           {!plat.isIOS && (
-            <div className="p-4 rounded-lg border border-stone-200 bg-stone-50/50 hover:bg-stone-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-3.5">
-                <div className="w-10 h-10 rounded-lg bg-stone-900 text-white flex items-center justify-center shrink-0 shadow-xs">
-                  <Usb size={20} />
+            <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-5 hover:border-stone-300 transition-all">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl bg-stone-900 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Usb size={22} />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-sm font-semibold text-stone-900">
                       Connect with USB Cable
                     </h3>
@@ -103,7 +100,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                       Recommended
                     </span>
                   </div>
-                  <p className="text-xs text-stone-500 mt-0.5">
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                     SM-PCE02 or PCE1 diagnostic adapter plugged into computer & bike.
                   </p>
                 </div>
@@ -115,84 +112,64 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                 onClick={() => controller.connectAndSync("usb").catch(() => {})}
                 data-action="connect-usb"
                 data-testid="btn-connect-usb"
-                className="sm:w-28 shrink-0"
+                className="w-full sm:w-32 shrink-0 font-medium"
               >
-                {isBusy && state.transport === "usb" ? (
-                  <RefreshCw size={16} className="animate-spin" />
-                ) : (
-                  "Connect"
-                )}
+                Connect
               </Button>
             </div>
           )}
 
           {/* Option 2: Bluetooth */}
-          <div className="p-4 rounded-lg border border-stone-200 bg-stone-50/50 hover:bg-stone-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                <Bluetooth size={20} />
+          <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-5 hover:border-stone-300 transition-all">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Bluetooth size={22} />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-sm font-semibold text-stone-900">
                     Connect via Bluetooth
                   </h3>
+                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    Wireless
+                  </span>
                 </div>
-                <p className="text-xs text-stone-500 mt-0.5">
+                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                   Wireless link for SC-EM800, EW-EN100, or SC-E5003 displays.
                 </p>
               </div>
             </div>
             <Button
-              variant="secondary"
+              variant="outline"
               size="md"
               disabled={isBusy}
               onClick={() => controller.connectAndSync("ble").catch(() => {})}
               data-action="connect-ble"
               data-testid="btn-connect-ble"
-              className="sm:w-28 shrink-0 bg-white"
+              className="w-full sm:w-32 shrink-0 font-medium"
             >
-              {isBusy && state.transport === "ble" ? (
-                <RefreshCw size={16} className="animate-spin" />
-              ) : (
-                "Pair"
-              )}
+              Pair
             </Button>
           </div>
 
-          {/* Busy progress status */}
-          {isBusy && (
-            <div className="p-3.5 rounded-lg bg-stone-100 border border-stone-200 flex items-center gap-3 text-stone-800 text-sm">
-              <RefreshCw size={18} className="animate-spin text-stone-600 shrink-0" />
-              <div className="flex flex-col">
-                <span className="font-medium text-xs text-stone-900 font-mono">
-                  {state.statusMessage}
-                </span>
-                <span className="text-[11px] text-stone-500">
-                  Please keep communication cables attached...
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Advanced / Simulator Dropdown */}
-          <div className="pt-2 border-t border-stone-200">
-            <div className="flex items-center justify-between">
+          {/* Advanced / Simulator Dropdown Card */}
+          <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-xs text-stone-500 hover:text-stone-800 inline-flex items-center gap-1.5 py-2 px-1 min-h-[44px] transition-colors cursor-pointer select-none"
+                className="text-xs font-medium text-stone-600 hover:text-stone-900 inline-flex items-center gap-2 py-2 px-1 min-h-[44px] transition-colors cursor-pointer select-none"
                 data-testid="btn-more-menu"
               >
-                <Cpu size={14} />
+                <Cpu size={15} className="text-stone-500" />
                 <span>Advanced & Simulator Options</span>
                 <ChevronDown
-                  size={14}
-                  className={`transition-transform duration-200 ${showAdvanced ? "rotate-180" : ""}`}
+                  size={15}
+                  className={`text-stone-400 transition-transform duration-200 ${showAdvanced ? "rotate-180" : ""}`}
                 />
               </button>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 {plat.supportsUsb && <Badge variant="neutral">WebUSB OK</Badge>}
                 {plat.supportsBluetooth && <Badge variant="neutral">BLE OK</Badge>}
                 {plat.supportsSerial && <Badge variant="neutral">Serial OK</Badge>}
@@ -200,16 +177,16 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             </div>
 
             {showAdvanced && (
-              <div className="mt-3 p-4 rounded-lg bg-stone-50 border border-stone-200 flex flex-col gap-3 menu-dropdown w-full max-w-full">
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <label className="text-xs font-semibold text-stone-700 block mb-1">
+              <div className="mt-4 pt-4 border-t border-stone-100 flex flex-col gap-4 menu-dropdown w-full max-w-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-stone-700 block mb-1.5">
                       Simulated Drive Unit
                     </label>
                     <select
                       value={simModel}
                       onChange={(e) => setSimModel((e.target as HTMLSelectElement).value as any)}
-                      className="w-full text-xs font-mono p-2 rounded border border-stone-300 bg-white"
+                      className="w-full text-xs font-mono p-2.5 rounded-lg border border-stone-300 bg-white text-stone-800 min-h-[40px] focus:border-stone-500 focus:outline-none"
                       data-role="sim-model"
                       data-testid="sim-model-select"
                     >
@@ -218,14 +195,14 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                       <option value="ep801">DU-EP801 (Flagship)</option>
                     </select>
                   </div>
-                  <div className="flex-1">
-                    <label className="text-xs font-semibold text-stone-700 block mb-1">
+                  <div>
+                    <label className="text-xs font-semibold text-stone-700 block mb-1.5">
                       Fault Injection
                     </label>
                     <select
                       value={simFault}
                       onChange={(e) => setSimFault((e.target as HTMLSelectElement).value as any)}
-                      className="w-full text-xs font-mono p-2 rounded border border-stone-300 bg-white"
+                      className="w-full text-xs font-mono p-2.5 rounded-lg border border-stone-300 bg-white text-stone-800 min-h-[40px] focus:border-stone-500 focus:outline-none"
                       data-role="sim-fault"
                       data-testid="sim-fault-select"
                     >
@@ -238,7 +215,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center justify-between pt-2 flex-wrap gap-3">
                   <Button
                     variant="outline"
                     size="sm"
@@ -246,13 +223,13 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                     onClick={() => controller.connectAndSync("serial").catch(() => {})}
                     data-action="connect-serial"
                     data-testid="btn-connect-serial"
-                    className="text-xs"
+                    className="text-xs font-medium"
                   >
                     Direct Serial Port
                   </Button>
 
                   <Button
-                    variant="secondary"
+                    variant="purple"
                     size="md"
                     disabled={isBusy}
                     onClick={() =>
@@ -260,7 +237,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                     }
                     data-action="connect-sim"
                     data-testid="btn-connect-sim"
-                    className="bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-300 text-xs font-mono font-medium min-h-[44px] min-w-[44px]"
+                    className="text-xs font-mono font-medium px-4 min-h-[44px] min-w-[44px]"
                   >
                     Start Simulator
                   </Button>
@@ -268,29 +245,36 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
               </div>
             )}
           </div>
-        </Card>
+        </div>
 
         {/* Visible Simulator Container for Testing & Evaluation */}
         <div
-          className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/70 flex items-center justify-between gap-3 text-xs"
+          className="bg-purple-50/80 border border-purple-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
           data-testid="empty-state-start-sim"
         >
-          <div className="flex items-center gap-2">
-            <Cpu size={16} className="text-purple-700 shrink-0" />
-            <span className="font-semibold text-purple-950 font-sans">
-              Need to test or evaluate without physical hardware?
-            </span>
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-xs mt-0.5 sm:mt-0">
+              <Cpu size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-purple-950 font-sans">
+                Need to test without hardware?
+              </h3>
+              <p className="text-xs text-purple-800/80 mt-0.5">
+                Evaluate assist tuning and firmware recovery with the built-in simulator.
+              </p>
+            </div>
           </div>
           <Button
-            variant="secondary"
-            size="sm"
+            variant="purple"
+            size="md"
             disabled={isBusy}
             onClick={() =>
               controller.connectAndSync("sim", { model: simModel, fault: simFault }).catch(() => {})
             }
             data-action="connect-sim"
             data-testid="btn-connect-sim-quick"
-            className="bg-purple-600 hover:bg-purple-700 text-white border-none text-xs font-mono font-medium shrink-0 shadow-xs"
+            className="w-full sm:w-auto shrink-0 px-5 text-xs font-mono font-medium shadow-xs"
           >
             Start Simulator
           </Button>
