@@ -14,19 +14,9 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
-      testMatch: "instrument.spec.ts",
+      name: "production-smoke",
+      testMatch: "production.spec.ts",
       use: { ...devices["Desktop Chrome"] },
-    },
-    {
-      name: "mobile-chromium",
-      testMatch: "mobile.spec.ts",
-      use: {
-        ...devices["Pixel 5"],
-        viewport: { width: 393, height: 851 },
-        isMobile: true,
-        hasTouch: true,
-      },
     },
   ],
   webServer: deployed ? undefined : {

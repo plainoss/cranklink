@@ -7,7 +7,9 @@ import {
   requestAdapter,
   assertSupportedSerial,
 } from "./serial.js";
-import { DeviceSimulator } from "./simulator.js";
+const DeviceSimulator = import.meta.env.DEV
+  ? (await import("./simulator.js")).DeviceSimulator
+  : null;
 const output = document.querySelector("#output"),
   form = document.querySelector("#command-form"),
   input = document.querySelector("#command");
@@ -351,6 +353,7 @@ async function run(line) {
       throw new Error("Usage: connect [auto|usb|serial|ble|sim [model]]");
     return withDeviceLock(async () => {
       if (isSim) {
+        if (!DeviceSimulator) throw new Error("The simulator is available in development builds only.");
         const model = tokens[2] || "ep800-crg";
         const sim = new DeviceSimulator({ model, ...activeSimulatorOptions });
         activeSimulator = sim;
@@ -519,17 +522,21 @@ window.estepsTerminal = {
     transport: selectedTransport,
   }),
   selectGranted,
-  get simulator() {
-    return activeSimulator;
-  },
-  configureSimulator: (options) => {
-    activeSimulatorOptions = { ...options };
-  },
+  ...(import.meta.env.DEV ? {
+    get simulator() {
+      return activeSimulator;
+    },
+    configureSimulator: (options) => {
+      activeSimulatorOptions = { ...options };
+    },
+  } : {}),
 };
-Object.defineProperty(window, "estepsDeviceSimulator", {
-  configurable: true,
-  get: () => activeSimulator,
-});
+if (import.meta.env.DEV) {
+  Object.defineProperty(window, "estepsDeviceSimulator", {
+    configurable: true,
+    get: () => activeSimulator,
+  });
+}
 try {
   if (!window.crossOriginIsolated)
     throw new Error(

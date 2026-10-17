@@ -16,9 +16,18 @@ async function checkResponsiveBounds(page: Page, state: string) {
     const dimensions = await page.evaluate(() => ({
       viewport: window.innerWidth,
       content: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+      overflowing: [...document.querySelectorAll("body *")]
+        .map((element) => ({
+          tag: element.tagName,
+          testid: element.getAttribute("data-testid"),
+          className: typeof element.className === "string" ? element.className : "",
+          right: Math.round(element.getBoundingClientRect().right),
+          width: Math.round(element.getBoundingClientRect().width),
+        }))
+        .filter((element) => element.right > window.innerWidth + 1),
     }));
     expect(dimensions.viewport, `${state}: viewport respects ${width}px`).toBe(width);
-    expect(dimensions.content, `${state}: no horizontal page overflow at ${width}px`)
+    expect(dimensions.content, `${state}: no horizontal page overflow at ${width}px; offenders: ${JSON.stringify(dimensions.overflowing)}`)
       .toBeLessThanOrEqual(width + 1);
   }
   await page.setViewportSize({ width: 393, height: 851 });
@@ -70,12 +79,12 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await page.setViewportSize({ width: 393, height: 851 });
   await checkTouchTarget(page.getByTestId("btn-connect-sim"));
   await page.getByTestId("btn-connect-sim").tap();
-  await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
   await checkResponsiveBounds(page, "connected");
 
   const navMenuBtn = page.getByLabel("Open navigation menu");
   await checkTouchTarget(navMenuBtn);
   await navMenuBtn.tap();
+  await expect(page.getByTestId("mobile-device-summary")).toContainText("EP8 Cargo");
   const geometryBtn = page.getByTestId("nav-group-geometry");
   await checkTouchTarget(geometryBtn);
   await geometryBtn.tap();
@@ -119,7 +128,8 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await expect(page.getByTestId("firmware-section")).toBeVisible();
   await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
   await checkResponsiveBounds(page, "firmware");
-  await page.getByTestId("console-toggle").tap();
+  await page.getByLabel("Open navigation menu").tap();
+  await page.getByTestId("nav-section-diagnostics").tap();
   await expect(page.getByTestId("console-body")).toBeVisible();
   const consoleInput = page.getByTestId("console-input");
   expect(await consoleInput.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
@@ -127,13 +137,12 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await consoleInput.fill("settings read tire-circumference");
   await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-journal").tap();
-  await expect(consoleInput).toHaveValue("settings read tire-circumference");
+  await expect(consoleInput).toBeHidden();
   await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-firmware").tap();
-  await expect(consoleInput).toHaveValue("settings read tire-circumference");
-  await page.getByTestId("console-toggle").tap();
   await expect(consoleInput).toBeHidden();
-  await page.getByTestId("console-toggle").tap();
-  await expect(consoleInput).toHaveValue("settings read tire-circumference");
+  await page.getByLabel("Open navigation menu").tap();
+  await page.getByTestId("nav-section-diagnostics").tap();
+  await expect(consoleInput).toHaveValue("");
   expect(failures, "No missing runtime assets or browser errors during the touch workflow").toEqual([]);
 });

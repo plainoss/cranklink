@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  ArrowLeft,
   ShieldCheck,
   Download,
   RotateCcw,
@@ -21,10 +20,9 @@ import { Modal } from "../ui/Dialog.tsx";
 interface BackupViewProps {
   state: InstrumentState;
   controller: SessionController;
-  onBack?: () => void;
 }
 
-export function BackupView({ state, controller, onBack }: BackupViewProps) {
+export function BackupView({ state, controller }: BackupViewProps) {
   const [selectedSnapshot, setSelectedSnapshot] = useState<JournalSnapshot | null>(null);
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
 
@@ -52,22 +50,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
       className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-4"
       data-testid="journal-section"
     >
-      {/* Top action row */}
-      <div className="flex items-center justify-between">
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-stone-200/60 transition-colors"
-            data-testid="btn-back-overview"
-          >
-            <ArrowLeft size={15} />
-            <span>Back to Overview</span>
-          </button>
-        ) : (
-          <span className="text-xs font-mono font-medium text-stone-500">Backup & Restore</span>
-        )}
-
+      <div className="flex items-center justify-end">
         <Badge variant="neutral">
           {state.snapshots.length} Backup{state.snapshots.length !== 1 ? "s" : ""} Stored
         </Badge>

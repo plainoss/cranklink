@@ -43,7 +43,6 @@ interface TuneViewProps {
   controller: SessionController;
   category?: TuneCategory;
   searchFilterProp?: string;
-  onSelectCategory?: (category: TuneCategory) => void;
 }
 
 export function TuneView({
@@ -51,7 +50,6 @@ export function TuneView({
   controller,
   category,
   searchFilterProp = "",
-  onSelectCategory,
 }: TuneViewProps) {
   const [profileTab, setProfileTab] = useState<"1" | "2">("1");
   const [diffModalOpen, setDiffModalOpen] = useState(false);
@@ -1095,19 +1093,19 @@ export function TuneView({
 
           <div className="flex items-center gap-2 shrink-0">
             <Button
-              variant="ghost"
+              variant="custom"
               size="sm"
               onClick={() => {
                 controller.discardAllStaged();
                 setMobileRailOpen(false);
               }}
               data-testid="btn-discard-staged"
-              className="text-stone-300 hover:text-white text-xs min-h-[44px] min-w-[44px]"
+              className="bg-transparent text-stone-300 hover:bg-white/10 hover:text-white text-xs min-h-[44px] min-w-[44px]"
             >
               Discard
             </Button>
             <Button
-              variant="primary"
+              variant="custom"
               size="sm"
               onClick={() => setDiffModalOpen(true)}
               className="bg-amber-400 text-stone-950 hover:bg-amber-300 text-xs font-bold min-h-[44px] min-w-[44px]"
@@ -1115,7 +1113,7 @@ export function TuneView({
               Review Diff
             </Button>
             <Button
-              variant="primary"
+              variant="custom"
               size="sm"
               onClick={async () => {
                 await controller.commitStagedBatch();
