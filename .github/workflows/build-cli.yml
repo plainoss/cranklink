@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Linux default and BLE tests
@@ -21,6 +25,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
       - name: Test default CLI and core
         run: cargo test --locked --lib --bin cranklink
       - name: Test BLE CLI and core
@@ -56,6 +61,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90.0
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - name: Install MinGW cross compiler
         if: matrix.target == 'x86_64-pc-windows-gnu'
         run: |
@@ -64,6 +72,13 @@ jobs:
       - name: Build Linux or Windows release CLI with BLE
         if: ${{ !contains(matrix.target, 'apple-darwin') }}
         run: cargo build --release --locked --target ${{ matrix.target }} --features ble --bin cranklink
+      - name: Cache Zig 0.13.0
+        if: contains(matrix.target, 'apple-darwin')
+        uses: actions/cache@v4
+        id: zig-cache
+        with:
+          path: ${{ runner.temp }}/zig-stable
+          key: zig-0.13.0-linux-x86_64
       - name: Cross-build macOS CLI with BLE using official SDK image
         if: contains(matrix.target, 'apple-darwin')
         env:
@@ -73,12 +88,14 @@ jobs:
         run: |
           # Stable Zig 0.13 handles the cdylib export list generated while Cargo
           # builds this crate's rlib dependency, even with --bin cranklink.
-          curl --fail --location --proto '=https' --proto-redir '=https' \
-            https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
-            --output "$RUNNER_TEMP/zig.tar.xz"
-          printf '%s  %s\n' d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea "$RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/zig-stable"
-          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig-stable" --strip-components=1
+          if [ ! -f "$RUNNER_TEMP/zig-stable/zig" ]; then
+            curl --fail --location --proto '=https' --proto-redir '=https' \
+              https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
+              --output "$RUNNER_TEMP/zig.tar.xz"
+            printf '%s  %s\n' d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea "$RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+            mkdir -p "$RUNNER_TEMP/zig-stable"
+            tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig-stable" --strip-components=1
+          fi
           docker run --rm --platform linux/amd64 \
             --user "$(id -u):$(id -g)" \
             --volume "$GITHUB_WORKSPACE:/work" \
