@@ -353,6 +353,9 @@ enum FirmwareCommand {
     },
     /// Program guarded firmware image (dry-run by default; requires --write to commit)
     Flash {
+        /// Allow live flashing on protocol-verified non-EP800 drive unit models
+        #[arg(long, global = true, help_heading = "Safety")]
+        allow_unverified_model: bool,
         #[command(subcommand)]
         command: FlashCommand,
     },
@@ -360,7 +363,7 @@ enum FirmwareCommand {
 
 #[derive(Subcommand)]
 enum FlashCommand {
-    /// Program D / DCASX microcontroller image over wired connection
+    /// Program D / DCAS microcontroller image over wired connection
     Dcas {
         /// Path to DCAS container file (.dat)
         file: PathBuf,
@@ -870,7 +873,10 @@ fn execute_firmware_command(
             }
             Ok(())
         }
-        FirmwareCommand::Flash { command } => match command {
+        FirmwareCommand::Flash {
+            allow_unverified_model,
+            command,
+        } => match command {
             FlashCommand::Dcas {
                 file,
                 companion,
@@ -881,7 +887,7 @@ fn execute_firmware_command(
             } => {
                 let fw = Firmware::load(&file)?;
                 ensure!(
-                    fw.metadata.kind == FirmwareKind::DcasX,
+                    fw.metadata.kind.is_dcas(),
                     "flash dcas requires a D image"
                 );
                 let comp = Firmware::load(&companion)?;
@@ -913,25 +919,35 @@ fn execute_firmware_command(
                 };
                 if let Some(i) = &before {
                     jnl.record("application-before", i)?;
-                    fw.validate_companion_version(parse_version(&i.rx_version)?)?;
+                    fw.validate_companion_version_for_pair(&comp, parse_version(&i.rx_version)?)?;
                 }
                 let boot = s.boot_start_at(!recovery, slot)?;
                 jnl.record("boot-identity", &boot)?;
+                let allow_model = !write || allow_unverified_model;
                 let guard = (|| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
                         "live serial differs from --expect-serial"
                     );
-                    fw.validate_target(boot.series, boot.unit, boot.board, Version(boot.version))
+                    fw.validate_target_with_policy(
+                        boot.series,
+                        boot.unit,
+                        boot.board,
+                        Version(boot.version),
+                        allow_model,
+                    )
                 })();
-                if let Err(e) = guard {
-                    jnl.record("guard-rejected", &format!("{e:#}"))?;
-                    if !recovery {
-                        s.boot_reset()
-                            .context("guard rejected image; application reset failed")?;
+                let profile = match guard {
+                    Ok(p) => p,
+                    Err(e) => {
+                        jnl.record("guard-rejected", &format!("{e:#}"))?;
+                        if !recovery {
+                            s.boot_reset()
+                                .context("guard rejected image; application reset failed")?;
+                        }
+                        return Err(e);
                     }
-                    return Err(e);
-                }
+                };
 
                 if !write {
                     if !recovery {
@@ -939,11 +955,24 @@ fn execute_firmware_command(
                     }
                     jnl.record("dry-run-complete", &boot)?;
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
-                    out_println!("- Target Bootloader: Verified (DCASX v{}.0.0.0, Board {})", boot.version[0], boot.board);
+                    out_println!(
+                        "- Target Bootloader: Verified ({} {:?} v{}.{}.{}.{}, Board {})",
+                        profile.family_name,
+                        profile.dcas_kind,
+                        boot.version[0],
+                        boot.version[1],
+                        boot.version[2],
+                        boot.version[3],
+                        boot.board
+                    );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    out_println!(">> To execute live flash programming, add the --write flag.\n");
+                    if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
+                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                    } else {
+                        out_println!(">> To execute live flash programming, add the --write flag.\n");
+                    }
                     return Ok(());
                 }
 
@@ -957,8 +986,11 @@ fn execute_firmware_command(
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
                         err_println!("Journal preserved at: {}", journal_path.display());
                         err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash dcas {} --companion {} --recovery --write",
-                            serial_str, file.display(), companion.display());
+                        err_println!("  cranklink -s {} firmware flash dcas {} --companion {} --recovery --write{}",
+                            serial_str,
+                            file.display(),
+                            companion.display(),
+                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
                         err_println!("================================================================================\n");
                         return Err(e);
                     }
@@ -973,7 +1005,8 @@ fn execute_firmware_command(
                     "post-flash DCAS version mismatch"
                 );
                 ensure!(
-                    after.rx_version == fw.metadata.compatibility_version.to_string(),
+                    after.rx_version == fw.metadata.compatibility_version.to_string()
+                        || after.rx_version == comp.metadata.version.to_string(),
                     "post-flash RX version mismatch"
                 );
                 if let Some(before) = before {
@@ -1037,15 +1070,22 @@ fn execute_firmware_command(
                 jnl.record("application-before", &before)?;
                 let boot = s.boot_start(true)?;
                 jnl.record("dcas-identity", &boot)?;
+                let allow_model = !write || allow_unverified_model;
                 let guard = (|| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
                         "live serial differs from expected"
                     );
-                    d.validate_target(boot.series, boot.unit, boot.board, Version(boot.version))
+                    d.validate_target_with_policy(
+                        boot.series,
+                        boot.unit,
+                        boot.board,
+                        Version(boot.version),
+                        allow_model,
+                    )
                 })();
                 s.boot_reset()?;
-                guard?;
+                let profile = guard?;
                 let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
 
                 if !write {
@@ -1056,16 +1096,30 @@ fn execute_firmware_command(
                     s.normal_stop()?;
                     jnl.record("dry-run-complete", &after)?;
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
-                    out_println!("- RX Bootloader: Verified (Sequence {})", rx.capability_sequence);
+                    out_println!(
+                        "- RX Bootloader: Verified ({}, Sequence {})",
+                        profile.family_name,
+                        rx.capability_sequence
+                    );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    out_println!(">> To execute live flash programming, add the --write flag.\n");
+                    if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified || rx.retry_capable {
+                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                    } else {
+                        out_println!(">> To execute live flash programming, add the --write flag.\n");
+                    }
                     return Ok(());
                 }
 
                 jnl.record("destructive-start", &fw.metadata)?;
-                let receipt = match crate::rx::flash(&mut s, ready.slot, &fw, progress_reporter()) {
+                let receipt = match crate::rx::flash_with_policy(
+                    &mut s,
+                    ready.slot,
+                    &fw,
+                    allow_unverified_model,
+                    progress_reporter(),
+                ) {
                     Ok(r) => r,
                     Err(e) => {
                         jnl.record("uncertain", &format!("{e:#}"))?;
@@ -1074,8 +1128,11 @@ fn execute_firmware_command(
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
                         err_println!("Journal preserved at: {}", journal_path.display());
                         err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash rx {} --companion {} --recovery --write",
-                            serial_str, file.display(), companion.display());
+                        err_println!("  cranklink -s {} firmware flash rx {} --companion {} --recovery --write{}",
+                            serial_str,
+                            file.display(),
+                            companion.display(),
+                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
                         err_println!("================================================================================\n");
                         return Err(e);
                     }
@@ -1181,7 +1238,8 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
         cli.command,
         Command::Firmware {
             command: FirmwareCommand::Flash {
-                command: FlashCommand::BlePair { .. }
+                command: FlashCommand::BlePair { .. },
+                ..
             }
         }
     ) {
@@ -1306,6 +1364,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     let Command::Firmware {
         command:
             FirmwareCommand::Flash {
+                allow_unverified_model,
                 command:
                     FlashCommand::BlePair {
                         dcas,
@@ -1331,17 +1390,26 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     let d = Firmware::load(dcas)?;
     let m = Firmware::load(rx)?;
     ensure!(
-        d.metadata.kind == FirmwareKind::DcasX && m.metadata.kind == FirmwareKind::Renesas,
+        d.metadata.kind.is_dcas() && m.metadata.kind == FirmwareKind::Renesas,
         "flash ble-pair requires D and M images"
     );
-    ensure!(
-        d.metadata.series == 0x23 && d.metadata.unit == 0 && d.metadata.board == Some(1),
-        "BLE pair updates support EP800 board 1 only"
-    );
-    ensure!(
-        matches!(d.metadata.version.0, [4, 1, 11, 0] | [4, 2, 0, 0]),
-        "BLE pair updater requires a supported EP800 target version"
-    );
+    let allow_model = !*write || *allow_unverified_model;
+    if !allow_model {
+        ensure!(
+            d.metadata.series == 0x23 && d.metadata.unit == 0 && d.metadata.board == Some(1),
+            "BLE pair updates support EP800 board 1 only without --allow-unverified-model"
+        );
+        ensure!(
+            matches!(d.metadata.version.0, [4, 1, 11, 0] | [4, 2, 0, 0] | [4, 3, 0, 0]),
+            "BLE pair updater requires a supported EP800 target version without --allow-unverified-model"
+        );
+    } else {
+        ensure!(
+            crate::firmware::is_supported_rx_target(d.metadata.series, d.metadata.unit)
+                && d.metadata.board.is_some_and(crate::firmware::is_allowed_motor_board),
+            "BLE pair updates require a supported motor firmware family and board"
+        );
+    }
     d.validate_companion(&m)?;
 
     if let Some(exp) = expect_dcas_sha256 {
@@ -1397,7 +1465,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             &serde_json::json!({"path": backup_path, "serial": serial_str}),
         )?;
 
-        let mut link = session.motor_firmware(&serial)?;
+        let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
         let rx_boot = link.enter_rx()?;
         jnl.record("rx-boot-before", &rx_boot)?;
         link.reset_rx()?;
@@ -1410,30 +1478,43 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             "RX probe did not restore the unchanged application"
         );
 
-        let mut link = session.motor_firmware(&serial)?;
+        let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
         let boot = link.enter_dcas()?;
         jnl.record("dcas-boot-before", &boot)?;
-        let guard = (|| -> Result<()> {
+        let guard = (|| -> Result<_> {
             ensure!(boot.serial == serial, "boot serial changed");
-            d.validate_target(boot.series, boot.unit, boot.board, Version(boot.version))
+            d.validate_target_with_policy(
+                boot.series,
+                boot.unit,
+                boot.board,
+                Version(boot.version),
+                allow_model,
+            )
         })();
         if guard.is_err() || !*write {
             link.reset_dcas()?;
         }
-        if let Err(e) = guard {
-            link.application_return()?;
-            return Err(e);
-        }
+        let profile = match guard {
+            Ok(p) => p,
+            Err(e) => {
+                link.application_return()?;
+                return Err(e);
+            }
+        };
 
         if !*write {
             link.application_return()?;
             jnl.record("dry-run-complete", &boot)?;
             out_println!("\n[DRY RUN - VALIDATION ONLY]");
-            out_println!("- DCAS & RX Bootloader Handshakes: Verified");
+            out_println!("- DCAS & RX Bootloader Handshakes: Verified ({})", profile.family_name);
             out_println!("- Motor Serial: Verified ({})", serial_str);
             out_println!("- Pre-Update Settings Backup: Saved ({})", backup_path.display());
             out_println!("- Flash State: UNMODIFIED (No bytes written)");
-            out_println!(">> To execute live flash programming, add the --write flag.\n");
+            if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
+                out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+            } else {
+                out_println!(">> To execute live flash programming, add the --write flag.\n");
+            }
             return Ok(serde_json::json!({
                 "transport": "ble",
                 "write": false,
@@ -1464,7 +1545,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         let mut link = if incomplete_pair {
             session.continue_pair_rx(&serial, &d, &m, &journal_path)?
         } else {
-            session.motor_firmware(&serial)?
+            session.motor_firmware_with_policy(&serial, allow_model)?
         };
         let boot = link.enter_rx()?;
         ensure!(
@@ -1676,7 +1757,8 @@ fn ble_command_allowed(command: &Command) -> bool {
         Command::Firmware { command } => matches!(
             command,
             FirmwareCommand::Flash {
-                command: FlashCommand::BlePair { .. }
+                command: FlashCommand::BlePair { .. },
+                ..
             }
         ),
         Command::Ble { .. } => true,
@@ -2178,6 +2260,8 @@ fn print_firmware_metadata(
 ) {
     let kind_str = match meta.kind {
         FirmwareKind::DcasX => "DCASX",
+        FirmwareKind::Dcas2i => "DCAS2i",
+        FirmwareKind::Dcas2 => "DCAS2",
         FirmwareKind::Renesas => "Renesas",
     };
     let board_str = match meta.board {
@@ -2382,6 +2466,7 @@ mod cli_tests {
             Command::Firmware {
                 command:
                     FirmwareCommand::Flash {
+                        allow_unverified_model,
                         command:
                             FlashCommand::Dcas {
                                 file,
@@ -2393,6 +2478,7 @@ mod cli_tests {
                             },
                     },
             } => {
+                assert!(!allow_unverified_model);
                 assert_eq!(file, PathBuf::from("dcas.dat"));
                 assert_eq!(companion, PathBuf::from("rx.dat"));
                 assert!(expect_sha256.is_none());

@@ -79,11 +79,21 @@ impl BleSession {
             "continuation image metadata differs from original pair"
         );
         let boot = stage("dcas-boot-before")?;
+        let boot_series = boot["series"]
+            .as_u64()
+            .context("missing prior boot series")? as u8;
+        let boot_unit = boot["unit"].as_u64().context("missing prior boot unit")? as u8;
+        let boot_board = boot["board"].as_u64().context("missing prior boot board")? as u8;
         ensure!(
             boot["serial"] == serde_json::to_value(expected_serial)?
-                && boot["series"] == 35
-                && boot["unit"] == 0
-                && boot["board"] == 1,
+                && crate::firmware::find_motor_profile(
+                    boot_series,
+                    boot_unit,
+                    dcas.metadata.series,
+                    dcas.metadata.unit,
+                )
+                .is_some_and(|p| p.allowed_boards.contains(&boot_board))
+                && dcas.metadata.board == Some(boot_board),
             "prior independent boot identity mismatch"
         );
         let finished = stage("dcas-finish-and-reset")?;
@@ -140,17 +150,22 @@ impl BleSession {
         let slot = self.linked_slot.context("no selected continuation motor")?;
         let stock = self.model_identity(slot)?;
         ensure!(
-            stock.get(1..3) == Some(&[35, 0]),
-            "continuation requires EP800"
+            stock.get(1..3) == Some(&[boot_series, boot_unit]),
+            "continuation motor identity changed"
         );
         let serial = self.command(slot, 1, 0x3c, &[0], 0x3e)?;
         ensure!(
             &crate::device::serial_bytes(&serial)? == expected_serial,
             "continuation live serial mismatch"
         );
+        let expected_cargo = records
+            .iter()
+            .find(|r| r["stage"] == "application-before")
+            .and_then(|r| r["data"]["cargo"].as_str())
+            .unwrap_or("00-CRG");
         let cargo = self.command(slot, 0x16, 0x7c, &[0], 0x7e)?;
         ensure!(
-            cargo.as_slice() == b"00-CRG\0",
+            String::from_utf8_lossy(&cargo).trim_end_matches('\0') == expected_cargo,
             "continuation cargo mismatch"
         );
         ensure!(
@@ -178,6 +193,13 @@ impl BleSession {
     /// Gate motor entry on a fresh normal session and independent identity.
     /// The returned relay cannot address a gateway BOOT characteristic.
     pub fn motor_firmware(&mut self, expected_serial: &[u8; 6]) -> Result<MotorFirmware<'_>> {
+        self.motor_firmware_with_policy(expected_serial, false)
+    }
+    pub fn motor_firmware_with_policy(
+        &mut self,
+        expected_serial: &[u8; 6],
+        allow_unverified_model: bool,
+    ) -> Result<MotorFirmware<'_>> {
         ensure!(
             self.authenticated && self.gateway_mode && !self.firmware_active,
             "start a normal BLE motor session first"
@@ -197,20 +219,38 @@ impl BleSession {
             self.chars.get(&FREE_COMMAND)
         );
         let stock = self.model_identity(slot)?;
-        ensure!(
-            stock.get(1..3) == Some(&[0x23, 0]),
-            "BLE firmware supports only EP800 23/00"
-        );
+        let [live_series, live_unit] = stock
+            .get(1..3)
+            .and_then(|s| <[u8; 2]>::try_from(s).ok())
+            .context("truncated BLE motor model identity")?;
+        if !allow_unverified_model {
+            ensure!(
+                live_series == 0x23 && live_unit == 0,
+                "BLE firmware supports only EP800 23/00 without --allow-unverified-model"
+            );
+        } else {
+            ensure!(
+                crate::firmware::is_supported_live_motor(live_series, live_unit),
+                "BLE firmware does not support motor {:02X}/{:02X}",
+                live_series,
+                live_unit
+            );
+        }
         let serial = self.command(slot, 1, 0x3c, &[0], 0x3e)?;
         ensure!(
             &crate::device::serial_bytes(&serial)? == expected_serial,
             "BLE firmware serial mismatch"
         );
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
-        ensure!(
-            matches!(version(&d)?.as_str(), "4.1.10.0" | "4.1.11.0" | "4.2.0.0"),
-            "BLE firmware entry supports supported EP800 4.1.10/4.1.11/4.2.0 only"
-        );
+        if !allow_unverified_model {
+            ensure!(
+                matches!(version(&d)?.as_str(), "4.1.10.0" | "4.1.11.0" | "4.2.0.0"),
+                "BLE firmware entry supports supported EP800 4.1.10/4.1.11/4.2.0 only without --allow-unverified-model"
+            );
+        } else {
+            let ver = version(&d)?;
+            ensure!(!ver.starts_with("0."), "invalid live DCAS version {ver}");
+        }
         // This is the same stock PC-address retention command used by the wired updater.
         self.drain()?;
         self.send_unit(slot, 1, 0xc0, &[slot])?;
