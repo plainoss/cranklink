@@ -1,5 +1,4 @@
-import { h, type ComponentChildren } from "preact";
-import { Tabs as BaseTabs } from "@base-ui/react/tabs";
+import type { ReactNode } from "react";
 
 export interface TabItem {
   id: string;
@@ -11,7 +10,7 @@ export interface TabsProps {
   value: string;
   onValueChange: (val: string) => void;
   items: TabItem[];
-  children?: ComponentChildren;
+  children?: ReactNode;
   className?: string;
 }
 
@@ -23,30 +22,42 @@ export function Tabs({
   className = "",
 }: TabsProps) {
   return (
-    <BaseTabs.Root
-      value={value}
-      onValueChange={(val: any) => onValueChange(String(val))}
-      className={`w-full max-w-full overflow-hidden flex flex-col ${className}`}
-    >
-      <BaseTabs.List className="flex border-b border-stone-200 gap-1 overflow-x-auto no-scrollbar">
-        {items.map((tab) => (
-          <BaseTabs.Tab
-            key={tab.id}
-            value={tab.id}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-stone-600 hover:text-stone-900 data-[selected]:border-stone-900 data-[selected]:text-stone-900 transition-colors whitespace-nowrap cursor-pointer select-none"
-          >
-            <span>{tab.label}</span>
-            {tab.count !== undefined && tab.count > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-xs font-mono bg-stone-100 text-stone-600">
-                {tab.count}
-              </span>
-            )}
-          </BaseTabs.Tab>
-        ))}
-      </BaseTabs.List>
+    <div className={`w-full max-w-full overflow-hidden flex flex-col gap-3 ${className}`}>
+      <div
+        role="tablist"
+        aria-orientation="horizontal"
+        className="flex items-center gap-1.5 p-1 bg-stone-200/70 rounded-xl overflow-x-auto no-scrollbar"
+      >
+        {items.map((tab) => {
+          const isSelected = value === tab.id;
+          return (
+            <button
+              type="button"
+              role="tab"
+              key={tab.id}
+              aria-selected={isSelected}
+              onClick={() => onValueChange(tab.id)}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap cursor-pointer select-none min-h-[38px] ${
+                isSelected
+                  ? "bg-white text-stone-900 shadow-xs"
+                  : "text-stone-600 hover:text-stone-900 hover:bg-stone-300/40"
+              }`}
+            >
+              <span>{tab.label}</span>
+              {tab.count !== undefined && tab.count > 0 && (
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                    isSelected ? "bg-stone-900 text-white" : "bg-stone-300 text-stone-700"
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
       {children}
-    </BaseTabs.Root>
+    </div>
   );
 }
-
-export const TabPanel = BaseTabs.Panel;

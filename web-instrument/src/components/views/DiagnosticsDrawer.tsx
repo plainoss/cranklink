@@ -1,6 +1,5 @@
-import { h } from "preact";
-import { useState } from "preact/hooks";
-import { Terminal, ChevronUp, ChevronDown, Check, X, ShieldAlert } from "lucide-preact";
+import { useState, type FormEvent } from "react";
+import { Terminal, ChevronUp, ChevronDown, Check, X, ShieldAlert } from "lucide-react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { Button } from "../ui/Button.tsx";
@@ -14,7 +13,7 @@ export function DiagnosticsDrawer({ state, controller }: DiagnosticsDrawerProps)
   const [cmdDraft, setCmdDraft] = useState("");
   const expanded = state.consoleExpanded;
 
-  const handleSubmit = (e: Event) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!cmdDraft.trim()) return;
     const cmd = cmdDraft;
@@ -75,10 +74,10 @@ export function DiagnosticsDrawer({ state, controller }: DiagnosticsDrawerProps)
           <button
             type="button"
             onClick={() => controller.toggleConsole()}
-            className="px-3 py-2 rounded-t-lg bg-stone-800 text-stone-200 text-xs font-mono font-medium hover:bg-stone-900 flex items-center gap-2 shadow-md transition-colors cursor-pointer select-none min-h-[44px] min-w-[44px]"
+            className="px-3.5 py-2 rounded-t-xl bg-stone-900 text-stone-200 text-xs font-mono font-medium hover:bg-stone-800 flex items-center gap-2 shadow-lg transition-colors cursor-pointer select-none min-h-[44px] min-w-[44px] border-t border-x border-stone-700"
             data-testid="console-toggle"
           >
-            <Terminal size={14} />
+            <Terminal size={14} className="text-amber-400" />
             <span>Diagnostics & Logs</span>
             {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
@@ -87,7 +86,7 @@ export function DiagnosticsDrawer({ state, controller }: DiagnosticsDrawerProps)
         {/* Collapsible Console Body */}
         {expanded && (
           <div
-            className="bg-stone-950 text-stone-100 rounded-t-xl border border-stone-800 shadow-2xl p-4 flex flex-col gap-3 font-mono text-xs max-h-[350px] overflow-hidden"
+            className="bg-stone-950 text-stone-100 rounded-t-2xl border-t border-x border-stone-800 shadow-2xl p-4 flex flex-col gap-3 font-mono text-xs max-h-[350px] overflow-hidden"
             data-testid="console-body"
           >
             {/* Log Stream */}
@@ -120,10 +119,10 @@ export function DiagnosticsDrawer({ state, controller }: DiagnosticsDrawerProps)
               <input
                 type="text"
                 value={cmdDraft}
-                onChange={(e) => setCmdDraft((e.target as HTMLInputElement).value)}
+                onChange={(e) => setCmdDraft(e.target.value)}
                 placeholder="probe, units, settings read [name], firmware inspect..."
-                className="flex-1 bg-stone-900 text-stone-100 px-3 py-1.5 rounded border border-stone-700 text-xs focus:outline-none focus:border-stone-500"
-                style="font-size: 16px;"
+                className="flex-1 bg-stone-900 text-stone-100 px-3 py-1.5 rounded-lg border border-stone-700 text-xs focus:outline-none focus:border-stone-500 min-h-[40px]"
+                style={{ fontSize: "16px" }}
                 data-testid="console-input"
               />
               <Button type="submit" variant="secondary" size="sm" className="bg-stone-800 text-white text-xs">

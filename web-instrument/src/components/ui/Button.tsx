@@ -1,16 +1,17 @@
-import { h, type ComponentChildren } from "preact";
+import type { ReactNode, MouseEvent } from "react";
 
 export interface ButtonProps {
-  children?: ComponentChildren;
+  children?: ReactNode;
   variant?: "primary" | "secondary" | "danger" | "ghost" | "outline" | "purple" | "custom";
   size?: "sm" | "md" | "lg";
   disabled?: boolean;
-  onClick?: (e: MouseEvent) => void;
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
   className?: string;
   type?: "button" | "submit" | "reset";
   "data-action"?: string;
   "data-testid"?: string;
   title?: string;
+  id?: string;
 }
 
 export function Button({
@@ -24,18 +25,17 @@ export function Button({
   "data-action": dataAction,
   "data-testid": dataTestId,
   title,
+  id,
 }: ButtonProps) {
   const baseStyles =
-    "inline-flex items-center justify-center font-medium transition-colors cursor-pointer select-none disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-sans text-center touch-manipulation";
+    "inline-flex items-center justify-center font-medium transition-all duration-150 cursor-pointer select-none disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl font-sans text-center touch-manipulation active:scale-[0.98] focus:outline-none";
 
   const sizeStyles = {
-    sm: "min-h-[36px] px-3.5 py-1.5 text-xs",
-    md: "min-h-[44px] px-4 py-2 text-sm",
-    lg: "min-h-[50px] px-6 py-3 text-base",
+    sm: "min-h-[38px] px-4 py-2 text-xs",
+    md: "min-h-[44px] px-5 py-2.5 text-xs sm:text-sm font-semibold",
+    lg: "min-h-[50px] px-6 py-3 text-sm sm:text-base font-semibold",
   }[size];
 
-  // If caller passes custom bg- or text- in className and didn't specify an explicit non-secondary variant,
-  // do not inject conflicting secondary background/text classes.
   const hasCustomBgOrText = /(?:^|\s)(?:bg-|text-)/.test(className);
   const resolvedVariant = variant === "secondary" && hasCustomBgOrText ? "custom" : variant;
 
@@ -43,13 +43,13 @@ export function Button({
     primary:
       "bg-stone-900 text-white hover:bg-stone-800 active:bg-black shadow-xs border border-transparent",
     secondary:
-      "bg-stone-100 text-stone-900 hover:bg-stone-200 active:bg-stone-300 border border-stone-200",
+      "bg-stone-100 text-stone-900 hover:bg-stone-200 active:bg-stone-300 border border-stone-200/80 shadow-2xs",
     danger:
       "bg-red-600 text-white hover:bg-red-700 active:bg-red-800 shadow-xs border border-transparent",
     ghost:
       "bg-transparent text-stone-700 hover:bg-stone-100 active:bg-stone-200 border border-transparent",
     outline:
-      "bg-white text-stone-900 border border-stone-300 hover:bg-stone-50 active:bg-stone-100 shadow-xs",
+      "bg-white text-stone-900 border border-stone-200 hover:bg-stone-50 active:bg-stone-100 shadow-2xs",
     purple:
       "bg-purple-700 text-white hover:bg-purple-800 active:bg-purple-900 shadow-xs border border-transparent",
     custom: "",
@@ -57,13 +57,14 @@ export function Button({
 
   return (
     <button
+      id={id}
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`${baseStyles} ${sizeStyles} ${variantStyles} ${className}`.trim()}
+      title={title}
       data-action={dataAction}
       data-testid={dataTestId}
-      title={title}
+      className={`${baseStyles} ${sizeStyles} ${variantStyles} ${className}`.trim()}
     >
       {children}
     </button>

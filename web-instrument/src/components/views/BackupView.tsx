@@ -1,5 +1,4 @@
-import { h } from "preact";
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import {
   ArrowLeft,
   ShieldCheck,
@@ -11,7 +10,7 @@ import {
   HardDrive,
   AlertTriangle,
   Check,
-} from "lucide-preact";
+} from "lucide-react";
 import type { InstrumentState, JournalSnapshot } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { Card } from "../ui/Card.tsx";
@@ -22,7 +21,7 @@ import { Modal } from "../ui/Dialog.tsx";
 interface BackupViewProps {
   state: InstrumentState;
   controller: SessionController;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 export function BackupView({ state, controller, onBack }: BackupViewProps) {
@@ -50,20 +49,24 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
 
   return (
     <div
-      className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-6 px-4"
+      className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-4"
       data-testid="journal-section"
     >
-      {/* Navigation */}
+      {/* Top action row */}
       <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-stone-900 cursor-pointer select-none py-1.5 px-2.5 rounded-lg hover:bg-stone-200/60 transition-colors"
-          data-testid="btn-back-overview"
-        >
-          <ArrowLeft size={16} />
-          <span>Back to Overview</span>
-        </button>
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-stone-200/60 transition-colors"
+            data-testid="btn-back-overview"
+          >
+            <ArrowLeft size={15} />
+            <span>Back to Overview</span>
+          </button>
+        ) : (
+          <span className="text-xs font-mono font-medium text-stone-500">Backup & Restore</span>
+        )}
 
         <Badge variant="neutral">
           {state.snapshots.length} Backup{state.snapshots.length !== 1 ? "s" : ""} Stored
@@ -73,11 +76,11 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-stone-900 font-sans flex items-center gap-2.5">
-            <ShieldCheck className="text-emerald-700" size={26} />
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900 font-sans flex items-center gap-2.5">
+            <ShieldCheck className="text-emerald-700" size={24} />
             <span>Backup & Restore Hub</span>
           </h2>
-          <p className="text-sm text-stone-600 mt-1">
+          <p className="text-xs sm:text-sm text-stone-600 mt-1">
             Browse automatic pre-write snapshots or take a complete snapshot of your bike's configuration.
           </p>
         </div>
@@ -87,7 +90,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
           size="md"
           onClick={handleCapture}
           data-testid="btn-capture-snapshot"
-          className="flex items-center gap-2 shrink-0 bg-stone-900 text-white"
+          className="flex items-center gap-2 shrink-0 bg-stone-900 text-white text-xs"
         >
           <Plus size={16} />
           <span>Create Backup Now</span>
@@ -104,7 +107,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
         </div>
 
         {state.snapshots.length === 0 ? (
-          <div className="text-center py-12 px-4 border border-dashed border-stone-200 rounded-xl bg-stone-50/50">
+          <div className="text-center py-12 px-4 border border-dashed border-stone-200 rounded-2xl bg-stone-50/50">
             <ShieldCheck size={36} className="text-stone-400 mx-auto mb-2" />
             <p className="text-sm font-semibold text-stone-700">No Backups Yet</p>
             <p className="text-xs text-stone-500 mt-0.5 max-w-sm mx-auto">
@@ -112,7 +115,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-stone-200 border border-stone-200 rounded-xl overflow-hidden bg-white">
+          <div className="divide-y divide-stone-200 border border-stone-200 rounded-2xl overflow-hidden bg-white">
             {state.snapshots.map((item) => {
               const isRestorable =
                 item.kind === "setting-backup" || item.kind === "full-snapshot";
@@ -123,7 +126,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
                   className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-stone-50/80 transition-colors"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-stone-100 text-stone-700 flex items-center justify-center shrink-0 mt-0.5">
+                    <div className="w-9 h-9 rounded-xl bg-stone-100 text-stone-700 flex items-center justify-center shrink-0 mt-0.5">
                       <FileText size={18} />
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -218,7 +221,7 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
           <p>
             Target file: <strong className="font-mono text-stone-900">{selectedSnapshot?.filename}</strong>
           </p>
-          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5">
+          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5">
             <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
             <div>
               Before applying this restore, cranklink will automatically create a rollback snapshot of your currently active configuration.
@@ -226,8 +229,6 @@ export function BackupView({ state, controller, onBack }: BackupViewProps) {
           </div>
         </div>
       </Modal>
-
-
     </div>
   );
 }
