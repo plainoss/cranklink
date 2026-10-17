@@ -16,9 +16,10 @@ import { Badge } from "../ui/Badge.tsx";
 interface FirmwareViewProps {
   state: InstrumentState;
   controller: SessionController;
+  onOpenWarningModal?: () => void;
 }
 
-export function FirmwareView({ state, controller }: FirmwareViewProps) {
+export function FirmwareView({ state, controller, onOpenWarningModal }: FirmwareViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -60,6 +61,29 @@ export function FirmwareView({ state, controller }: FirmwareViewProps) {
           Shimano EP8 drive units run two synchronized microcontrollers: DCAS (D) and Renesas RX (M).
           Firmware must be validated as a matched companion pair before programming.
         </p>
+      </div>
+
+      {/* Firmware Risk Notice Banner */}
+      <div
+        className="p-3.5 sm:p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs shadow-xs"
+        data-testid="fw-risk-notice"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <AlertTriangle size={18} className="text-amber-700 shrink-0" />
+          <span className="leading-relaxed">
+            <strong>Experimental Tooling:</strong> Tested on EP800-CRG only. Firmware compatibility is not verified.
+          </span>
+        </div>
+        {onOpenWarningModal && (
+          <button
+            type="button"
+            onClick={onOpenWarningModal}
+            data-testid="btn-review-fw-warning"
+            className="text-xs font-semibold text-amber-900 hover:text-amber-950 underline shrink-0 cursor-pointer text-left sm:text-right"
+          >
+            Review risk notice &amp; caveats
+          </button>
+        )}
       </div>
 
       {/* Step 1: Dropzone Container */}

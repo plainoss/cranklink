@@ -5,6 +5,12 @@ This repository is essentially a byproduct of a successful vibe-coded attempt to
 
 Recover supported motors left unresponsive in bootloader mode, inspect bus components, and customize ride settings—using an SM-PCE02 USB adapter or Bluetooth LE.
 
+> [!WARNING]
+> **UNOFFICIAL SOFTWARE & INHERENT RISK WARNING**
+> - **Unofficial software**: `cranklink` is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Shimano.
+> - **Risk of bricking devices**: Using this software is experimental and carries inherent risks, including the potential to **permanently brick or damage drive units, displays, batteries, or other connected components**, as well as void manufacturer warranties.
+> - **Targeted audience**: This toolkit is experimental and targeted strictly at knowledgeable users, researchers, and developers who understand what they are doing and accept full responsibility for any damage, data loss, or regulatory consequences. Use entirely at your own risk.
+
 - **Safe by default**: All firmware flashing runs as a dry-run unless `--write` is specified. Settings modifications automatically save timestamped pre-write backups with readback verification.
 - **Bootloader recovery**: Direct offline flashing and bootloader probing for compatible EP800 motors (`23/00`, DCASX board 1).
 - **Diagnostics & tuning**: Discover all E-TUBE bus components, inspect firmware revisions, and adjust assist profiles, torque, wheel geometry, and lighting.
@@ -129,6 +135,12 @@ See [settings and batch plans](docs/settings-protocol.md), [Bluetooth setup and 
 
 Firmware writes support the EP800 firmware family (`23/00`), DCASX board 1. Recovery requires a reachable, intact bootloader; it cannot repair hardware damage or an erased bootloader. RX recovery also requires a responding D application.
 
+> [!CAUTION]
+> **CRITICAL FIRMWARE FLASHING WARNING — EXPERIMENTAL & HIGH RISK**
+> - **Tested ONLY on EP800-CRG**: Firmware flashing and bootloader recovery routines have **only been tested on a single drive unit model: the DU-EP800-CRG** (`23/00`, DCASX board 1). Compatibility and behavior on other motor models or hardware/board variants are completely untested.
+> - **NO firmware compatibility verification**: `cranklink` **does not verify firmware compatibility** against your connected drive unit, board revision, or existing firmware state. Writing incompatible, mismatched, wrong-model, or corrupted firmware containers (`.dat`) carries a high risk of **permanently bricking the motor** into an unrecoverable state that cannot be salvaged even with official dealer tools.
+> - **Expert users only**: Firmware recovery and flashing features are strictly experimental and intended solely for technical users and developers who know what they are doing and accept full responsibility for any bricked devices. Proceed entirely at your own risk.
+
 > [!IMPORTANT]
 > Firmware containers (.dat) are user-supplied and not bundled. Keep the motor stationary and power stable.
 
@@ -206,6 +218,15 @@ The [web instrument](https://plainoss.github.io/cranklink/) compiles the same co
 
 See the [web instrument documentation](web-instrument/README.md).
 
+## Offline firmware simulator
+
+The headless simulator executes stock display/gateway and motor D firmware over a deterministic virtual packet bus. It currently covers 18 firmware profiles across three display models and six motor families, with 720 protocol/fault scenarios across 80 combinations. The native CLI can connect on macOS/Linux with `--port sim:/absolute/socket` for offline probe and supported settings reads. `ble-sim:/absolute/socket --ble-master` also exercises the actual Bluetooth client through a modeled GATT endpoint and stock SC-EM800 gateway firmware.
+
+See the [simulator setup, coverage and verification guide](docs/firmware-simulator.md). Images are user-supplied and hash-pinned; USB control, initialized parameter RAM and the absent motor M version peer are modeled. Verification includes 60 GATT firmware pairs with 1,200 repeated reads, 17 Bluetooth CLI cases and 29 additional native feature checks.
+
+An opt-in EP800 D4.2.0 fixture also executes stock lamp and wheel-circumference writes, including the motor's actual authorization/AES code, with modeled EEPROM commits and reloads. A Chromium harness runs unchanged historical WASM workers, `WebBleGatt` and browser storage: PR #11's old version fails its second save when gateway stop ends modeled connection mode; the fixed version completes both saves on one connection, preserves backups and reads the final value after a simulated power cycle. An always-advertising control separates that lifecycle assumption from the client behavior. See the [PR regression assessment and measured results](docs/simulator-pr-review.md). Full boot, RF, physical bus timing and complete UI click workflows remain outside this validation. The browser's existing GATT simulator remains available for UI development.
+
+
 ## Installation & builds
 
 Prebuilt binaries for Linux, macOS (Intel & Apple Silicon), and Windows are attached to tagged GitHub releases.
@@ -244,6 +265,7 @@ cranklink session --json
 - **EP800 (DU-EP800)**: Full diagnostics, settings read/write, offline firmware inspection, and bootloader recovery.
 - **EP801 / EP600**: Component discovery, diagnostics, and dedicated settings schemas. Flashing is not enabled.
 - **EP500**: Named settings and flashing are unsupported.
+- **Firmware flashing risk**: Bootloader flashing and recovery routines have **only been tested on a DU-EP800-CRG** motor. `cranklink` does not verify firmware compatibility against your specific hardware revision. Flashing carries a serious risk of permanently bricking drive units and is strictly intended for users who know what they are doing.
 - Every operation enforces model and firmware gates to protect hardware.
 
 ## License

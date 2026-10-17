@@ -1,0 +1,139 @@
+{
+  "scope": "Decoded display images in the local current-firmware audit plus six-version SC-EM800 survey; inventory is not an executable allowlist",
+  "devices": [
+    {
+      "model": "SC-E6100",
+      "version": "4.1.0",
+      "sha256": "8149fe326ddf14e439c83ab09141cfb2b08bd745938b34fbcf603a3fb8e7f71a",
+      "decoded_bytes": 167768,
+      "source_filename": "SCE6100.4.1.0.dat.decoded.bin",
+      "status": "profiled",
+      "profile": "sc-e6100-4.1.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-E7000",
+      "version": "4.1.0",
+      "sha256": "1f3c42ad0cc3e46d2e9affd5f023245f645acbc1c8ee3d68569bfcb25c9c3e79",
+      "decoded_bytes": 126508,
+      "source_filename": "SCE7000.4.1.0.dat.decoded.bin",
+      "status": "profiled",
+      "profile": "sc-e7000-4.1.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-E8000",
+      "version": "4.0.7",
+      "sha256": "950b14687717c3c43b2a59f9958e0d9f0775b2c3e63d9d2e805a9cdbb3efaf22",
+      "decoded_bytes": 98110,
+      "source_filename": "SCE8000.4.0.7.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.0.0",
+      "sha256": "6239988c78ea734cee44c7c61477a9498dfa79f38e392d6c38db580687482bc8",
+      "decoded_bytes": 142232,
+      "source_filename": "SCEM800.4.0.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.0.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.1.0",
+      "sha256": "9a5e8212034c17cb3ce56db59edacf99c69971f952ff13b03fb55ca59e9b3c82",
+      "decoded_bytes": 142920,
+      "source_filename": "SCEM800.4.1.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.1.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.3.0",
+      "sha256": "0f2c469d62803df67df6bd09d46fdaa4201c71b8f8d9fec6c84ef964b6415e32",
+      "decoded_bytes": 155236,
+      "source_filename": "SCEM800.4.3.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.3.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.4.0",
+      "sha256": "e473f3326615d83cd2e60124ebe7df73541b4e23bb417b3ac8615ca4dd970617",
+      "decoded_bytes": 155924,
+      "source_filename": "SCEM800.4.4.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.4.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.5.0",
+      "sha256": "8aa8bbe626c44daefb56b386f616d68146001dfd60fd284c0c2ba6770c17877d",
+      "decoded_bytes": 156284,
+      "source_filename": "SCEM800.4.5.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.5.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EM800",
+      "version": "4.6.0",
+      "sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f",
+      "decoded_bytes": 153692,
+      "source_filename": "SCEM800.4.6.0.dat",
+      "status": "profiled",
+      "profile": "sc-em800-4.6.0",
+      "validation": "function-level packet co-simulation; nine scenarios; default slot13"
+    },
+    {
+      "model": "SC-EN500",
+      "version": "3.1.0",
+      "sha256": "996b9f322fe1695bd19ef9254db529e57ffacf6a68e58867027861ccc4f8a791",
+      "decoded_bytes": 79432,
+      "source_filename": "SCEN500.3.1.0.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    },
+    {
+      "model": "SC-EN600",
+      "version": "3.2.0",
+      "sha256": "c3711908a2efbd054b185d2fa4b45d8c3d2f31009c830e19a3e2cc3df8863b59",
+      "decoded_bytes": 119628,
+      "source_filename": "SCEN600.3.2.0.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    },
+    {
+      "model": "SC-EN610",
+      "version": "3.2.0",
+      "sha256": "a8abda61f2e540427e4529fd9e3a76b1d1903390398c7b4e9879a1282736f398",
+      "decoded_bytes": 87280,
+      "source_filename": "SCEN610-D.3.2.0.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    },
+    {
+      "model": "SC-M9050",
+      "version": "3.2.0",
+      "sha256": "8aad9610d5a8a1018a838fbf2724e1789333bf8a8c63ed443b39350da2e38b0d",
+      "decoded_bytes": 26785,
+      "source_filename": "SCM9050.3.2.0.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    },
+    {
+      "model": "SC-MT800",
+      "version": "4.6.0",
+      "sha256": "d6cd65ba837dd6f443823350787ea25f13edad62f85e7272709c8abd8fc3c286",
+      "decoded_bytes": 75655,
+      "source_filename": "SCMT800.4.6.0.dat.decoded.bin",
+      "status": "unprofiled",
+      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+    }
+  ]
+}

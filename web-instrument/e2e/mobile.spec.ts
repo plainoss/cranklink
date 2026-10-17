@@ -8,6 +8,10 @@ async function openInstrument(page: Page) {
         Boolean((window as any).estepsTerminal?.status().ready));
     } catch { return false; } // The service worker reloads a first visit.
   }, { timeout: 30_000 }).toBe(true);
+  const dismissBtn = page.getByTestId("btn-dismiss-warning");
+  if (await dismissBtn.isVisible()) {
+    await dismissBtn.click();
+  }
 }
 
 async function checkResponsiveBounds(page: Page, state: string) {

@@ -9,6 +9,7 @@ export interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   maxWidth?: "sm" | "md" | "lg" | "xl";
+  dataTestId?: string;
 }
 
 export function Modal({
@@ -19,6 +20,7 @@ export function Modal({
   children,
   footer,
   maxWidth = "md",
+  dataTestId,
 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -54,6 +56,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        data-testid={dataTestId}
         className={`relative bg-white rounded-2xl shadow-2xl border border-stone-200 z-50 p-6 w-[calc(100%-2rem)] ${maxW} max-h-[90vh] overflow-y-auto focus:outline-none animate-in zoom-in-95 duration-150`}
       >
         <div className="flex items-start justify-between gap-4 mb-4">

@@ -61,6 +61,20 @@ export function detectPlatform(): PlatformInfo {
   };
 }
 
+export async function checkBluetoothAvailability(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !("bluetooth" in navigator)) {
+    return false;
+  }
+  if (typeof (navigator as any).bluetooth?.getAvailability === "function") {
+    try {
+      return Boolean(await (navigator as any).bluetooth.getAvailability());
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 let activeWakeLock: any = null;
 
 export async function requestScreenWakeLock(): Promise<boolean> {

@@ -1,0 +1,3 @@
+-r requirements.txt
+# Independent host proof calculation in the stock motor authentication tests.
+pycryptodome==4.0.0

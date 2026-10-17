@@ -1,0 +1,141 @@
+{
+  "passed": true,
+  "scope": "actual native CLI; synthetic NVM and modeled M version",
+  "cases": [
+    {
+      "gateway": "SCEM800.4.6.0.dat",
+      "motor": "DUEP800-D.4.2.0.dat.decoded.bin",
+      "drop_replies": false,
+      "commands": [
+        {
+          "command": [
+            "probe"
+          ],
+          "output": {
+            "slot": 13,
+            "cargo": "00-CRG",
+            "dcas_version": "4.2.0.0",
+            "rx_version": "4.1.11.0",
+            "serial": "000000000000",
+            "model_series": 35,
+            "model_unit": 0
+          }
+        },
+        {
+          "command": [
+            "settings",
+            "read",
+            "lamp"
+          ],
+          "output": {
+            "raw": "00",
+            "value": 0
+          }
+        }
+      ],
+      "passed": true
+    },
+    {
+      "gateway": "SCE6100.4.1.0.dat",
+      "motor": "DUEP600-D.4.6.0.dat.decoded.bin",
+      "drop_replies": false,
+      "commands": [
+        {
+          "command": [
+            "probe"
+          ],
+          "output": {
+            "slot": 13,
+            "cargo": "",
+            "dcas_version": "4.6.0.1",
+            "rx_version": "4.4.0.0",
+            "serial": "000000000000",
+            "model_series": 48,
+            "model_unit": 0
+          }
+        },
+        {
+          "command": [
+            "settings",
+            "read",
+            "lamp"
+          ],
+          "output": {
+            "raw": "00",
+            "value": 0
+          }
+        }
+      ],
+      "passed": true
+    },
+    {
+      "gateway": "SCE7000.4.1.0.dat",
+      "motor": "DUEP800-D.4.1.11.dat",
+      "drop_replies": false,
+      "commands": [
+        {
+          "command": [
+            "probe"
+          ],
+          "output": {
+            "slot": 13,
+            "cargo": "00-CRG",
+            "dcas_version": "4.1.11.0",
+            "rx_version": "4.1.11.0",
+            "serial": "000000000000",
+            "model_series": 35,
+            "model_unit": 0
+          }
+        },
+        {
+          "command": [
+            "settings",
+            "read",
+            "lamp"
+          ],
+          "output": {
+            "raw": "00",
+            "value": 0
+          }
+        }
+      ],
+      "passed": true
+    },
+    {
+      "gateway": "SCE7000.4.1.0.dat",
+      "motor": "DUE6100-D.4.8.0.dat.decoded.bin",
+      "drop_replies": false,
+      "commands": [
+        {
+          "command": [
+            "probe"
+          ],
+          "expected_model_rejection": true
+        },
+        {
+          "command": [
+            "settings",
+            "read",
+            "lamp"
+          ],
+          "expected_model_rejection": true
+        }
+      ],
+      "passed": true
+    },
+    {
+      "gateway": "SCEM800.4.6.0.dat",
+      "motor": "DUEP800-D.4.2.0.dat.decoded.bin",
+      "drop_replies": true,
+      "commands": [
+        {
+          "command": [
+            "probe"
+          ],
+          "expected_timeout": true
+        }
+      ],
+      "passed": true
+    }
+  ]
+}

@@ -8,6 +8,9 @@ On Android, connect the SM-PCE02 with **USB** (WebUSB). The adapter's `0x0A00` d
 
 Firmware is not included. Wired flashing/recovery retains the CLI's model, board, serial, and companion checks. BLE settings and opt-in firmware relay are experimental; BLE recovery and radio DFU are unavailable. See [recovery prerequisites](../README.md#recovering-an-interrupted-firmware-update), [settings and batch plans](../docs/settings-protocol.md), and [Bluetooth limitations](../docs/bluetooth.md).
 
+> [!WARNING]
+> **Unofficial Software & Firmware Flashing Warning**: `cranklink` is independent, unofficial software not endorsed by Shimano. Working directly with drive unit hardware and firmware is inherently risky and may brick components or void warranties. Firmware flashing has **only been tested on a DU-EP800-CRG**, does **not verify firmware compatibility** against your hardware revision, is experimental, and is targeted strictly at users who know what they are doing.
+
 The speed slider and presets use the full model-supported range (15–32 km/h on EP800, 14–45 km/h on EP600/EP801). Choosing a speed stages a compatible destination when the current one cannot support it; both changes appear in the save review. Returning the speed to its previous value removes a destination change added only for that speed. Explicitly selecting a destination adjusts the staged speed into that destination's range. A rejected save keeps the settings screen and staged values available for correction.
 
 For Bluetooth discovery, turn the bike on just before connecting. If it is not listed, turn it off and on again, then enable the display or gateway's Bluetooth connection mode if needed. Close other apps connected to the bike.

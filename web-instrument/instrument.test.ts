@@ -515,6 +515,68 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
   });
 });
 
+describe("Web Bluetooth Availability & Globally Disabled Error Handling", () => {
+  const origNav = globalThis.navigator;
+
+  it("checks Bluetooth availability properly via getAvailability", async () => {
+    const { checkBluetoothAvailability } = await import("./src/core/platform.ts");
+
+    // Bluetooth disabled globally or adapter off
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        bluetooth: {
+          getAvailability: async () => false,
+        },
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), false);
+
+    // Bluetooth available
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        bluetooth: {
+          getAvailability: async () => true,
+        },
+      },
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), true);
+
+    // No bluetooth property
+    Object.defineProperty(globalThis, "navigator", {
+      value: {},
+      configurable: true,
+    });
+    assert.equal(await checkBluetoothAvailability(), false);
+
+    Object.defineProperty(globalThis, "navigator", { value: origNav, configurable: true });
+  });
+
+  it("WebBleGatt.choose provides actionable guidance on globally disabled error", async () => {
+    const { WebBleGatt } = await import("./ble.js");
+    (globalThis as any).isSecureContext = true;
+
+    const mockBluetooth = {
+      requestDevice: async () => {
+        const err = new Error("Web Bluetooth API globally disabled.");
+        err.name = "NotFoundError";
+        throw err;
+      },
+    };
+
+    await assert.rejects(
+      WebBleGatt.choose(mockBluetooth),
+      /Web Bluetooth is disabled globally in this browser\. Use Google Chrome or Microsoft Edge to connect wirelessly, or check your browser's Bluetooth settings\./,
+    );
+  });
+
+  it("userFacingError translates globally disabled error into clear guidance", () => {
+    const message = userFacingError("error: Web Bluetooth API globally disabled.\n[exit 1]");
+    assert.match(message, /Web Bluetooth is disabled globally in this browser/);
+    assert.match(message, /Google Chrome or Microsoft Edge/);
+  });
+});
 
 describe("Concise connection errors", () => {
   it("keeps known connection failures actionable without backend details", () => {
