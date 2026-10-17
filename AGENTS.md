@@ -1,8 +1,24 @@
 # Agent Instructions
 
-- **Documentation Sync**: Whenever modifying CLI commands, options, or core features, always update `README.md` (and relevant files in `docs/`) to keep usage examples and command trees in sync with the implementation.
-- **Fast Web Instrument Test Cycle**: When developing or testing in `web-instrument`, use the rapid iteration tiers by default:
+## 1. Documentation Sync
+- **CLI & Core Docs**: Whenever modifying CLI commands, options, or core features, always update `README.md` (and relevant files in `docs/`) to keep usage examples and command trees in sync with the implementation.
+
+## 2. Tooling & Local Verification
+Always prefer fast local tooling over slow manual loops:
+- **Unified Fast Check**: Run `./tools/verify.sh` to check formatting, Rust typecheck, Rust unit tests, web TypeScript types, and web unit tests in one command.
+- **Git Pre-commit Hook**: Run `./tools/install-git-hooks.sh` once in any worktree to enable `.githooks/pre-commit` (guarantees formatting and types before commit).
+- **Fast Web Typecheck**: In `web-instrument`, run `npm run typecheck` (`tsc --noEmit`, <1s) instead of the full `npm run build` bundle.
+- **Fast Web Instrument Test Cycle**: When developing or testing in `web-instrument`, use the rapid iteration tiers:
   - `npm run test:fast` (<100ms): Fast domain schemas, firmware package rules, and SessionController FSM tests.
   - `npm run test:smoke` (~2s): Fast smoke E2E test verifying connect, inline staging, atomic batch commit, and rollback.
-  - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite.
+  - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite (with automatic port 8030 cleanup).
   - `npm run test:production` (~1s): Reserved for pre-push or CI to verify production build assets, subpath hosting, and service worker COOP/COEP isolation.
+- **E2E Port Safety**: `npm run test:e2e` automatically runs `scripts/ensure-port-free.mjs 8030` to prevent port collisions across worktrees.
+
+## 3. Worktree Setup Protocol
+- When starting work in a new git worktree, if `web-instrument/node_modules` does not exist, run `npm ci` in `web-instrument/` before running web commands.
+
+## 4. CI & Subagent Execution Rules
+- **No CI Busy-Polling**: Never run `gh pr checks` in loops (it exits with code 1 while checks are still pending). Use `./tools/ci-watch.sh [PR_NUM]` or `gh pr checks --watch`, or launch as a background task.
+- **No Subagent Polling**: Never run `manage_subagents Action="list"` in polling loops; the agent environment automatically delivers messages and wakeups when subagents complete or reply.
+- **Scratch Scripts**: When doing firmware analysis, disassembly, or complex data processing, write temporary scripts in `<conversation-id>/scratch/` or `tools/` instead of executing fragile inline multi-line Python snippets in shell commands.

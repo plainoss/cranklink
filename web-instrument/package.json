@@ -9,6 +9,8 @@
     "test": "node --experimental-strip-types --test *.test.ts",
     "test:fast": "node --experimental-strip-types --test *.test.ts",
     "test:smoke": "playwright test --grep @smoke",
+    "typecheck": "tsc --noEmit",
+    "pretest:e2e": "node scripts/ensure-port-free.mjs 8030",
     "test:e2e": "playwright test",
     "test:production": "playwright test --config playwright.production.config.ts"
   },
