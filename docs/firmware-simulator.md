@@ -35,16 +35,35 @@ Use Python 3.10+ and the optional pinned runtime:
 python3 -m venv /tmp/cranklink-firmware-sim
 /tmp/cranklink-firmware-sim/bin/pip install -r tools/firmware-sim/requirements.txt
 
-/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py profiles
+# Inspect executable profiles and check local cache status
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py pull --list
+
+# Auto-pull and cache firmware for given hardware (e.g. EP800)
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py pull --hardware ep800
+
+# Run 9 fault scenarios directly using the hardware preset (auto-pulls if needed)
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py run \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
+  --output /tmp/firmware-run.json
+
+# Or specify profile IDs or custom local file paths explicitly
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py run \
+  --gateway sc-em800-4.6.0 \
+  --motor ep800-4.2.0 \
   --output /tmp/firmware-run.json
 ```
 
 `run` executes all nine scenarios at the recovered slot 13. Output contains deterministic packet traces, instruction counts, cleanup results and modeled peripheral details. Unknown hashes, unhandled execution, instruction/event limits and failed invariants produce a nonzero exit. Tests remain enabled with `python -O`.
 
-The files must already be decoded. A `.dat` that contains plaintext is accepted when its hash matches. Encrypted containers must first be decoded; firmware and decoding downloads are not performed by this tool.
+### Firmware auto-pulling and local caching
+
+Firmware containers can be auto-pulled directly by profile ID, model name, or Shimano filename from official Shimano endpoints (`https://api.shimano.com/etube/public/data/upload/published/`). Downloaded images are validated against hash-pinned SHA-256 profiles, automatically decrypted (if container-encrypted) into plaintext binaries, and cached locally in `tools/firmware-sim/.cache/firmware/` (gitignored, never committed). You can also override the cache path via `--cache-dir` or `CRANKLINK_FW_CACHE`.
+
+- `sim.py pull --list`: Lists all 18 profiled targets, models, versions, and local cache status.
+- `sim.py pull [NAMES...]`: Pulls and decodes specific profile IDs (e.g. `ep800-4.2.0`, `sc-em800-4.6.0`) or filenames.
+- `sim.py pull --hardware <name>`: Pulls the default matching gateway and motor pair for hardware (e.g. `ep800`, `ep600`, `ep500`, `e6100`, `e5000`, `e5100`).
+- `sim.py pull --all --fixtures-output /tmp/firmware-fixtures.json`: Pulls all 18 profiled firmware images and generates a fixture manifest ready for `sim.py matrix`.
+- `sim.py run` and `sim.py serve` accept `--hardware <model>` or profile names directly in `--gateway` / `--motor`, automatically fetching and decoding missing images on demand. Existing local `.decoded.bin` or plaintext `.dat` file paths remain fully supported.
 
 ### Inventory and test a local collection
 
@@ -69,12 +88,11 @@ On macOS or Linux, start a local endpoint:
 
 ```sh
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py serve \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
   --socket /tmp/cranklink-firmware.sock
 ```
 
-In another terminal:
+Or pass explicit profiles/paths (`--gateway sc-em800-4.6.0 --motor ep800-4.2.0`). In another terminal:
 
 ```sh
 cargo build --locked --bin cranklink
@@ -94,8 +112,7 @@ Start the same server with `--gatt` and a separate socket:
 
 ```sh
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py serve --gatt \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
   --socket /tmp/cranklink-gatt.sock
 ./target/debug/cranklink --json --port ble-sim:/tmp/cranklink-gatt.sock --ble-master probe
 ./target/debug/cranklink --json --port ble-sim:/tmp/cranklink-gatt.sock --ble-master settings read lamp
