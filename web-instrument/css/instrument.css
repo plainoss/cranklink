@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /**
  * instrument.css - Precision Field Instrument Stylesheet
  *
@@ -63,12 +65,15 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
 }
 
 cranklink-instrument,
 esteps-instrument {
   display: block;
   min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 button,

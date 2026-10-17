@@ -9,8 +9,10 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "types": ["node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "*.test.ts", "e2e/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "*.test.ts", "e2e/**/*.ts"]
 }

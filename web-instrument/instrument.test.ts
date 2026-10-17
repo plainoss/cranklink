@@ -95,7 +95,7 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
     });
     assert.equal(blePlan.mode, "ble-pair");
     assert.equal(blePlan.commands.length, 1);
-    assert.match(blePlan.commands[0], /ble flash-pair/);
+    assert.match(blePlan.commands[0], /firmware flash ble-pair/);
     assert.match(blePlan.commands[0], /--write/);
 
     const wiredPlan = buildSynchronizedFlashPlan({
@@ -108,6 +108,8 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
     });
     assert.equal(wiredPlan.mode, "wired-pair");
     assert.equal(wiredPlan.commands.length, 3); // backup + flash-dcas + flash-rx
+    assert.match(wiredPlan.commands[1], /firmware flash dcas/);
+    assert.match(wiredPlan.commands[2], /firmware flash rx/);
   });
 });
 

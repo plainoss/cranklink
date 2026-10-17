@@ -16,5 +16,14 @@
     "coi-serviceworker": "0.1.7",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@preact/preset-vite": "^2.10.6",
+    "@preact/signals": "^2.11.3",
+    "@tailwindcss/vite": "^4.3.3",
+    "lucide-preact": "^1.59.0",
+    "preact": "^11.0.1",
+    "tailwindcss": "^4.3.3"
   }
 }

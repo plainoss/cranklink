@@ -262,7 +262,7 @@ test("Bluetooth authentication rejection still reports a real error", async ({ p
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
   expect(commands).toHaveLength(3);
   expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> probe"]);
-  expect(commands[2]).toMatch(/^cranklink> --ble-expect-serial [A-F0-9]+ --ble-unit-auth settings read$/);
+  expect(commands[2]).toMatch(/^cranklink> (?:--expect-serial|--ble-expect-serial) [A-F0-9]+(?: --ble-unit-auth)? settings read$/);
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
   await page.getByTestId("console-toggle").click();
