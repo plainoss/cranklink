@@ -6,7 +6,7 @@ The first proof of concept **runs successfully** with SC-EM800 4.6.0 and EP800 D
 
 ## Implementation status
 
-The [implementation guide](firmware-simulator.md) documents the reusable packet engine, native socket endpoint, current multi-model coverage and remaining boundaries. The original POC below is retained as the initial feasibility check. A modeled GATT endpoint now exercises the native Bluetooth client and stock SC-EM800 control handlers. Boot, storage, motor authentication and physical radio milestones remain incomplete.
+The [implementation guide](firmware-simulator.md) documents the reusable packet engine, native socket endpoint, current multi-model coverage and remaining boundaries. The original POC below is retained as the initial feasibility check. A modeled GATT endpoint now exercises the native Bluetooth client and stock SC-EM800 control handlers. The browser-worker regression now executes real EP800 D4.2.0 D8/E0 authentication and lamp/wheel setters with a modeled EEPROM commit boundary and restart hydration. Its unchanged pre/fixed PR #11 browser workers fail/pass the retained-session repeated-save scenario under an explicit connection-mode model. Full boot, physical radio, general storage layouts and interrupted-commit fidelity remain incomplete; stage 3 is only partially covered.
 
 ## Validated implementation
 

@@ -25,26 +25,89 @@ USER_PROOF = bytes.fromhex('013a72c6d6f29630be3ec9dd85f5bd6be3')
 APP_PROOF = bytes.fromhex('02e1b6c78c19964a801c0bbf1c6cc7cea8')
 
 
+class GattDevice:
+    """Powered virtual bike state shared across radio connections.
+
+    Gateway/motor CPU RAM and installed storage are never recreated on a GATT
+    reconnect. Each connection still has fresh authentication and notifications.
+    This does not model advertising delays or invent disconnect failures.
+    """
+    def __init__(self, gateway_path, motor_path, storage_path=None, allow_saves=False, radio_lifecycle=False):
+        self.gateway, self.motor = setup(gateway_path,motor_path)
+        require('pce_dispatcher' in self.gateway.profile,
+                'GATT requires a recovered PCE dispatcher for this firmware profile')
+        self.bus = Bus(self.gateway,self.motor)
+        self.gateway.restore()
+        self.rx_version = Path(motor_path).read_bytes()[47:50]
+        self.allow_saves = allow_saves
+        if allow_saves:
+            self.motor.install_storage(storage_path)
+        self.radio_lifecycle = radio_lifecycle
+        self.radio_available = True
+        self.active_endpoint = None
+        self.connections = 0
+        self.connect_attempts = 0
+        self.lifecycle = []
+
+    def connect(self, drop_replies=False, fault=None):
+        return GattEndpoint(None,None,drop_replies,fault,device=self)
+
+    def end_connection_mode(self, connection, reason):
+        if self.radio_lifecycle:
+            self.radio_available = False
+            self.lifecycle.append(dict(kind='modeled-radio-connection-mode-ended',connection=connection,reason=reason))
+
+    def reenable_radio(self):
+        require(self.active_endpoint is None, 'disconnect before re-enabling modeled connection mode')
+        self.radio_available = True
+        self.lifecycle.append(dict(kind='modeled-radio-connection-mode-reenabled'))
+
+    def snapshot(self):
+        counts = {}
+        for event in self.lifecycle:
+            key = event['kind']
+            if key == 'pce-command': key += ':'+hex(event['command'])
+            counts[key] = counts.get(key,0)+1
+        state = dict(connections=self.connections,connect_attempts=self.connect_attempts,
+                     connection_active=self.active_endpoint is not None,
+                     motor_connected=self.motor.connected,
+                     radio_available=self.radio_available,
+                     modeled_radio_lifecycle=self.radio_lifecycle,
+                     lifecycle_counts=counts,events=list(self.lifecycle))
+        if 'owner_ram' in self.motor.profile: state['motor_pc_owner'] = self.motor.byte(self.motor.profile['owner_ram'])
+        if 'auth_ram' in self.motor.profile: state['motor_regulation_auth_state'] = self.motor.byte(self.motor.profile['auth_ram'])
+        if getattr(self.motor,'storage',None) is not None: state['storage'] = self.motor.storage.snapshot()
+        return state
+
+
 class GattEndpoint:
     modeled = ('GATT radio/pairing/notification delivery', 'fixed synthetic PIN/challenge',
                'PnP announcement delivery', 'motor logical address relocation at gateway role handoff',
                'slave-radio stop acknowledgment boundary', 'initialized RAM/plain MMIO', 'logical timing',
                'absent M application version query from decoded D header cache')
 
-    def __init__(self, gateway_path, motor_path, drop_replies=False, fault=None):
-        self.gateway, self.motor = setup(gateway_path, motor_path)
-        require('pce_dispatcher' in self.gateway.profile,
-                'GATT requires a recovered PCE dispatcher for this firmware profile')
-        self.bus = Bus(self.gateway, self.motor)
-        self.gateway.restore()
+    def __init__(self, gateway_path, motor_path, drop_replies=False, fault=None, device=None):
         require(fault in (None,'stale-free','duplicate-free'), 'unknown modeled GATT fault')
-        self.fault = fault
-        self.drop_replies = drop_replies
-        self.rx_version = Path(motor_path).read_bytes()[47:50]
-        self.subscriptions, self.queue = set(), deque()
-        self.auth_stage, self.access, self.closed = 0, False, False
+        self.device = device if device is not None else GattDevice(gateway_path,motor_path)
+        self.device.connect_attempts += 1
+        self.device.lifecycle.append(dict(kind='gatt-connect-attempt',attempt=self.device.connect_attempts,
+                                          radio_available=self.device.radio_available))
+        require(self.device.radio_available, 'Gateway connection mode ended; explicitly re-enable the modeled radio')
+        require(self.device.active_endpoint is None, 'modeled GATT device already has an active connection')
+        self.gateway, self.motor, self.bus = self.device.gateway,self.device.motor,self.device.bus
+        self.rx_version = self.device.rx_version
+        self.fault, self.drop_replies = fault,drop_replies
+        self.subscriptions, self.queue = set(),deque()
+        self.auth_stage, self.access, self.closed = 0,False,False
         self.master = False
         self.events = []
+        self.device.connections += 1
+        self.connection_id = self.device.connections
+        self.device.active_endpoint = self
+        self.device.lifecycle.append(dict(kind='gatt-connect',connection=self.connection_id))
+
+    def _lifecycle(self, kind, **fields):
+        self.device.lifecycle.append(dict(kind=kind,connection=self.connection_id,**fields))
 
     def notify(self, characteristic, value):
         if characteristic in self.subscriptions:
@@ -118,6 +181,7 @@ class GattEndpoint:
                 'modeled topology requires --ble-master; logical bus-master-zero discovery is not implemented')
         require(command != 0x0D,
                 'modeled topology requires --ble-master; logical bus-master-zero discovery is not implemented')
+        self._lifecycle('pce-command',command=command,params=params.hex())
         g, p = self.gateway, self.gateway.profile
         notification_start, packet_start = len(g.notifications), len(g.output)
         raw = data[1:]
@@ -144,6 +208,8 @@ class GattEndpoint:
             self._pump(g.output[packet_start:], handoff_stop=command == 0x0C and params == b'\0' and not self.master)
         for response in g.notifications[notification_start:]:
             self.notify(PCE_RESPONSE, bytes.fromhex(response))
+        if command == 0x0C and params == b'\0' and '2c00' in g.notifications[notification_start:]:
+            self.device.end_connection_mode(self.connection_id,'actual-stock-PCE-0C-stop-receipt')
 
     def free(self, data):
         require(4 <= len(data) <= 10, 'normal GATT packet must contain slot plus 3..9 bytes')
@@ -156,7 +222,12 @@ class GattEndpoint:
         elif payload[:2] == b'\x32\x30':
             require(len(payload) == 6 and payload[4:] == b'\0\0', 'invalid PC-link key packet')
         else:
-            require(payload[1] & 7 == 4, 'simulator is read-only; authentication/settings/firmware writes are blocked')
+            allowed_save = getattr(self.motor,'storage',None) is not None and tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            require(payload[1] & 7 == 4 or allowed_save,
+                    'simulator is read-only unless verified persistent-storage operations are explicitly enabled')
+        fields = dict(slot=slot,group=payload[0],command=payload[1],parameter_count=len(payload)-2)
+        if payload[:2] == b'\x32\x10': fields['link_action'] = payload[2]
+        self._lifecycle('free-command',**fields)
         if payload[:2] == b'\x01\x84':
             require(payload == b'\x01\x84\x01', 'unsupported modeled M application query')
             # The absent Renesas M application is a declared version-only peer;
@@ -167,6 +238,11 @@ class GattEndpoint:
                 self._notify_free(bytes([reply['slot']])+bytes.fromhex(reply['payload']))
         else:
             self._pump([self.gateway.send(payload)])
+        if payload[0] == 0x32 or tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0)):
+            self._lifecycle('motor-state-after-protocol',group=payload[0],command=payload[1],
+                            connected=self.motor.connected,
+                            owner=self.motor.byte(self.motor.profile['owner_ram']),
+                            regulation_auth=self.motor.byte(self.motor.profile['auth_ram']))
 
     def request(self, request):
         require(isinstance(request, dict), 'GATT request must be an object')
@@ -201,6 +277,7 @@ class GattEndpoint:
             expected = USER_PROOF if self.auth_stage == 0 else APP_PROOF if self.auth_stage == 1 else None
             require(expected is not None and data == expected, 'synthetic BLE challenge rejected; simulator PIN is 000000')
             self.auth_stage += 1
+            self._lifecycle('synthetic-auth-stage',stage=self.auth_stage)
             self.notify(AUTH_CONTROL, bytes([self.auth_stage,0]))
         elif characteristic == FEATURE:
             require(self.auth_stage == 2 and data == b'\xff\0', 'feature write rejected; reset/update is disabled')
@@ -215,16 +292,25 @@ class GattEndpoint:
     def close(self):
         if self.closed: return
         self.closed = True
-        if self.motor.connected:
-            # Coordinator cleanup after a client disconnect/failure is distinct
-            # from the client's verified stop; retain this fact in diagnostics.
-            self.events.append(dict(kind='coordinator-cleanup-after-client-disconnect'))
-            self.gateway.call(self.gateway.profile['pce3'],0x20)
-            self.gateway.call(self.gateway.profile['sched'])
-            for packet in self.gateway.link_stop(): self.bus.enqueue(packet)
-            self.bus.drain()
-        self.gateway.restore()
-        require(not self.motor.connected, 'GATT endpoint cleanup unconfirmed')
+        confirmed = False
+        try:
+            if self.motor.connected:
+                # Coordinator cleanup after failure differs from a client stop.
+                self.events.append(dict(kind='coordinator-cleanup-after-client-disconnect'))
+                self._lifecycle('coordinator-cleanup-after-client-disconnect')
+                self.gateway.call(self.gateway.profile['pce3'],0x20)
+                self.gateway.call(self.gateway.profile['sched'])
+                before = len(self.gateway.notifications)
+                for packet in self.gateway.link_stop(): self.bus.enqueue(packet)
+                self.bus.drain()
+                if '2c00' in self.gateway.notifications[before:]:
+                    self.device.end_connection_mode(self.connection_id,'actual-stock-stop-during-coordinator-cleanup')
+            self.gateway.restore()
+            require(not self.motor.connected, 'GATT endpoint cleanup unconfirmed')
+            confirmed = True
+        finally:
+            self.device.active_endpoint = None
+            self._lifecycle('gatt-disconnect',cleanup_confirmed=confirmed)
 
 
 def read_request_line(connection, timeout=5, idle_timeout=30):
@@ -256,7 +342,7 @@ def read_request_line(connection, timeout=5, idle_timeout=30):
         connection.settimeout(original_timeout)
 
 
-def serve(gateway_path, motor_path, socket_path, drop_replies=False, fault=None):
+def serve(gateway_path, motor_path, socket_path, drop_replies=False, fault=None, persistent=False):
     path = Path(socket_path).absolute()
     listener = socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
     old_umask = os.umask(0o077)
@@ -264,12 +350,13 @@ def serve(gateway_path, motor_path, socket_path, drop_replies=False, fault=None)
     finally: os.umask(old_umask)
     try:
         listener.listen(1)
+        device = GattDevice(gateway_path,motor_path) if persistent else None
         print(f'Modeled GATT ready: --port ble-sim:{path} --ble-master (PIN 000000; synthetic radio/auth)',flush=True)
         while True:
             connection, _ = listener.accept()
             endpoint = None
             try:
-                endpoint = GattEndpoint(gateway_path,motor_path,drop_replies,fault)
+                endpoint = GattEndpoint(gateway_path,motor_path,drop_replies,fault,device=device)
                 connection.settimeout(30)
                 with connection:
                     while line := read_request_line(connection):

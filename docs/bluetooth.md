@@ -25,7 +25,7 @@ Failed gateway authentication clears the cached PIN in memory and browser sessio
 
 macOS requires terminal Bluetooth permission; Windows requires a Bluetooth adapter supported by Windows; Linux requires BlueZ and a running D-Bus daemon. The BLE build enables vendored D-Bus support on Linux.
 
-For offline development on macOS/Linux, `--port ble-sim:/absolute/socket --ble-master` connects this same client to the stock-firmware simulator with a modeled radio. It needs no Bluetooth adapter or `ble` build feature. See the [setup and coverage guide](firmware-simulator.md#run-the-bluetooth-client-offline); writes, retained browser sessions and physical radio behavior are outside its current coverage.
+For offline development on macOS/Linux, `--port ble-sim:/absolute/socket --ble-master` connects this same client to the stock-firmware simulator with a modeled radio. It needs no Bluetooth adapter or `ble` build feature. See the [setup and coverage guide](firmware-simulator.md#run-the-bluetooth-client-offline); the ordinary socket endpoint stays read-only. A separate [pinned browser-worker regression](firmware-simulator.md#persistent-writes-and-retained-browser-sessions) covers persistent lamp/wheel writes, real motor authentication and retained sessions on the exact EP800 D4.2.0 profile. Physical radio behavior remains modeled.
 
 ## Read and write
 

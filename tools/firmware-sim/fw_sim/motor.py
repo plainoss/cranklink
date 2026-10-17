@@ -4,8 +4,11 @@ from .machine import Machine, INPUT, require, UC_ARM_REG_R4, UC_ARM_REG_R7
 
 
 class Motor(Machine):
+    storage = None
+
     def __init__(self, image, profile):
         super().__init__(image, profile)
+        self.storage = None
         if profile['abi'] == 'legacy':
             self.u.mem_write(profile['table'], b'\xff' * 33)
         # Direct handler entry replaces boot and the interrupt receive loop.
@@ -17,8 +20,16 @@ class Motor(Machine):
         if 'rx_cache' in profile:
             self.u.mem_write(profile['rx_cache'], image[47:50])
 
+    def install_storage(self, path=None):
+        from .persistence import PersistentRecords
+        require(self.storage is None, "storage already installed")
+        self.storage = PersistentRecords(self, path)
+        return self.storage
+
     def observe(self, u, address, size, opaque):
         super().observe(u, address, size, opaque)
+        if self.storage is not None and self.storage.observe(address):
+            return
         if address in (self.profile['transport'], self.profile['queue']):
             self.accept_packet()
 
@@ -42,9 +53,11 @@ class Motor(Machine):
         elif payload[:2] == b'\x32\x30':
             self.call(p['key'], source, INPUT)
         else:
-            # Until storage, auth counters and reset are modeled, only normal
-            # GET opcodes are admitted. A caller cannot turn this into flashing.
-            require(payload[1] & 7 == 4, 'only normal read commands are supported')
+            # Writes are opt-in and limited to the exact-profile storage/auth
+            # path. Reset, flashing and unrelated setting writes stay excluded.
+            allowed_write = (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            require(payload[1] & 7 == 4 or self.storage is not None and allowed_write,
+                    'only normal reads or explicitly enabled persistent settings are supported')
             self.call(p['dispatch'], source, INPUT)
             if p['abi'] == 'legacy':
                 self.call(p['scheduler'])
