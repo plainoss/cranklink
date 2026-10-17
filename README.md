@@ -72,7 +72,7 @@ cranklink --port usb probe
 ```text
 Drive Unit Probe:
   Model:       DU-EP800-CRG (Slot 13)
-  Serial:      8ff77c766533
+  Serial:      010203040506
   Cargo ID:    00-CRG
   DCAS (D):    v4.2.0.0
   Renesas (M): v4.1.11.0
@@ -91,7 +91,7 @@ Inspect schemas, export complete snapshots, or modify settings safely. Every wri
 
 ```sh
 # Read a single setting
-cranklink --port usb -s 8ff77c766533 settings read profile1.boost.torque
+cranklink --port usb -s 010203040506 settings read profile1.boost.torque
 ```
 ```text
 profile1.boost.torque: 85 Nm
@@ -99,7 +99,7 @@ profile1.boost.torque: 85 Nm
 
 ```sh
 # Test a change safely without writing to EEPROM (--dry-run)
-cranklink --port usb -s 8ff77c766533 settings set profile1.boost.torque 85 --dry-run
+cranklink --port usb -s 010203040506 settings set profile1.boost.torque 85 --dry-run
 ```
 ```text
 [DRY RUN - VALIDATION ONLY]
@@ -121,7 +121,7 @@ cranklink --port usb -s <SERIAL> settings restore eco-before.json
 cranklink --port usb -s <SERIAL> settings read --output settings.json
 ```
 
-Replace `<SERIAL>` with the motor's 12-digit wire-order hex serial (e.g. `8ff77c766533`, returned by `cranklink probe`).
+Replace `<SERIAL>` with the motor's 12-digit wire-order hex serial (e.g. `010203040506`, returned by `cranklink probe`).
 See [settings and batch plans](docs/settings-protocol.md), [Bluetooth setup and commands](docs/bluetooth.md), and [component selection](docs/unit-identification.md).
 
 ### 3. Recover an interrupted firmware update
