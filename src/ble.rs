@@ -205,6 +205,10 @@ pub struct BleSession {
     firmware_active: bool,
     queue_width: usize,
 }
+/// Acknowledged writes kept in flight while streaming M firmware (native and
+/// browser). 4 is the burst depth checked offline against the Motor D relay and
+/// gateway queue; 1 restores strictly sequential writes.
+const DEFAULT_QUEUE_WIDTH: usize = 4;
 impl BleSession {
     pub fn new(io: Box<dyn Gatt>, trace: Option<&Path>) -> Result<Self> {
         let trace = trace
@@ -232,7 +236,7 @@ impl BleSession {
             gateway_started_slots: BTreeSet::new(),
             master_pc_start_receipts: BTreeMap::new(),
             firmware_active: false,
-            queue_width: 1,
+            queue_width: DEFAULT_QUEUE_WIDTH,
         })
     }
     /// Select stock normal/master routing before component discovery.
