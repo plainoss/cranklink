@@ -619,7 +619,12 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     }
                     out_println!("\nBluetooth Gateways ({} found):", ble_devices.len());
                     for d in &ble_devices {
-                        out_println!("  {:<20} {} (RSSI: {} dBm)", d.id, d.name, d.rssi);
+                        let name = d.name.as_deref().unwrap_or("Unknown");
+                        let rssi = d
+                            .rssi
+                            .map(|r| format!("{} dBm", r))
+                            .unwrap_or_else(|| "N/A".to_string());
+                        out_println!("  {:<20} {} (RSSI: {})", d.id, name, rssi);
                     }
                 }
                 Ok(())
