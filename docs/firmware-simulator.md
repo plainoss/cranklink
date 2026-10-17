@@ -167,6 +167,10 @@ Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fix
 
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600 and SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. The [native results](../tools/firmware-sim/native-validation.json) record successful probes, settings reads and the expected E6100 model rejection. Firmware metadata checks and the virtual endpoint never weaken those CLI gates.
 
+### Firmware patching and speed limit verification
+
+The firmware simulator also supports verifying modified binaries. `tools/patch_ep800_speed.py` uses the simulator's motor execution, DCASX bootloader flash simulation, and GATT protocol pipeline to verify that patched EP800 firmware images accept arbitrary speed limit writes (up to 655.35 km/h / 65535 raw) and recalculate motor assist tables correctly. See [EP800 Speed Limit Patcher](ep800-speed-limit-patcher.md) for details.
+
 ## Execution boundaries and remaining work
 
 Each machine retains RAM and CPU state between bounded function calls. Firmware bytes remain unchanged. The motor receive entry and transmit-acceptance routines are modeled boundaries: a virtual queue acceptance allows firmware to consume its pending-response flag, while subsequent loss may still prevent delivery. The modeled host/radio consumer drains the real gateway TX ring. Event ordering is deterministic and separate from instruction budgets.

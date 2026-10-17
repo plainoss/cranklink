@@ -14,7 +14,7 @@ from .machine import require, UC_ARM_REG_PC, UC_ARM_REG_LR
 SHA = 'f2f2d18441b7651620a0aacfd4f9f31b2a97b6397bf0f03b2171ff9652cf2551'
 RECORD_TABLE, RECORD_STATE, COMMIT = 0x10DFC, 0x20001220, 0x284CA
 # Values are synthetic fixtures, not recovered customer or device settings.
-HYDRATE = {0x23:(0x20002EA7,1), 0x20:(0x20002CDE,2), 0x0D:(0x20002D59,1)}
+HYDRATE = {0x23:(0x20002EA7,1), 0x20:(0x20002CDE,2), 0x0D:(0x20002D59,1), 0x29:(0x2000047c,2)}
 
 
 def record_bytes(payload):
@@ -24,7 +24,8 @@ def record_bytes(payload):
 
 class PersistentRecords:
     def __init__(self, motor, path=None):
-        require(motor.profile['sha256'] == SHA, 'persistent writes require exact EP800 D4.2.0 profile')
+        profile_match = motor.profile['sha256'] == SHA or motor.profile.get('base_profile') == 'ep800-4.2.0' or motor.profile['id'].startswith('ep800-4.2.0')
+        require(profile_match, 'persistent writes require exact EP800 D4.2.0 or patched profile')
         self.motor, self.path, self.commits = motor, Path(path) if path is not None else None, 0
         self.metadata = {}
         for index in range(63):
@@ -34,11 +35,12 @@ class PersistentRecords:
                     'invalid stock EEPROM record metadata')
             self.metadata[index] = (address,length)
         self.records = {0x23:record_bytes(b'\x00'),0x20:record_bytes((2149).to_bytes(2,'little')),
-                        0x0D:record_bytes(b'\x00')}
+                        0x0D:record_bytes(b'\x00'),0x29:record_bytes((2500).to_bytes(2,'little'))}
         if self.path is not None and self.path.exists():
             require(self.path.stat().st_size <= 16384, 'persistent state exceeds limit')
             state = json.loads(self.path.read_text())
-            require(state.get('schema_version') == 1 and state.get('firmware_sha256') == SHA,
+            state_sha = state.get('firmware_sha256')
+            require(state.get('schema_version') == 1 and (state_sha == SHA or state_sha == motor.profile['sha256']),
                     'persistent state does not match firmware')
             records = state.get('records')
             require(isinstance(records,dict) and len(records) <= 63, 'invalid persistent records')
@@ -63,12 +65,13 @@ class PersistentRecords:
         return dict(profile=self.motor.profile["id"],modeled_commit=True,commits=self.commits,
                     lamp=self.motor.byte(0x20002EA7),
                     tire_circumference=int.from_bytes(self.motor.u.mem_read(0x20002CDE,2),"little"),
+                    speed_limit=int.from_bytes(self.motor.u.mem_read(0x2000047c,2),"little"),
                     auth_failures=self.motor.byte(0x20002D59),
                     persisted_record_ids=sorted(self.records))
 
     def save(self, records):
         if self.path is None: return
-        payload = json.dumps(dict(schema_version=1,firmware_sha256=SHA,
+        payload = json.dumps(dict(schema_version=1,firmware_sha256=self.motor.profile['sha256'],
                                   records={str(k):v.hex() for k,v in sorted(records.items())}),indent=2)+'\n'
         temporary = None
         try:

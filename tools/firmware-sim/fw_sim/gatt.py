@@ -222,7 +222,7 @@ class GattEndpoint:
         elif payload[:2] == b'\x32\x30':
             require(len(payload) == 6 and payload[4:] == b'\0\0', 'invalid PC-link key packet')
         else:
-            allowed_save = getattr(self.motor,'storage',None) is not None and tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            allowed_save = getattr(self.motor,'storage',None) is not None and tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0),(0x16,0xb0))
             require(payload[1] & 7 == 4 or allowed_save,
                     'simulator is read-only unless verified persistent-storage operations are explicitly enabled')
         fields = dict(slot=slot,group=payload[0],command=payload[1],parameter_count=len(payload)-2)
@@ -238,7 +238,7 @@ class GattEndpoint:
                 self._notify_free(bytes([reply['slot']])+bytes.fromhex(reply['payload']))
         else:
             self._pump([self.gateway.send(payload)])
-        if payload[0] == 0x32 or tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0)):
+        if payload[0] == 0x32 or tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0),(0x16,0xb0)):
             self._lifecycle('motor-state-after-protocol',group=payload[0],command=payload[1],
                             connected=self.motor.connected,
                             owner=self.motor.byte(self.motor.profile['owner_ram']),

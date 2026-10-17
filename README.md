@@ -226,6 +226,8 @@ See the [simulator setup, coverage and verification guide](docs/firmware-simulat
 
 An opt-in EP800 D4.2.0 fixture also executes stock lamp and wheel-circumference writes, including the motor's actual authorization/AES code, with modeled EEPROM commits and reloads. A Chromium harness runs unchanged historical WASM workers, `WebBleGatt` and browser storage: PR #11's old version fails its second save when gateway stop ends modeled connection mode; the fixed version completes both saves on one connection, preserves backups and reads the final value after a simulated power cycle. An always-advertising control separates that lifecycle assumption from the client behavior. See the [PR regression assessment and measured results](docs/simulator-pr-review.md). Full boot, RF, physical bus timing and complete UI click workflows remain outside this validation. The browser's existing GATT simulator remains available for UI development.
 
+For firmware analysis and tuning research, `tools/patch_ep800_speed.py` leverages the emulator to verify patching DU-EP800 firmware binaries (`.bin` and `.dat`) for arbitrary speed limits, validating bootloader flashing simulation, runtime authentication, setting writes up to 655.35 km/h, and assist ramp curve recalculation. See the [EP800 speed limit patcher guide](docs/ep800-speed-limit-patcher.md).
+
 
 ## Installation & builds
 

@@ -55,7 +55,7 @@ class Motor(Machine):
         else:
             # Writes are opt-in and limited to the exact-profile storage/auth
             # path. Reset, flashing and unrelated setting writes stay excluded.
-            allowed_write = (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            allowed_write = (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0),(0x16,0xb0))
             require(payload[1] & 7 == 4 or self.storage is not None and allowed_write,
                     'only normal reads or explicitly enabled persistent settings are supported')
             self.call(p['dispatch'], source, INPUT)
