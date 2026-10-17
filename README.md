@@ -5,6 +5,12 @@ This repository is essentially a byproduct of a successful vibe-coded attempt to
 
 Recover supported motors left unresponsive in bootloader mode, inspect bus components, and customize ride settings—using an SM-PCE02 USB adapter or Bluetooth LE.
 
+> [!WARNING]
+> **UNOFFICIAL SOFTWARE & INHERENT RISK WARNING**
+> - **Unofficial software**: `cranklink` is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Shimano.
+> - **Risk of bricking devices**: Using this software is experimental and carries inherent risks, including the potential to **permanently brick or damage drive units, displays, batteries, or other connected components**, as well as void manufacturer warranties.
+> - **Targeted audience**: This toolkit is experimental and targeted strictly at knowledgeable users, researchers, and developers who understand what they are doing and accept full responsibility for any damage, data loss, or regulatory consequences. Use entirely at your own risk.
+
 - **Safe by default**: All firmware flashing runs as a dry-run unless `--write` is specified. Settings modifications automatically save timestamped pre-write backups with readback verification.
 - **Bootloader recovery**: Direct offline flashing and bootloader probing for compatible EP800 motors (`23/00`, DCASX board 1).
 - **Diagnostics & tuning**: Discover all E-TUBE bus components, inspect firmware revisions, and adjust assist profiles, torque, wheel geometry, and lighting.
@@ -129,6 +135,12 @@ See [settings and batch plans](docs/settings-protocol.md), [Bluetooth setup and 
 
 Firmware writes support the EP800 firmware family (`23/00`), DCASX board 1. Recovery requires a reachable, intact bootloader; it cannot repair hardware damage or an erased bootloader. RX recovery also requires a responding D application.
 
+> [!CAUTION]
+> **CRITICAL FIRMWARE FLASHING WARNING — EXPERIMENTAL & HIGH RISK**
+> - **Tested ONLY on EP800-CRG**: Firmware flashing and bootloader recovery routines have **only been tested on a single drive unit model: the DU-EP800-CRG** (`23/00`, DCASX board 1). Compatibility and behavior on other motor models or hardware/board variants are completely untested.
+> - **NO firmware compatibility verification**: `cranklink` **does not verify firmware compatibility** against your connected drive unit, board revision, or existing firmware state. Writing incompatible, mismatched, wrong-model, or corrupted firmware containers (`.dat`) carries a high risk of **permanently bricking the motor** into an unrecoverable state that cannot be salvaged even with official dealer tools.
+> - **Expert users only**: Firmware recovery and flashing features are strictly experimental and intended solely for technical users and developers who know what they are doing and accept full responsibility for any bricked devices. Proceed entirely at your own risk.
+
 > [!IMPORTANT]
 > Firmware containers (.dat) are user-supplied and not bundled. Keep the motor stationary and power stable.
 
@@ -243,6 +255,7 @@ cranklink session --json
 - **EP800 (DU-EP800)**: Full diagnostics, settings read/write, offline firmware inspection, and bootloader recovery.
 - **EP801 / EP600**: Component discovery, diagnostics, and dedicated settings schemas. Flashing is not enabled.
 - **EP500**: Named settings and flashing are unsupported.
+- **Firmware flashing risk**: Bootloader flashing and recovery routines have **only been tested on a DU-EP800-CRG** motor. `cranklink` does not verify firmware compatibility against your specific hardware revision. Flashing carries a serious risk of permanently bricking drive units and is strictly intended for users who know what they are doing.
 - Every operation enforces model and firmware gates to protect hardware.
 
 ## License

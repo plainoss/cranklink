@@ -31,6 +31,7 @@ import { Badge } from "./components/ui/Badge.tsx";
 import { Button } from "./components/ui/Button.tsx";
 import { Modal } from "./components/ui/Dialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
+import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
 
 interface AppProps {
   controller: SessionController;
@@ -66,6 +67,20 @@ export function App({ controller }: AppProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [mobileReviewOpen, setMobileReviewOpen] = useState(false);
+  const [warningModalOpen, setWarningModalOpen] = useState(() => {
+    try {
+      return localStorage.getItem("cranklink_disclaimer_dismissed") !== "true";
+    } catch {
+      return true;
+    }
+  });
+
+  const handleDismissWarning = () => {
+    setWarningModalOpen(false);
+    try {
+      localStorage.setItem("cranklink_disclaimer_dismissed", "true");
+    } catch {}
+  };
 
   // Sync state from sessionController
   useEffect(() => {
@@ -194,9 +209,18 @@ export function App({ controller }: AppProps) {
   if (isDisconnected) {
     return (
       <div className="min-h-screen bg-[#f4f3ef] text-stone-900 font-sans flex flex-col justify-between selection:bg-stone-900 selection:text-white">
-        <ConnectView state={state} controller={controller} />
+        <ConnectView
+          state={state}
+          controller={controller}
+          onOpenWarningModal={() => setWarningModalOpen(true)}
+        />
         {mcpApprovalBanner}
         <OperationModal state={state} />
+        <RiskWarningModal
+          open={warningModalOpen}
+          onOpenChange={setWarningModalOpen}
+          onDismiss={handleDismissWarning}
+        />
         <span style={{ display: "none" }} data-testid="status-message">
           {state.statusMessage}
         </span>
@@ -434,18 +458,29 @@ export function App({ controller }: AppProps) {
             </button>
           </nav>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDisconnectClick}
-          data-testid="btn-disconnect"
-          data-action="disconnect"
-          title="Disconnect from this bike"
-          className="w-full justify-start gap-2 text-stone-500 hover:text-red-700"
-        >
-          <LogOut size={15} />
-          <span>Disconnect</span>
-        </Button>
+        <div className="flex flex-col gap-1 border-t border-stone-100 pt-2">
+          <button
+            type="button"
+            onClick={() => setWarningModalOpen(true)}
+            data-testid="btn-sidebar-warning"
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-stone-500 hover:text-stone-800 hover:bg-stone-50 transition-colors cursor-pointer"
+          >
+            <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+            <span>Safety &amp; Disclaimer</span>
+          </button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDisconnectClick}
+            data-testid="btn-disconnect"
+            data-action="disconnect"
+            title="Disconnect from this bike"
+            className="w-full justify-start gap-2 text-stone-500 hover:text-red-700"
+          >
+            <LogOut size={15} />
+            <span>Disconnect</span>
+          </Button>
+        </div>
       </aside>
 
       {/* 2. Mobile Slide-Over Drawer (< 1024px) */}
@@ -639,17 +674,31 @@ export function App({ controller }: AppProps) {
                 </button>
               </nav>
             </div>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={handleDisconnectClick}
-              data-testid="btn-disconnect-mobile"
-              data-action="disconnect"
-              className="w-full justify-start gap-3 text-stone-600"
-            >
-              <LogOut size={16} />
-              <span>Disconnect</span>
-            </Button>
+            <div className="flex flex-col gap-1 border-t border-stone-100 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  setWarningModalOpen(true);
+                }}
+                data-testid="btn-drawer-warning"
+                className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors cursor-pointer min-h-[44px]"
+              >
+                <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                <span>Safety &amp; Disclaimer</span>
+              </button>
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={handleDisconnectClick}
+                data-testid="btn-disconnect-mobile"
+                data-action="disconnect"
+                className="w-full justify-start gap-3 text-stone-600 min-h-[44px]"
+              >
+                <LogOut size={16} />
+                <span>Disconnect</span>
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -789,6 +838,7 @@ export function App({ controller }: AppProps) {
             <FirmwareView
               state={state}
               controller={controller}
+              onOpenWarningModal={() => setWarningModalOpen(true)}
             />
           )}
 
@@ -842,6 +892,13 @@ export function App({ controller }: AppProps) {
 
       {/* Asynchronous Operation Progress Modal */}
       <OperationModal state={state} />
+
+      {/* Unofficial Software & Risk Warning Modal */}
+      <RiskWarningModal
+        open={warningModalOpen}
+        onOpenChange={setWarningModalOpen}
+        onDismiss={handleDismissWarning}
+      />
 
       {/* Fixed Automation Actionability Anchors */}
       <div
