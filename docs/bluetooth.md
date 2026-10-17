@@ -71,3 +71,7 @@ Drive-unit regulation authentication is planned separately from BLE routing:
 ## Firmware boundary
 
 Ordinary BLE sessions reject firmware, bootloader, recovery, and power-cycle commands. Experimental EP800 dual-MCU firmware relay uses `firmware flash ble-pair`; hardware validation is pending and BLE recovery/radio DFU are disabled. Use the wired [recovery guide](../README.md) for bricked motors. Settings backups and readback do not establish power-cycle persistence; check the result after reconnecting and power cycling the bike.
+
+## Queued M firmware writes
+
+Both the native and browser (WASM) builds keep up to 4 acknowledged `FREE2AFE` writes in flight while streaming the Renesas M image (`BleSession::set_queue_width`; 1 restores sequential writes). Every write is still acknowledged, sequence order and each 1 KiB window checksum are enforced, and no write-without-response is used. Offline-validated only; not yet physically tested.
