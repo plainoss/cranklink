@@ -30,9 +30,18 @@ Open the displayed local URL on port 8030. The pinned wasm-bindgen CLI matches t
 From `web-instrument`, after the build:
 
 ```sh
-npm test
+# Fast dev tier: domain schemas, firmware package checks, and SessionController FSM (<100ms)
+npm run test:fast
+
+# Fast smoke E2E: connect, inline staging, atomic batch commit, and snapshot rollback (~2s)
+npm run test:smoke
+
+# Full parallel E2E: all wire-level GATT simulator, authentication, WebMCP, and mobile views (~7s)
+npm run test:e2e
+
+# Production suite: serves dist at /cranklink/ verifying service-worker COOP/COEP isolation
 npx playwright install chromium
 npm run test:production
 ```
 
-The production suite serves the exact `dist` output at `/cranklink/` without isolation headers and checks service-worker isolation, WASM startup, and the simulated settings workflow. This validates the published artifact and subpath; it does not test real adapters, motors, or Bluetooth radios.
+The production suite serves the exact `dist` output at `/cranklink/` without isolation headers and checks service-worker isolation, WASM startup, and the production UI controls. This validates the published artifact and subpath; it does not test real adapters, motors, or Bluetooth radios.
