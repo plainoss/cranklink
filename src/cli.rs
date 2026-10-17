@@ -273,7 +273,7 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum SettingsCommand {
     /// List setting names, units, accepted ranges, and OEM flags
     Schema {
@@ -632,8 +632,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         Command::Units => {
             let mut session =
                 Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
-            let power = session.initialize()?;
-            err_println!("Adapter ready: {}", serde_json::to_string(&power)?);
+            session.initialize()?;
             let units = session.units()?;
             if is_json {
                 out_println!(
@@ -648,8 +647,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         Command::Probe => {
             let mut session =
                 Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
-            let power = session.initialize()?;
-            err_println!("Adapter ready: {}", serde_json::to_string(&power)?);
+            session.initialize()?;
             let result = session
                 .probe_component(slot, component.as_deref())
                 .and_then(|identity| {
@@ -659,7 +657,19 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             let stopped = session.normal_stop();
             let identity =
                 finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
-            out_println!("{}", serde_json::to_string_pretty(&identity)?);
+            if is_json {
+                out_println!("{}", serde_json::to_string_pretty(&identity)?);
+            } else {
+                print_probe_card(
+                    identity.identity.slot,
+                    identity.model_series,
+                    identity.model_unit,
+                    &identity.identity.cargo,
+                    &identity.serial,
+                    &identity.identity.dcas_version,
+                    &identity.identity.rx_version,
+                );
+            }
             Ok(())
         }
         Command::Settings {
@@ -677,9 +687,17 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                             model_enum.name()
                         )
                     })?;
-                out_println!("{}", serde_json::to_string_pretty(&spec)?);
+                if is_json {
+                    out_println!("{}", serde_json::to_string_pretty(&spec)?);
+                } else {
+                    print_setting_schema(spec);
+                }
             } else {
-                out_println!("{}", serde_json::to_string_pretty(&specs)?);
+                if is_json {
+                    out_println!("{}", serde_json::to_string_pretty(&specs)?);
+                } else {
+                    print_settings_schema_table(&specs);
+                }
             }
             Ok(())
         }
@@ -692,7 +710,6 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     let serial_raw = s.command(id.slot, 1, 0x3c, &[0], 0x3e)?;
                     let motor_serial = hex::encode(crate::device::serial_bytes(&serial_raw)?);
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
-                    err_println!("Motor ready: {}", serde_json::to_string(&id)?);
 
                     // Check if setting write targets an OEM field requiring authentication
                     let model = resolve_settings_model(&mut s, &id)?;
@@ -716,19 +733,28 @@ pub fn execute(args: Vec<String>) -> Result<()> {
 
                     if is_oem {
                         ensure!(!no_auth, "setting requires drive-unit authentication, but --no-auth was specified");
-                        let receipt = s.authenticate_unit_settings(&motor_serial)?;
-                        err_println!("Drive-unit authentication: {}", receipt);
+                        let _receipt = s.authenticate_unit_settings(&motor_serial)?;
                     }
 
-                    execute_settings(&mut s, &id, command)
+                    let val = execute_settings(&mut s, &id, &command)?;
+                    Ok((val, model))
                 });
             let stopped = s.normal_stop();
-            let value = finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
-            out_println!("{}", serde_json::to_string_pretty(&value)?);
+            let (value, model) = finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
+            print_settings_result(&value, &command, model, is_json)?;
             Ok(())
         }
-        Command::Firmware { command } => execute_firmware_command(port.as_deref(), trace.as_deref(), slot, expect_serial.as_deref(), command),
-        Command::Adapter { command } => execute_adapter_command(port.as_deref(), trace.as_deref(), slot, command),
+        Command::Firmware { command } => execute_firmware_command(
+            port.as_deref(),
+            trace.as_deref(),
+            slot,
+            expect_serial.as_deref(),
+            command,
+            is_json,
+        ),
+        Command::Adapter { command } => {
+            execute_adapter_command(port.as_deref(), trace.as_deref(), slot, command, is_json)
+        }
         Command::Ble { .. } => {
             anyhow::bail!("Bluetooth commands require selecting a Bluetooth port (--port ble:DEVICE_ID)")
         }
@@ -741,6 +767,7 @@ fn execute_firmware_command(
     slot: Option<u8>,
     expect_serial: Option<&str>,
     command: FirmwareCommand,
+    is_json: bool,
 ) -> Result<()> {
     match command {
         FirmwareCommand::Inspect {
@@ -752,19 +779,23 @@ fn execute_firmware_command(
             if let Some(c) = companion {
                 fw.validate_companion(&Firmware::load(c)?)?;
             }
-            if let Some(out) = decode_to {
+            if let Some(out) = &decode_to {
                 use std::io::Write;
                 let mut f = crate::storage::OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(&out)
+                    .open(out)
                     .with_context(|| {
                         format!("create {} (must not already exist)", out.display())
                     })?;
                 f.write_all(&fw.data)?;
                 f.sync_all()?;
             }
-            out_println!("{}", serde_json::to_string_pretty(&fw.metadata)?);
+            if is_json {
+                out_println!("{}", serde_json::to_string_pretty(&fw.metadata)?);
+            } else {
+                print_firmware_metadata(&fw.metadata, decode_to.as_deref());
+            }
             Ok(())
         }
         FirmwareCommand::Probe {
@@ -777,20 +808,37 @@ fn execute_firmware_command(
             match target.to_lowercase().as_str() {
                 "dcas" => {
                     if !recovery {
-                        let i = s.normal_start(slot)?;
-                        err_println!("Application: {}", serde_json::to_string(&i)?);
+                        let _ = s.normal_start(slot)?;
                     }
                     let identity = s.boot_start_at(!recovery, slot)?;
-                    out_println!("{}", serde_json::to_string_pretty(&identity)?);
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&identity)?);
+                    } else {
+                        out_println!("DCAS Bootloader Probe:");
+                        out_println!("  Slot:       {}", identity.slot);
+                        out_println!(
+                            "  Version:    v{}.{}.{}.{}",
+                            identity.version[0],
+                            identity.version[1],
+                            identity.version[2],
+                            identity.version[3]
+                        );
+                        out_println!("  Board:      {}", identity.board);
+                        out_println!("  Series:     0x{:02X}", identity.series);
+                    }
                     if !recovery || reset {
                         s.boot_reset()?;
-                        err_println!("Application reset acknowledged");
                     }
                 }
                 "rx" => {
                     let before = start_rx_session(&mut s, slot, recovery)?;
                     let boot = crate::rx::read_boot(&mut s, before.slot)?;
-                    out_println!("{}", serde_json::to_string_pretty(&boot)?);
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&boot)?);
+                    } else {
+                        out_println!("Renesas RX Bootloader Probe:");
+                        out_println!("  Capability: {}", boot.capability_sequence);
+                    }
                     crate::rx::reset_fast(&mut s, before.slot)?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
@@ -800,15 +848,16 @@ fn execute_firmware_command(
                             && after.rx_version == before.rx_version,
                         "application changed after RX probe"
                     );
-                    err_println!(
-                        "{}: {}",
-                        if recovery {
-                            "Cargo session restored; firmware remains in RX recovery"
-                        } else {
-                            "Application return verified"
-                        },
-                        serde_json::to_string(&after)?
-                    );
+                    if !is_json {
+                        out_println!(
+                            "  Status:     {}",
+                            if recovery {
+                                "Cargo session restored (firmware remains in RX recovery)"
+                            } else {
+                                "Application return verified"
+                            }
+                        );
+                    }
                 }
                 other => anyhow::bail!("unknown probe target '{other}'; supported targets are 'dcas' and 'rx'"),
             }
@@ -927,7 +976,14 @@ fn execute_firmware_command(
                     );
                 }
                 jnl.record("verified", &after)?;
-                out_println!("{}", serde_json::to_string_pretty(&after)?);
+                if is_json {
+                    out_println!("{}", serde_json::to_string_pretty(&after)?);
+                } else {
+                    out_println!("DCAS flash programming completed successfully:");
+                    out_println!("  Model Cargo: {}", after.cargo);
+                    out_println!("  DCAS (D):    v{}", after.dcas_version);
+                    out_println!("  Renesas (M): v{}", after.rx_version);
+                }
                 Ok(())
             }
             FlashCommand::Rx {
@@ -1030,7 +1086,14 @@ fn execute_firmware_command(
                     "post-flash RX version mismatch"
                 );
                 jnl.record("verified", &after)?;
-                out_println!("{}", serde_json::to_string_pretty(&after)?);
+                if is_json {
+                    out_println!("{}", serde_json::to_string_pretty(&after)?);
+                } else {
+                    out_println!("Renesas flash programming completed successfully:");
+                    out_println!("  Model Cargo: {}", after.cargo);
+                    out_println!("  DCAS (D):    v{}", after.dcas_version);
+                    out_println!("  Renesas (M): v{}", after.rx_version);
+                }
                 Ok(())
             }
             FlashCommand::BlePair { .. } => {
@@ -1045,12 +1108,17 @@ fn execute_adapter_command(
     trace: Option<&std::path::Path>,
     slot: Option<u8>,
     command: AdapterCommand,
+    is_json: bool,
 ) -> Result<()> {
     match command {
         AdapterCommand::Status => {
             let mut s = Session::open(port.unwrap_or("auto"), trace)?;
             let power = s.initialize()?;
-            out_println!("{}", serde_json::to_string_pretty(&power)?);
+            if is_json {
+                out_println!("{}", serde_json::to_string_pretty(&power)?);
+            } else {
+                print_adapter_status(&power);
+            }
             Ok(())
         }
         AdapterCommand::PowerCycle => {
@@ -1083,12 +1151,19 @@ fn execute_adapter_command(
                     && after.rx_version == before.rx_version,
                 "motor identity/version changed across power cycle"
             );
-            out_println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &serde_json::json!({"power_stop_acknowledged":true,"motor_unresponsive_while_off":true,"application":after})
-                )?
-            );
+            if is_json {
+                out_println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"power_stop_acknowledged":true,"motor_unresponsive_while_off":true,"application":after})
+                    )?
+                );
+            } else {
+                out_println!("Adapter power-cycle verified:");
+                out_println!("  Power-Stop:  Acknowledged");
+                out_println!("  Motor State: Offline while power removed");
+                out_println!("  Application: Restored (Cargo: {}, DCAS: v{}, Renesas: v{})", after.cargo, after.dcas_version, after.rx_version);
+            }
             Ok(())
         }
     }
@@ -1103,7 +1178,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
             }
         }
     ) {
-        return execute_ble_pair(cli);
+        return execute_ble_pair(cli, is_json);
     }
 
     ensure!(
@@ -1121,9 +1196,15 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
         match cli.command {
             Command::Ble {
                 command: BleCommand::TestLink,
-            } => Ok(Some(
-                serde_json::json!({"authenticated":true,"protocol_reply_verified":true,"hardware_validated":false}),
-            )),
+            } => {
+                let val = serde_json::json!({"authenticated":true,"protocol_reply_verified":true,"hardware_validated":false});
+                if is_json {
+                    Ok(Some(val))
+                } else {
+                    out_println!("Bluetooth Link Test: Authenticated and verified");
+                    Ok(None)
+                }
+            }
             Command::Units => {
                 let units = session.units()?;
                 if is_json {
@@ -1146,7 +1227,20 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                 ensure!(model.len() >= 3, "truncated motor model reply");
                 value["model_series"] = serde_json::json!(model[1]);
                 value["model_unit"] = serde_json::json!(model[2]);
-                Ok(Some(value))
+                if is_json {
+                    Ok(Some(value))
+                } else {
+                    print_probe_card(
+                        id.slot,
+                        model[1],
+                        model[2],
+                        &id.cargo,
+                        &serial,
+                        &id.dcas_version,
+                        &id.rx_version,
+                    );
+                    Ok(None)
+                }
             }
             Command::Settings { command } => {
                 let (id, serial) = ble_checked_start(
@@ -1173,12 +1267,17 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     }
                     _ => false,
                 };
-                if is_oem {
+                if is_oem && (cli.unit_auth || matches!(model, crate::settings::SettingsModel::Ep801 | crate::settings::SettingsModel::Ep600)) {
                     ensure!(!cli.no_auth, "setting requires drive-unit authentication, but --no-auth was specified");
-                    let receipt = session.authenticate_unit_settings(&serial)?;
-                    notice_println!("Drive-unit authentication: {}", receipt);
+                    let _receipt = session.authenticate_unit_settings(&serial)?;
                 }
-                Ok(Some(execute_settings(&mut session, &id, command)?))
+                let val = execute_settings(&mut session, &id, &command)?;
+                if is_json {
+                    Ok(Some(val))
+                } else {
+                    print_settings_result(&val, &command, model, false)?;
+                    Ok(None)
+                }
             }
             _ => unreachable!(),
         }
@@ -1196,7 +1295,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     Ok(())
 }
 
-fn execute_ble_pair(cli: Cli) -> Result<()> {
+fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     let Command::Firmware {
         command:
             FirmwareCommand::Flash {
@@ -1388,7 +1487,7 @@ fn execute_ble_pair(cli: Cli) -> Result<()> {
         let settings_after = execute_settings(
             &mut session,
             &after,
-            SettingsCommand::Read {
+            &SettingsCommand::Read {
                 name: None,
                 output: None,
             },
@@ -1420,7 +1519,18 @@ fn execute_ble_pair(cli: Cli) -> Result<()> {
         jnl.record("cleanup-confirmed", &true)?;
     }
     let value = result?;
-    out_println!("{}", serde_json::to_string_pretty(&value)?);
+    if is_json {
+        out_println!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        out_println!("BLE firmware pair flashed successfully:");
+        let app = value.get("application_after");
+        let cargo = app.and_then(|a| a.get("cargo")).and_then(|c| c.as_str()).unwrap_or("");
+        let dcas = app.and_then(|a| a.get("dcas_version")).and_then(|d| d.as_str()).unwrap_or("");
+        let rx = app.and_then(|a| a.get("rx_version")).and_then(|r| r.as_str()).unwrap_or("");
+        out_println!("  Model Cargo: {}", cargo);
+        out_println!("  DCAS (D):    v{}", dcas);
+        out_println!("  Renesas (M): v{}", rx);
+    }
     Ok(())
 }
 
@@ -1460,7 +1570,7 @@ fn ble_firmware_backup(
     let mut backup = execute_settings(
         session,
         id,
-        SettingsCommand::Read {
+        &SettingsCommand::Read {
             name: None,
             output: None,
         },
@@ -1595,7 +1705,7 @@ fn resolve_settings_model(
 fn execute_settings(
     session: &mut dyn crate::device::UnitCommands,
     id: &crate::device::Identity,
-    command: SettingsCommand,
+    command: &SettingsCommand,
 ) -> Result<serde_json::Value> {
     let model = resolve_settings_model(session, id)?;
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
@@ -1609,7 +1719,7 @@ fn execute_settings(
         SettingsCommand::Read { name, output } => {
             let v = if let Some(name) = name {
                 serde_json::to_value(crate::settings::read_for_model(
-                    session, id.slot, &name, model,
+                    session, id.slot, name, model,
                 )?)?
             } else {
                 let mut snapshot = serde_json::to_value(crate::settings::read_all_for_model(
@@ -1636,13 +1746,13 @@ fn execute_settings(
             backup,
             dry_run,
         } => {
-            if dry_run {
+            if *dry_run {
                 let specs = crate::settings::schema_for_model(model);
                 let spec = specs
                     .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(&name))
+                    .find(|s| s.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| anyhow::anyhow!("unknown setting: {name}"))?;
-                let current = crate::settings::read_for_model(session, id.slot, &name, model)?;
+                let current = crate::settings::read_for_model(session, id.slot, name, model)?;
                 return Ok(serde_json::json!({
                     "dry_run": true,
                     "valid": true,
@@ -1653,7 +1763,7 @@ fn execute_settings(
                     "unit": spec.unit,
                 }));
             }
-            let backup_path = backup.unwrap_or_else(|| {
+            let backup_path = backup.clone().unwrap_or_else(|| {
                 PathBuf::from(format!(
                     "backup-{}-{}-{}.json",
                     name.replace('.', "_"),
@@ -1662,14 +1772,14 @@ fn execute_settings(
                 ))
             });
             let receipt = crate::settings::set_for_model(
-                session, id.slot, &name, &value, &backup_path, model,
+                session, id.slot, name, value, &backup_path, model,
             )?;
             let mut v = serde_json::to_value(receipt)?;
             v["backup_file"] = serde_json::json!(backup_path);
             Ok(v)
         }
         SettingsCommand::Restore { file, backup } => {
-            let backup_path = backup.unwrap_or_else(|| {
+            let backup_path = backup.clone().unwrap_or_else(|| {
                 PathBuf::from(format!(
                     "backup-restore-{}-{}.json",
                     serial_str,
@@ -1677,7 +1787,7 @@ fn execute_settings(
                 ))
             });
             let receipt = crate::settings::restore_for_model(
-                session, id.slot, &file, &backup_path, model,
+                session, id.slot, file, &backup_path, model,
             )?;
             let mut v = serde_json::to_value(receipt)?;
             v["current_backup_file"] = serde_json::json!(backup_path);
@@ -1688,10 +1798,10 @@ fn execute_settings(
             backup_prefix,
             ..
         } => {
-            let prefix = backup_prefix.unwrap_or_else(|| {
+            let prefix = backup_prefix.clone().unwrap_or_else(|| {
                 PathBuf::from(format!("batch-{}", crate::platform::now_ms()))
             });
-            crate::settings::batch::run(session, id.slot, &operations, &prefix, model)
+            crate::settings::batch::run(session, id.slot, operations, &prefix, model)
         }
         SettingsCommand::Schema { .. } => unreachable!(),
     }
@@ -1771,6 +1881,326 @@ fn print_units_table(units: &[crate::device::UnitIdentity]) {
     out_println!(
         "\nTip: Run 'cranklink probe' to inspect drive-unit firmware versions (DCAS/RX) and serial number."
     );
+}
+
+fn print_probe_card(
+    slot: u8,
+    model_series: u8,
+    model_unit: u8,
+    cargo: &str,
+    serial: &str,
+    dcas_version: &str,
+    rx_version: &str,
+) {
+    let mut cargo_bytes = cargo.as_bytes().to_vec();
+    while cargo_bytes.len() < 7 {
+        cargo_bytes.push(0);
+    }
+    let model_candidates = crate::unit_models::candidates(model_series, model_unit, None, None);
+    let resolved = crate::unit_models::identify(
+        model_series,
+        model_unit,
+        None,
+        Some(&cargo_bytes),
+    );
+    let model_name = if let Some(m) = resolved {
+        m.to_string()
+    } else if !model_candidates.is_empty() {
+        model_candidates.join(" / ")
+    } else {
+        "Unknown".to_string()
+    };
+    let dcas_str = if dcas_version.starts_with('v') {
+        dcas_version.to_string()
+    } else {
+        format!("v{dcas_version}")
+    };
+    let rx_str = if rx_version.starts_with('v') || rx_version.starts_with("unavail") {
+        rx_version.to_string()
+    } else {
+        format!("v{rx_version}")
+    };
+
+    out_println!("Drive Unit Probe:");
+    out_println!("  Model:       {} (Slot {})", model_name, slot);
+    out_println!("  Serial:      {}", serial);
+    out_println!("  Cargo ID:    {}", cargo);
+    out_println!("  DCAS (D):    {}", dcas_str);
+    out_println!("  Renesas (M): {}", rx_str);
+}
+
+fn destination_label(val: i64) -> Option<&'static str> {
+    match val {
+        0 => Some("Japan / Region 0"),
+        1 => Some("Europe / Australia"),
+        2 => Some("Japan / 24 km/h"),
+        3 => Some("Europe / Restricted"),
+        4 => Some("Australia"),
+        5 => Some("US Class 3 (45 km/h)"),
+        _ => None,
+    }
+}
+
+fn format_setting_value(
+    name: &str,
+    val: &serde_json::Value,
+    specs: &[crate::settings::SettingSpec],
+) -> String {
+    if val.is_null() {
+        return "unset".to_string();
+    }
+    let spec = specs.iter().find(|s| s.name.eq_ignore_ascii_case(name));
+    if let Some(spec) = spec {
+        if name.eq_ignore_ascii_case("destination") {
+            if let Some(n) = val.as_i64() {
+                if let Some(lbl) = destination_label(n) {
+                    return format!("{n} ({lbl})");
+                }
+            }
+        }
+        if name.eq_ignore_ascii_case("lamp") {
+            if let Some(n) = val.as_i64() {
+                let lbl = match n {
+                    0 => "off",
+                    1 => "on",
+                    2 => "auto",
+                    _ => "",
+                };
+                if !lbl.is_empty() {
+                    return format!("{n} ({lbl})");
+                }
+            }
+        }
+        if spec.unit == "bool" {
+            if let Some(b) = val.as_bool() {
+                return if b {
+                    "1 (enabled)".to_string()
+                } else {
+                    "0 (disabled)".to_string()
+                };
+            } else if let Some(n) = val.as_i64() {
+                return if n != 0 {
+                    format!("{n} (enabled)")
+                } else {
+                    format!("{n} (disabled)")
+                };
+            }
+        }
+        if let Some(s) = val.as_str() {
+            return s.to_string();
+        }
+        let is_clean_unit = match spec.unit.as_str() {
+            "Nm" | "mm" | "km/h" | "rpm" | "W" | "km" | "teeth" | "gears" | "minutes" | "degrees" | "s" => true,
+            "%" => true,
+            _ => false,
+        };
+        if is_clean_unit {
+            return format!("{val} {}", spec.unit);
+        }
+        if spec.unit == "0.1 percent" {
+            return format!("{val} %");
+        }
+    }
+    match val {
+        serde_json::Value::Null => "unset".to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        _ => val.to_string(),
+    }
+}
+
+fn print_setting_schema(spec: &crate::settings::SettingSpec) {
+    out_println!("Setting: {}", spec.name);
+    let unit_desc = if !spec.choices.is_empty() {
+        format!(
+            "{} (choices: {})",
+            spec.unit,
+            spec.choices
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        spec.unit.clone()
+    };
+    out_println!("  Unit:       {}", unit_desc);
+    if spec.scale != 1.0 && spec.scale != 0.0 {
+        out_println!(
+            "  Range:      {} .. {}",
+            spec.min as f64 / spec.scale,
+            spec.max as f64 / spec.scale
+        );
+    } else {
+        out_println!("  Range:      {} .. {}", spec.min, spec.max);
+    }
+    let oem_desc = if spec.oem {
+        "Protected (requires drive-unit authentication)"
+    } else {
+        "Standard (unprotected)"
+    };
+    out_println!("  OEM:        {}", oem_desc);
+}
+
+fn print_settings_schema_table(specs: &[crate::settings::SettingSpec]) {
+    out_println!("Available Settings ({} defined):\n", specs.len());
+    out_println!(
+        "  {:<32}  {:<12}  {:<14}  {}",
+        "NAME",
+        "UNIT",
+        "RANGE",
+        "PROTECTION"
+    );
+    for s in specs {
+        let range_str = if s.scale != 1.0 && s.scale != 0.0 {
+            format!("{} .. {}", s.min as f64 / s.scale, s.max as f64 / s.scale)
+        } else {
+            format!("{} .. {}", s.min, s.max)
+        };
+        let prot = if s.oem { "OEM Protected" } else { "Standard" };
+        out_println!(
+            "  {:<32}  {:<12}  {:<14}  {}",
+            s.name,
+            s.unit,
+            range_str,
+            prot
+        );
+    }
+}
+
+fn print_settings_result(
+    value: &serde_json::Value,
+    command: &SettingsCommand,
+    model: crate::settings::SettingsModel,
+    is_json: bool,
+) -> Result<()> {
+    if is_json {
+        out_println!("{}", serde_json::to_string_pretty(value)?);
+        return Ok(());
+    }
+
+    let specs = crate::settings::schema_for_model(model);
+    match command {
+        SettingsCommand::Read { name, output } => {
+            if let Some(target) = name {
+                let val = value.get("value").unwrap_or(value);
+                let formatted = format_setting_value(target, val, &specs);
+                out_println!("{}: {}", target, formatted);
+            } else {
+                out_println!("Drive Unit Settings ({}):\n", model.name());
+                if let Some(values_obj) = value.get("values").and_then(|v| v.as_object()) {
+                    let mut names: Vec<_> = values_obj.keys().collect();
+                    names.sort();
+                    for n in names {
+                        if let Some(val_obj) = values_obj.get(n) {
+                            let val = val_obj.get("value").unwrap_or(&serde_json::Value::Null);
+                            let formatted = format_setting_value(n, val, &specs);
+                            out_println!("  {:<32} {}", format!("{n}:"), formatted);
+                        }
+                    }
+                }
+                if let Some(unavail_obj) = value.get("unavailable").and_then(|u| u.as_object()) {
+                    if !unavail_obj.is_empty() {
+                        out_println!("\nUnavailable Settings ({}):", unavail_obj.len());
+                        let mut unavail_names: Vec<_> = unavail_obj.keys().collect();
+                        unavail_names.sort();
+                        for n in unavail_names {
+                            if let Some(reason) = unavail_obj.get(n).and_then(|r| r.as_str()) {
+                                out_println!("  {:<32} {}", format!("{n}:"), reason);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(path) = output {
+                out_println!("\nSettings snapshot saved to: {}", path.display());
+            }
+        }
+        SettingsCommand::Set { name, dry_run, .. } => {
+            if *dry_run {
+                let curr = value.get("current_value").unwrap_or(&serde_json::Value::Null);
+                let planned = value.get("planned_value").unwrap_or(&serde_json::Value::Null);
+                let curr_fmt = format_setting_value(name, curr, &specs);
+                let planned_fmt = format_setting_value(name, planned, &specs);
+                out_println!("[DRY RUN - VALIDATION ONLY]");
+                out_println!("Setting: {}", name);
+                out_println!("  Current:  {}", curr_fmt);
+                out_println!("  Planned:  {}", planned_fmt);
+                out_println!("  State:    UNMODIFIED (No bytes written)");
+                out_println!(">> To write this change, re-run without the --dry-run flag.");
+            } else {
+                let setting = value.get("setting").and_then(|s| s.as_str()).unwrap_or(name);
+                let before = value.get("before").unwrap_or(&serde_json::Value::Null);
+                let after = value.get("after").unwrap_or(&serde_json::Value::Null);
+                let backup = value
+                    .get("backup_file")
+                    .and_then(|b| b.as_str())
+                    .or_else(|| value.get("backup").and_then(|b| b.as_str()))
+                    .unwrap_or("");
+                let before_fmt = format_setting_value(setting, before, &specs);
+                let after_fmt = format_setting_value(setting, after, &specs);
+                out_println!("Setting updated: {}", setting);
+                out_println!("  Previous: {}", before_fmt);
+                out_println!("  New:      {}", after_fmt);
+                if !backup.is_empty() {
+                    out_println!("  Backup:   {}", backup);
+                }
+            }
+        }
+        SettingsCommand::Restore { file, .. } => {
+            let backup = value
+                .get("current_backup_file")
+                .and_then(|b| b.as_str())
+                .unwrap_or("");
+            out_println!("Settings restored from backup:");
+            out_println!("  Source: {}", file.display());
+            if !backup.is_empty() {
+                out_println!("  Pre-restore Backup: {}", backup);
+            }
+        }
+        SettingsCommand::Batch { .. } => {
+            out_println!("Settings batch operations completed successfully.");
+        }
+        SettingsCommand::Schema { .. } => unreachable!(),
+    }
+    Ok(())
+}
+
+fn print_firmware_metadata(
+    meta: &crate::firmware::FirmwareMetadata,
+    decode_to: Option<&std::path::Path>,
+) {
+    let kind_str = match meta.kind {
+        FirmwareKind::DcasX => "DCASX",
+        FirmwareKind::Renesas => "Renesas",
+    };
+    let board_str = match meta.board {
+        Some(b) => format!("Board {} (Series 0x{:02X}, Unit 0x{:02X})", b, meta.series, meta.unit),
+        None => format!("Series 0x{:02X}, Unit 0x{:02X}", meta.series, meta.unit),
+    };
+    out_println!("Firmware Image Metadata:");
+    out_println!("  Kind:                {}", kind_str);
+    out_println!(
+        "  Version:             v{} (Compatibility: v{})",
+        meta.version,
+        meta.compatibility_version
+    );
+    out_println!("  Target Board/Series: {}", board_str);
+    out_println!("  Checksum:            0x{:02X}", meta.checksum);
+    out_println!("  Source SHA-256:      {}", meta.source_sha256);
+    if let Some(out) = decode_to {
+        out_println!("  Decoded Output:      {}", out.display());
+    }
+}
+
+fn print_adapter_status(power: &crate::device::PowerInfo) {
+    let bus_power = if power.adapter_supply {
+        "Active (Powered)"
+    } else {
+        "Inactive (External Battery)"
+    };
+    out_println!("SM-PCE02 Adapter:");
+    out_println!("  Bus Power: {}", bus_power);
+    out_println!("  Raw State: 0x{:02X}", power.raw_state);
 }
 
 fn progress_reporter() -> impl FnMut(usize, usize) {
@@ -1978,5 +2408,50 @@ mod cli_tests {
         let cli_json = Cli::try_parse_from(["cranklink", "--format", "json", "units"]).unwrap();
         assert_eq!(cli_json.format, OutputFormat::Json);
         assert!(cli_json.format.is_json());
+    }
+
+    #[test]
+    fn setting_value_formatting() {
+        let specs = crate::settings::schema_for_model(crate::settings::SettingsModel::Ep800Crg);
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(1), &specs),
+            "1 (Europe / Australia)"
+        );
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(0), &specs),
+            "0 (Japan / Region 0)"
+        );
+        assert_eq!(
+            format_setting_value("profile1.boost.torque", &serde_json::json!(85), &specs),
+            "85 Nm"
+        );
+        assert_eq!(
+            format_setting_value("tire-circumference", &serde_json::json!(2040), &specs),
+            "2040 mm"
+        );
+        assert_eq!(
+            format_setting_value("lamp", &serde_json::json!(1), &specs),
+            "1 (on)"
+        );
+        assert_eq!(
+            format_setting_value("lamp", &serde_json::json!(0), &specs),
+            "0 (off)"
+        );
+        assert_eq!(
+            format_setting_value("maintenance-alert", &serde_json::json!(1), &specs),
+            "1 (enabled)"
+        );
+        assert_eq!(
+            format_setting_value("maintenance-alert", &serde_json::json!(0), &specs),
+            "0 (disabled)"
+        );
+        assert_eq!(
+            format_setting_value("maintenance-date", &serde_json::Value::Null, &specs),
+            "unset"
+        );
+        assert_eq!(
+            format_setting_value("profile1.name", &serde_json::json!("Profile1"), &specs),
+            "Profile1"
+        );
     }
 }

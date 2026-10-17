@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Operation {
     Read {
