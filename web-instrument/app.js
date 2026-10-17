@@ -28,6 +28,11 @@ let port,
 const encoder = new TextEncoder(),
   decoder = new TextDecoder();
 let shared, control, buffer;
+function setSimulatorActive(active) {
+  if (shared?.simulator) {
+    Atomics.store(new Int32Array(shared.simulator), 0, active ? 1 : 0);
+  }
+}
 function print(text, stream = "stdout") {
   const span = document.createElement("span");
   span.textContent = text;
@@ -357,6 +362,7 @@ async function run(line) {
         const model = tokens[2] || "ep800-crg";
         const sim = new DeviceSimulator({ model, ...activeSimulatorOptions });
         activeSimulator = sim;
+        setSimulatorActive(true);
         const passkeyPrompt = async () => "000000";
         const next = new WebBleGatt(sim, passkeyPrompt);
         const info = await adoptPort(next, "sim");
@@ -371,6 +377,13 @@ async function run(line) {
         tokens[1] === "ble"
           ? { transport: "ble", selected: await WebBleGatt.choose() }
           : await requestAdapter(tokens[1] || "auto");
+      if (selected?.isSimulator) {
+        activeSimulator = selected;
+        setSimulatorActive(true);
+      } else {
+        activeSimulator = null;
+        setSimulatorActive(false);
+      }
       const next =
         transport === "ble"
           ? new WebBleGatt(selected, requestBlePasskey)
@@ -399,6 +412,7 @@ async function run(line) {
         port = null;
         selectedTransport = null;
         activeSimulator = null;
+        setSimulatorActive(false);
       }
       print("Disconnected.\n");
       return { code: 0 };
@@ -545,6 +559,7 @@ try {
   shared = {
     control: new SharedArrayBuffer(16),
     buffer: new SharedArrayBuffer(20 * 1024 * 1024),
+    simulator: new SharedArrayBuffer(4),
   };
   control = new Int32Array(shared.control);
   buffer = new Uint8Array(shared.buffer);

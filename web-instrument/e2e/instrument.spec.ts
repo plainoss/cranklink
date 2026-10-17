@@ -35,7 +35,7 @@ async function openInstrument(page: Page) {
 }
 
 test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
-  test("zero-click connect, inline staging, atomic batch commit, and snapshot rollback", async ({
+  test("zero-click connect, inline staging, atomic batch commit, and snapshot rollback @smoke", async ({
     page,
   }) => {
     await openInstrument(page);
@@ -51,13 +51,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.2.0.0");
-
-    // Reload under the existing service worker and reconnect to persisted storage.
-    await page.reload();
-    await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
-    await page.getByTestId("btn-connect-sim").click();
-    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
     // 2. Verify Bike Hardware & Geometry parameters are loaded with live values
     const tireRow = page.getByTestId("param-row-tire-circumference");
@@ -97,6 +90,20 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Navigate back to parameters and confirm live value returned to 2280 mm
     await page.getByTestId("nav-group-geometry").click();
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2280 mm");
+  });
+
+  test("reloads under existing service worker and reconnects cleanly", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-more-menu").click();
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+
+    // Reload under the existing service worker and reconnect to persisted storage
+    await page.reload();
+    await openInstrument(page);
+    await page.getByTestId("btn-more-menu").click();
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
   });
 
   test("modern DU-EP600 / DU-EP801 session authentication and preset macros", async ({ page }) => {

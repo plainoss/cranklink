@@ -265,7 +265,12 @@ export class SessionController {
 
       // On real BLE hardware (e.g. SC-EM800), the physical gateway shuts down and re-advertises
       // after the probe session's PC-link stop. A short pause guarantees radio readiness.
-      if (transport === "ble") {
+      const isSimulator = Boolean(
+        transport === "sim" ||
+        this.terminal?.simulator ||
+        (typeof window !== "undefined" && (window as any).estepsDeviceSimulator)
+      );
+      if (transport === "ble" && !isSimulator) {
         await new Promise((r) => setTimeout(r, 1200));
       }
 

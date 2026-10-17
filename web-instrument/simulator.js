@@ -58,6 +58,7 @@ export class DeviceSimulator extends EventTarget {
       throw new Error("unknown simulated motor model");
     }
 
+    this.isSimulator = true;
     this.id = `simulated-etube-${model}`;
     this.name = {
       "ep800-crg": "Simulated DU-EP800-CRG",
