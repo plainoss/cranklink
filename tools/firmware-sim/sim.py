@@ -29,6 +29,8 @@ def main():
     serve.add_argument('--gateway', required=True, type=Path)
     serve.add_argument('--motor', required=True, type=Path)
     serve.add_argument('--socket', required=True, type=Path)
+    serve.add_argument('--gatt-fault', choices=('stale-free','duplicate-free'), help='inject modeled radio notifications')
+    serve.add_argument('--gatt', action='store_true', help='serve modeled GATT for the real BLE session engine')
     serve.add_argument('--drop-replies', action='store_true', help='drop normal GET replies for client timeout testing')
     args = parser.parse_args()
     if args.command == 'profiles':
@@ -42,8 +44,16 @@ def main():
         print(json.dumps(dict(images=report['unique_images'],profiled=report['profiled_images'])))
         return
     if args.command == 'serve':
-        from fw_sim.endpoint import serve
-        serve(args.gateway, args.motor, args.socket, args.drop_replies); return
+        if args.gatt:
+            from fw_sim.gatt import serve
+        else:
+            from fw_sim.endpoint import serve
+        if args.gatt:
+            serve(args.gateway, args.motor, args.socket, args.drop_replies, args.gatt_fault)
+        else:
+            if args.gatt_fault: raise ValueError('--gatt-fault requires --gatt')
+            serve(args.gateway, args.motor, args.socket, args.drop_replies)
+        return
     cases, failures = [], []
     if args.command == 'run':
         pairs = [(args.gateway, args.motor)]

@@ -6,7 +6,7 @@ The first proof of concept **runs successfully** with SC-EM800 4.6.0 and EP800 D
 
 ## Implementation status
 
-The [implementation guide](firmware-simulator.md) documents the reusable packet engine, native socket endpoint, current multi-model coverage and remaining boundaries. The original POC below is retained as the initial feasibility check. Boot, storage, authentication and GATT milestones are not marked complete by packet tests.
+The [implementation guide](firmware-simulator.md) documents the reusable packet engine, native socket endpoint, current multi-model coverage and remaining boundaries. The original POC below is retained as the initial feasibility check. A modeled GATT endpoint now exercises the native Bluetooth client and stock SC-EM800 control handlers. Boot, storage, motor authentication and physical radio milestones remain incomplete.
 
 ## Validated implementation
 

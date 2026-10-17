@@ -143,7 +143,7 @@ struct Cli {
         short = 'p',
         global = true,
         help_heading = "Connection & Transport",
-        help = "Adapter (default: auto); usb, COM3, ble:DEVICE_ID, /dev/ttyUSB0, sim:/absolute/socket"
+        help = "Adapter (default: auto); usb, COM3, ble:DEVICE_ID, /dev/ttyUSB0, sim:/absolute/socket, ble-sim:/absolute/socket"
     )]
     port: Option<String>,
 

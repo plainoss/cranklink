@@ -208,9 +208,9 @@ See the [web instrument documentation](web-instrument/README.md).
 
 ## Offline firmware simulator
 
-The headless simulator executes stock display/gateway and motor D firmware over a deterministic virtual packet bus. It currently covers 18 firmware profiles across three display models and six motor families, with 720 protocol/fault scenarios across 80 combinations. The native CLI can connect on macOS/Linux with `--port sim:/absolute/socket` for offline probe and supported settings reads.
+The headless simulator executes stock display/gateway and motor D firmware over a deterministic virtual packet bus. It currently covers 18 firmware profiles across three display models and six motor families, with 720 protocol/fault scenarios across 80 combinations. The native CLI can connect on macOS/Linux with `--port sim:/absolute/socket` for offline probe and supported settings reads. `ble-sim:/absolute/socket --ble-master` also exercises the actual Bluetooth client through a modeled GATT endpoint and stock SC-EM800 gateway firmware.
 
-See the [simulator setup, coverage and verification guide](docs/firmware-simulator.md). Images are user-supplied and hash-pinned; USB control, initialized parameter RAM and the absent motor M version peer are modeled. Full boot, persistent writes, BLE radio and physical bus timing remain planned. The browser's GATT simulator remains available for UI development.
+See the [simulator setup, coverage and verification guide](docs/firmware-simulator.md). Images are user-supplied and hash-pinned; USB control, initialized parameter RAM and the absent motor M version peer are modeled. Verification includes 60 GATT firmware pairs with 1,200 repeated reads, 17 Bluetooth CLI cases and 29 additional native feature checks. Full boot, persistent writes, BLE radio and physical bus timing remain planned. See the [PR regression assessment](docs/simulator-pr-review.md), including a before/after test of PR #11's duplicate motor start. The browser's GATT simulator remains available for UI development.
 
 
 ## Installation & builds

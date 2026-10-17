@@ -25,6 +25,8 @@ Failed gateway authentication clears the cached PIN in memory and browser sessio
 
 macOS requires terminal Bluetooth permission; Windows requires a Bluetooth adapter supported by Windows; Linux requires BlueZ and a running D-Bus daemon. The BLE build enables vendored D-Bus support on Linux.
 
+For offline development on macOS/Linux, `--port ble-sim:/absolute/socket --ble-master` connects this same client to the stock-firmware simulator with a modeled radio. It needs no Bluetooth adapter or `ble` build feature. See the [setup and coverage guide](firmware-simulator.md#run-the-bluetooth-client-offline); writes, retained browser sessions and physical radio behavior are outside its current coverage.
+
 ## Read and write
 
 The example serial `010203040506` is illustrative; replace it with the actual 12-hex-digit motor serial returned by `probe`. The serial guard checks identity inside the settings connection.

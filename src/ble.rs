@@ -22,6 +22,8 @@ use zeroize::Zeroize;
 mod browser;
 #[cfg(all(not(target_arch = "wasm32"), feature = "ble"))]
 mod native;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod simulator;
 
 #[cfg(test)]
 mod modern_session_tests;
@@ -43,7 +45,7 @@ pub fn uuid(short: u16) -> String {
     format!("0000{short:04x}-5348-494d-414e-4f5f424c4500")
 }
 pub fn is_port(port: &str) -> bool {
-    port == "webble" || port.starts_with("ble:")
+    port == "webble" || port.starts_with("ble:") || port.starts_with("ble-sim:")
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,6 +100,18 @@ pub fn scan(seconds: u64, all: bool) -> Result<Vec<PeripheralInfo>> {
 }
 
 pub fn open(port: &str, trace: Option<&Path>, passkey: Option<String>) -> Result<BleSession> {
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    if let Some(path) = port.strip_prefix("ble-sim:") {
+        return BleSession::new(
+            Box::new(simulator::SimulatorGatt::open(path)?.with_passkey(passkey)),
+            trace,
+        );
+    }
+    #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+    ensure!(
+        !port.starts_with("ble-sim:"),
+        "BLE simulator currently requires native Unix sockets"
+    );
     #[cfg(all(not(target_arch = "wasm32"), feature = "ble"))]
     let io: Box<dyn Gatt> = {
         let id = port
