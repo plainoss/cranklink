@@ -64,7 +64,9 @@ impl OutputFormat {
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    false
+                    // In WebAssembly, commands are invoked by the web instrument / JS driver
+                    // which expects structured JSON by default.
+                    true
                 }
             }
         }
