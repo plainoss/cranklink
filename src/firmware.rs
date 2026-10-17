@@ -18,7 +18,7 @@ impl Version {
         ensure!(bytes.len() >= 3, "truncated packed version");
         let major = bytes[0] >> 4;
         let minor = bytes[0] & 15;
-        ensure!(major <= 9 && minor <= 9, "invalid packed BCD version");
+        ensure!(major <= 9 && minor <= 15, "invalid packed BCD version");
         Ok(Self([major, minor, bytes[1], bytes[2]]))
     }
 }
@@ -32,7 +32,222 @@ impl fmt::Display for Version {
 #[serde(rename_all = "kebab-case")]
 pub enum FirmwareKind {
     DcasX,
+    Dcas2i,
+    Dcas2,
     Renesas,
+}
+
+impl FirmwareKind {
+    pub fn is_dcas(self) -> bool {
+        matches!(self, Self::DcasX | Self::Dcas2i | Self::Dcas2)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VerificationTier {
+    HardwareVerified,
+    ProtocolVerified,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MotorFlashProfile {
+    pub family_name: &'static str,
+    pub live_series: u8,
+    pub live_unit: u8,
+    pub fw_series: u8,
+    pub fw_unit: u8,
+    pub dcas_kind: FirmwareKind,
+    pub allowed_boards: &'static [u8],
+    pub min_dcas_bootloader: Version,
+    pub verification_tier: VerificationTier,
+}
+
+pub const MOTOR_FLASH_PROFILES: &[MotorFlashProfile] = &[
+    MotorFlashProfile {
+        family_name: "DU-EP800",
+        live_series: 0x23,
+        live_unit: 0x00,
+        fw_series: 0x23,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::HardwareVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E6100",
+        live_series: 0x20,
+        live_unit: 0x00,
+        fw_series: 0x20,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E7000",
+        live_series: 0x21,
+        live_unit: 0x00,
+        fw_series: 0x20,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E5000",
+        live_series: 0x22,
+        live_unit: 0x00,
+        fw_series: 0x22,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-EP600",
+        live_series: 0x30,
+        live_unit: 0x00,
+        fw_series: 0x30,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-EP801",
+        live_series: 0x35,
+        live_unit: 0x00,
+        fw_series: 0x30,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-EP600",
+        live_series: 0x37,
+        live_unit: 0x00,
+        fw_series: 0x30,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-EP500",
+        live_series: 0x37,
+        live_unit: 0x00,
+        fw_series: 0x37,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E5100",
+        live_series: 0x38,
+        live_unit: 0x00,
+        fw_series: 0x38,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::DcasX,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([5, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E8000",
+        live_series: 0x12,
+        live_unit: 0x00,
+        fw_series: 0x12,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::Dcas2i,
+        allowed_boards: &[1, 2],
+        min_dcas_bootloader: Version([4, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E6002",
+        live_series: 0x15,
+        live_unit: 0x00,
+        fw_series: 0x15,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::Dcas2i,
+        allowed_boards: &[1, 2],
+        min_dcas_bootloader: Version([4, 0, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E6001",
+        live_series: 0x0a,
+        live_unit: 0x00,
+        fw_series: 0x0c,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::Dcas2,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([3, 2, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E6001",
+        live_series: 0x0c,
+        live_unit: 0x00,
+        fw_series: 0x0c,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::Dcas2,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([3, 2, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+    MotorFlashProfile {
+        family_name: "DU-E6000",
+        live_series: 0x08,
+        live_unit: 0x00,
+        fw_series: 0x08,
+        fw_unit: 0x00,
+        dcas_kind: FirmwareKind::Dcas2,
+        allowed_boards: &[1],
+        min_dcas_bootloader: Version([3, 2, 0, 0]),
+        verification_tier: VerificationTier::ProtocolVerified,
+    },
+];
+
+pub fn find_motor_profile(
+    live_series: u8,
+    live_unit: u8,
+    fw_series: u8,
+    fw_unit: u8,
+) -> Option<&'static MotorFlashProfile> {
+    MOTOR_FLASH_PROFILES.iter().find(|p| {
+        p.live_series == live_series
+            && p.live_unit == live_unit
+            && p.fw_series == fw_series
+            && p.fw_unit == fw_unit
+    })
+}
+
+pub fn is_supported_live_motor(live_series: u8, live_unit: u8) -> bool {
+    MOTOR_FLASH_PROFILES
+        .iter()
+        .any(|p| p.live_series == live_series && p.live_unit == live_unit)
+}
+
+pub fn is_supported_rx_target(fw_series: u8, fw_unit: u8) -> bool {
+    MOTOR_FLASH_PROFILES
+        .iter()
+        .any(|p| p.fw_series == fw_series && p.fw_unit == fw_unit)
+}
+
+pub fn is_allowed_motor_board(board: u8) -> bool {
+    matches!(board, 1 | 2)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,6 +311,27 @@ impl Firmware {
                     Some(data[43]),
                     u32::from_le_bytes(data[24..28].try_into().unwrap()) as usize,
                 )
+            } else if data.len() >= 0xd6
+                && data[..4] == [0xff; 4]
+                && data[7] == 0
+                && data[11] == 0
+                && data[15] == 0
+                && data[0xc0] == 0x05
+            {
+                let kind = match data[0xcc] {
+                    3 => FirmwareKind::Dcas2i,
+                    1 | 2 => FirmwareKind::Dcas2,
+                    other => bail!("unsupported legacy DCAS header version {other}"),
+                };
+                (
+                    kind,
+                    Version::packed(&data[0xc1..0xc4])?,
+                    Version::packed(&data[0xd3..0xd6])?,
+                    data[0xca],
+                    data[0xcb],
+                    Some(data[0xcd]),
+                    u32::from_le_bytes(data[0xc6..0xca].try_into().unwrap()) as usize,
+                )
             } else {
                 // The recovered Renesas header pattern is deliberately narrow. Unknown
                 // containers cannot become writable solely because their filename matches.
@@ -140,8 +376,6 @@ impl Firmware {
         Ok(Self { metadata, data })
     }
 
-    /// Write policy for the documented DU-EP800 family. Other families require
-    /// an independently verified model mapping and writer, even if headers parse.
     pub fn validate_target(
         &self,
         series: u8,
@@ -149,44 +383,97 @@ impl Firmware {
         board: u8,
         bootloader: Version,
     ) -> Result<()> {
+        self.validate_target_with_policy(series, unit, board, bootloader, false)
+            .map(|_| ())
+    }
+
+    pub fn validate_target_with_policy(
+        &self,
+        series: u8,
+        unit: u8,
+        board: u8,
+        bootloader: Version,
+        allow_unverified_model: bool,
+    ) -> Result<&'static MotorFlashProfile> {
         let m = &self.metadata;
+        let profile = find_motor_profile(series, unit, m.series, m.unit).ok_or_else(|| {
+            anyhow::anyhow!(
+                "firmware identity {:02X}/{:02X} does not match target {series:02X}/{unit:02X} or is not a supported motor family",
+                m.series,
+                m.unit
+            )
+        })?;
         ensure!(
-            m.series == 0x23 && m.unit == 0,
-            "only the verified DU-EP800 firmware family (23/00) is supported for writing"
-        );
-        ensure!(
-            m.series == series && m.unit == unit,
-            "firmware identity {:02X}/{:02X} does not match target {series:02X}/{unit:02X}",
+            profile.verification_tier == VerificationTier::HardwareVerified || allow_unverified_model,
+            "model {} ({series:02X}/{unit:02X} -> fw {:02X}/{:02X}) is protocol-verified only; pass --allow-unverified-model to authorize flashing non-EP800 models",
+            profile.family_name,
             m.series,
             m.unit
         );
-        if m.kind == FirmwareKind::DcasX {
+        if m.kind.is_dcas() {
             ensure!(
-                m.board == Some(board),
-                "firmware board {:?} does not match target board {board}",
-                m.board
+                m.kind == profile.dcas_kind,
+                "firmware kind {:?} does not match target profile {:?}",
+                m.kind,
+                profile.dcas_kind
+            );
+            if bootloader >= Version([3, 2, 4, 0]) {
+                ensure!(
+                    m.board == Some(board),
+                    "firmware board {:?} does not match target board {board}",
+                    m.board
+                );
+            }
+            ensure!(
+                profile.allowed_boards.contains(&board),
+                "board {board} is not supported for {} (allowed: {:?})",
+                profile.family_name,
+                profile.allowed_boards
             );
             ensure!(
-                board == 1,
-                "only the verified DCASX board 1 is supported for writing"
+                bootloader >= profile.min_dcas_bootloader,
+                "{} requires bootloader >= {}, found {bootloader}",
+                profile.family_name,
+                profile.min_dcas_bootloader
             );
-            ensure!(
-                bootloader >= Version([5, 0, 0, 0]),
-                "DCASX requires bootloader >= 5.0.0.0, found {bootloader}"
-            );
-            ensure!(
-                !self.data.is_empty() && self.data.len().div_ceil(2048) <= 256,
-                "DCASX image exceeds the one-byte sector erase-code range"
-            );
+            match m.kind {
+                FirmwareKind::DcasX => {
+                    ensure!(
+                        !self.data.is_empty() && self.data.len().div_ceil(2048) <= 256,
+                        "DCASX image exceeds the one-byte sector erase-code range"
+                    );
+                }
+                FirmwareKind::Dcas2i => {
+                    ensure!(
+                        bootloader < Version([5, 0, 0, 0]),
+                        "DCAS2i requires 4.x bootloader, found {bootloader}"
+                    );
+                    ensure!(
+                        self.data.len() >= 0xd6 && self.data.len() <= 2 * 65536,
+                        "DCAS2i image exceeds 128 KiB range"
+                    );
+                }
+                FirmwareKind::Dcas2 => {
+                    ensure!(
+                        bootloader < Version([4, 0, 0, 0]),
+                        "DCAS2 requires 3.x bootloader, found {bootloader}"
+                    );
+                    ensure!(
+                        self.data.len() >= 0xd6 && self.data.len() <= 2 * 65536,
+                        "DCAS2 image exceeds 128 KiB range"
+                    );
+                }
+                FirmwareKind::Renesas => unreachable!(),
+            }
         }
-        Ok(())
+        Ok(profile)
     }
 
     /// Check a pair before programming either CPU. The D image advertises its
     /// required RX companion version; the M header does not require D >= M.
     pub fn validate_companion(&self, companion: &Self) -> Result<()> {
         ensure!(
-            self.metadata.kind != companion.metadata.kind,
+            self.metadata.kind.is_dcas() != companion.metadata.kind.is_dcas(),
             "a firmware pair must contain one D and one M image"
         );
         ensure!(
@@ -194,7 +481,7 @@ impl Firmware {
                 && self.metadata.unit == companion.metadata.unit,
             "companion firmware series/unit mismatch"
         );
-        let (d, m) = if self.metadata.kind == FirmwareKind::DcasX {
+        let (d, m) = if self.metadata.kind.is_dcas() {
             (self, companion)
         } else {
             (companion, self)
@@ -211,13 +498,28 @@ impl Firmware {
 
     pub fn validate_companion_version(&self, actual: Version) -> Result<()> {
         ensure!(
-            self.metadata.kind == FirmwareKind::DcasX,
+            self.metadata.kind.is_dcas(),
             "companion version check requires a D image"
         );
         ensure!(
             actual == self.metadata.compatibility_version,
             "D firmware requires RX {}, found {actual}",
             self.metadata.compatibility_version
+        );
+        Ok(())
+    }
+
+    pub fn validate_companion_version_for_pair(&self, companion: &Self, actual: Version) -> Result<()> {
+        self.validate_companion(companion)?;
+        ensure!(
+            self.metadata.kind.is_dcas(),
+            "companion version check requires a D image"
+        );
+        ensure!(
+            actual == self.metadata.compatibility_version || actual == companion.metadata.version,
+            "D firmware requires RX {} (or companion {}), found {actual}",
+            self.metadata.compatibility_version,
+            companion.metadata.version
         );
         Ok(())
     }
@@ -306,6 +608,34 @@ fn verified_public_pair(d: &Firmware, m: &Firmware) -> bool {
         ) | (
             "6dd6ebf14f04a2d363cced8f77a8c8f86b64583c71e2abb9b2cc0fe64e2d1952",
             "24722c252cafbe413c6ac4209ac7d9167a46c9e138bf718cf3317ed0d58ab32b"
+        ) | (
+            // 2DUE8000-D.4.10.0.dat + 2DUE8000-M.4.9.4.dat
+            "0df812b21bf2b7f613e27e1e65de7dde60850284e3241c4d100a87b76bd17588",
+            "d7a0257498838dec25ea7543a0b030dfaa6920b97cf5f0c8d00f7245938cb219"
+        ) | (
+            // DUE8000-D.4.10.0.dat + DUE8000-M.4.9.4.dat
+            "50ee8cdfb65aca45e8ac1196626edd94eb2d5acf56f554f5c41eccc4189f86b3",
+            "08505c29c87c834601d641d59b3b5cacfa51a3499e680f4df9c1585aa088a707"
+        ) | (
+            // DUE5000-D.4.5.0.dat + DUE5000-M.4.4.8.dat
+            "44806bd54aedff95a88bb73fafe0f0581297f2f67b2ea35545cea012899d90bb",
+            "9ea350e988345a9d9fb41c1363562ca190f1a8d5e1cc8a38c6373f69b877f033"
+        ) | (
+            // DUE5100-D.4.1.0.dat + DUE5100-M.4.0.0.dat
+            "f3bcba12ac9685123fac3bc4c5198b8ae7da64753b8f8804bbfdbee87e0207fe",
+            "661cbd606207eb135300ba60bc52436269414f6af79bb383922e355658e9d9b2"
+        ) | (
+            // DUE6100-D.4.8.0.dat + DUE6100-M.4.7.6.dat
+            "47fa9c5d52d03987c919d623ee6cb9aae7182548084c51115cffbe7cb3dade7c",
+            "598a9c53abce5a40531acdbb61b4ba2721a0fcc7352abac9dfbe0e7855e923df"
+        ) | (
+            // DUEP500-D.4.1.0.dat + DUEP500-M.4.1.0.dat
+            "b273042b1f0e69aa35db227e5d590efc845acd6c40381e0ba0aab4d3e5a2333c",
+            "14fd61ed41b013e2a39517aadeffca88ee8f05928f0ca69c56374fe690ecf7e9"
+        ) | (
+            // DUEP600-D.4.4.1.dat + DUEP600-M.4.4.0.dat
+            "c2bdeb052b7f5d89190674346d1d4f3491e1a7eb05b3c79f17f86983e4fff6ac",
+            "dba1ded5e2b8b94ae7c7353e68d16c0f467e2cd6e8a62f6c3ace7cb283661749"
         )
     )
 }
@@ -315,21 +645,35 @@ mod tests {
     use super::*;
     use aes::cipher::BlockEncrypt;
     fn image(kind: FirmwareKind) -> Vec<u8> {
-        let mut b = vec![0xff; 128];
-        match kind {
+        let mut b = match kind {
             FirmwareKind::DcasX => {
+                let mut b = vec![0xff; 128];
                 b[16..19].copy_from_slice(&[0x42, 0, 0]);
                 b[24..28].copy_from_slice(&128u32.to_le_bytes());
                 b[40..44].copy_from_slice(&[0x23, 0, 4, 1]);
                 b[47..50].copy_from_slice(&[0x41, 11, 0]);
+                b
+            }
+            FirmwareKind::Dcas2i | FirmwareKind::Dcas2 => {
+                let mut b = vec![0xff; 256];
+                b[4..16].copy_from_slice(&[0x01, 0, 0, 0, 0x02, 0, 0, 0, 0x03, 0, 0, 0]);
+                b[0xc0] = 0x05;
+                b[0xc1..0xc4].copy_from_slice(&[0x4a, 0, 0]);
+                b[0xc6..0xca].copy_from_slice(&256u32.to_le_bytes());
+                b[0xca..0xce].copy_from_slice(&[0x12, 0, if kind == FirmwareKind::Dcas2i { 3 } else { 2 }, 1]);
+                b[0xd3..0xd6].copy_from_slice(&[0x49, 0, 0]);
+                b
             }
             FirmwareKind::Renesas => {
+                let mut b = vec![0xff; 128];
                 b[..4].copy_from_slice(&128u32.to_le_bytes());
                 b[8..12].copy_from_slice(&[0x41, 11, 0, 1]);
                 b[14..19].copy_from_slice(&[0x23, 0, 0x41, 11, 0]);
+                b
             }
-        }
-        b[126..].copy_from_slice(b"et");
+        };
+        let len = b.len();
+        b[len - 2..].copy_from_slice(b"et");
         b
     }
     fn container(plain: &[u8]) -> Vec<u8> {
@@ -465,5 +809,240 @@ mod tests {
         assert_eq!(m.data.len(), 128192);
         assert_eq!(d.metadata.checksum, 0xcb);
         d.validate_companion(&m).unwrap();
+    }
+    #[test]
+    fn dcas2i_decode_and_board_support() {
+        let plain = image(FirmwareKind::Dcas2i);
+        let fw = Firmware::from_bytes(&plain).unwrap();
+        assert_eq!(fw.metadata.kind, FirmwareKind::Dcas2i);
+        assert_eq!(fw.metadata.version, Version([4, 10, 0, 0]));
+        assert_eq!(fw.metadata.version.to_string(), "4.10.0.0");
+        assert_eq!(fw.metadata.compatibility_version, Version([4, 9, 0, 0]));
+        assert_eq!(fw.metadata.series, 0x12);
+        assert_eq!(fw.metadata.unit, 0);
+        assert_eq!(fw.metadata.board, Some(1));
+
+        // DU-E8000 is ProtocolVerified: allow_unverified_model = false must reject.
+        assert!(fw
+            .validate_target_with_policy(0x12, 0, 1, Version([4, 1, 0, 0]), false)
+            .is_err());
+
+        // With allow_unverified_model = true, Board 1 is accepted.
+        let prof = fw
+            .validate_target_with_policy(0x12, 0, 1, Version([4, 1, 0, 0]), true)
+            .unwrap();
+        assert_eq!(prof.family_name, "DU-E8000");
+
+        // Board 2 is also accepted for DU-E8000.
+        let mut b2 = plain.clone();
+        b2[0xcd] = 2;
+        let fw_b2 = Firmware::from_bytes(&b2).unwrap();
+        assert_eq!(fw_b2.metadata.board, Some(2));
+        let prof_b2 = fw_b2
+            .validate_target_with_policy(0x12, 0, 2, Version([4, 1, 0, 0]), true)
+            .unwrap();
+        assert_eq!(prof_b2.family_name, "DU-E8000");
+
+        // Board 3 is not supported for DU-E8000.
+        assert!(fw_b2
+            .validate_target_with_policy(0x12, 0, 3, Version([4, 1, 0, 0]), true)
+            .is_err());
+
+        // DCAS2i requires 4.x bootloader:
+        assert!(fw
+            .validate_target_with_policy(0x12, 0, 1, Version([3, 9, 0, 0]), true)
+            .is_err());
+        assert!(fw
+            .validate_target_with_policy(0x12, 0, 1, Version([5, 0, 0, 0]), true)
+            .is_err());
+    }
+
+    #[test]
+    fn dcas2_decode_and_validation() {
+        let mut plain = image(FirmwareKind::Dcas2);
+        plain[0xca] = 0x08; // DU-E6000 series
+        let fw = Firmware::from_bytes(&plain).unwrap();
+        assert_eq!(fw.metadata.kind, FirmwareKind::Dcas2);
+        assert_eq!(fw.metadata.version, Version([4, 10, 0, 0]));
+        assert_eq!(fw.metadata.compatibility_version, Version([4, 9, 0, 0]));
+        assert_eq!(fw.metadata.series, 0x08);
+
+        // Protocol verified: false fails, true passes
+        assert!(fw
+            .validate_target_with_policy(0x08, 0, 1, Version([3, 2, 4, 0]), false)
+            .is_err());
+        let prof = fw
+            .validate_target_with_policy(0x08, 0, 1, Version([3, 2, 4, 0]), true)
+            .unwrap();
+        assert_eq!(prof.family_name, "DU-E6000");
+
+        // DCAS2 requires 3.x bootloader >= 3.2.0.0
+        assert!(fw
+            .validate_target_with_policy(0x08, 0, 1, Version([3, 1, 9, 0]), true)
+            .is_err());
+        assert!(fw
+            .validate_target_with_policy(0x08, 0, 1, Version([4, 0, 0, 0]), true)
+            .is_err());
+    }
+
+    #[test]
+    fn validate_target_policy_and_aliases() {
+        // EP800: HardwareVerified allows false
+        let ep800_d = Firmware::from_bytes(&image(FirmwareKind::DcasX)).unwrap();
+        assert!(ep800_d
+            .validate_target_with_policy(0x23, 0, 1, Version([5, 0, 6, 1]), false)
+            .is_ok());
+
+        // EP801 alias: target live 0x35/00 -> fw 0x30/00
+        let mut ep801_buf = image(FirmwareKind::DcasX);
+        ep801_buf[40] = 0x30;
+        let ep801_fw = Firmware::from_bytes(&ep801_buf).unwrap();
+        assert!(ep801_fw
+            .validate_target_with_policy(0x35, 0, 1, Version([5, 0, 0, 0]), false)
+            .is_err());
+        let p_ep801 = ep801_fw
+            .validate_target_with_policy(0x35, 0, 1, Version([5, 0, 0, 0]), true)
+            .unwrap();
+        assert_eq!(p_ep801.family_name, "DU-EP801");
+
+        // E7000 alias: target live 0x21/00 -> fw 0x20/00
+        let mut e7000_buf = image(FirmwareKind::DcasX);
+        e7000_buf[40] = 0x20;
+        let e7000_fw = Firmware::from_bytes(&e7000_buf).unwrap();
+        assert!(e7000_fw
+            .validate_target_with_policy(0x21, 0, 1, Version([5, 0, 0, 0]), false)
+            .is_err());
+        let p_e7000 = e7000_fw
+            .validate_target_with_policy(0x21, 0, 1, Version([5, 0, 0, 0]), true)
+            .unwrap();
+        assert_eq!(p_e7000.family_name, "DU-E7000");
+
+        // E6001 alias: target live 0x0a/00 -> fw 0x0c/00 (DCAS2)
+        let mut e6001_buf = image(FirmwareKind::Dcas2);
+        e6001_buf[0xca] = 0x0c;
+        let e6001_fw = Firmware::from_bytes(&e6001_buf).unwrap();
+        assert!(e6001_fw
+            .validate_target_with_policy(0x0a, 0, 1, Version([3, 2, 0, 0]), false)
+            .is_err());
+        let p_e6001 = e6001_fw
+            .validate_target_with_policy(0x0a, 0, 1, Version([3, 2, 0, 0]), true)
+            .unwrap();
+        assert_eq!(p_e6001.family_name, "DU-E6001");
+        // Also test direct live 0x0c/00 -> fw 0x0c/00
+        assert!(e6001_fw
+            .validate_target_with_policy(0x0c, 0, 1, Version([3, 2, 0, 0]), true)
+            .is_ok());
+
+        // Global helpers
+        assert!(is_supported_live_motor(0x23, 0));
+        assert!(is_supported_live_motor(0x35, 0));
+        assert!(is_supported_live_motor(0x0a, 0));
+        assert!(!is_supported_live_motor(0x99, 0));
+        assert!(is_supported_rx_target(0x30, 0));
+        assert!(is_supported_rx_target(0x0c, 0));
+        assert!(!is_supported_rx_target(0x99, 0));
+        assert!(is_allowed_motor_board(1));
+        assert!(is_allowed_motor_board(2));
+        assert!(!is_allowed_motor_board(3));
+    }
+
+    #[test]
+    fn companion_pair_and_version_checks() {
+        let d = Firmware::from_bytes(&image(FirmwareKind::DcasX)).unwrap();
+        let m = Firmware::from_bytes(&image(FirmwareKind::Renesas)).unwrap();
+        assert!(d.validate_companion_version_for_pair(&m, Version([4, 1, 11, 0])).is_ok());
+        assert!(d.validate_companion_version_for_pair(&m, Version([4, 0, 0, 0])).is_err());
+    }
+
+    #[test]
+    fn audit_all_motor_firmware_pairs() {
+        let Some(dir) = std::env::var_os("CRANKLINK_AUDIT_FIRMWARE_FIXTURES") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let cases = [
+            (
+                "DUEP800-D.4.2.0.dat",
+                "DUEP800-M.4.1.11.dat",
+                FirmwareKind::DcasX,
+                0x23u8,
+                1u8,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUEP600-D.4.4.1.dat",
+                "DUEP600-M.4.4.0.dat",
+                FirmwareKind::DcasX,
+                0x35, // EP801 alias for 0x30
+                1,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUEP500-D.4.1.0.dat",
+                "DUEP500-M.4.1.0.dat",
+                FirmwareKind::DcasX,
+                0x37,
+                1,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUE5100-D.4.1.0.dat",
+                "DUE5100-M.4.0.0.dat",
+                FirmwareKind::DcasX,
+                0x38,
+                1,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUE6100-D.4.8.0.dat",
+                "DUE6100-M.4.7.6.dat",
+                FirmwareKind::DcasX,
+                0x21, // E7000 alias for 0x20
+                1,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUE5000-D.4.5.0.dat",
+                "DUE5000-M.4.4.8.dat",
+                FirmwareKind::DcasX,
+                0x22,
+                1,
+                Version([5, 0, 6, 1]),
+            ),
+            (
+                "DUE8000-D.4.10.0.dat",
+                "DUE8000-M.4.9.4.dat",
+                FirmwareKind::Dcas2i,
+                0x12,
+                1,
+                Version([4, 1, 0, 0]),
+            ),
+            (
+                "2DUE8000-D.4.10.0.dat",
+                "2DUE8000-M.4.9.4.dat",
+                FirmwareKind::Dcas2i,
+                0x12,
+                2,
+                Version([4, 1, 0, 0]),
+            ),
+        ];
+        for (dname, mname, expected_kind, live_series, board, bl) in cases {
+            let d = Firmware::load(dir.join(dname)).unwrap();
+            let m = Firmware::load(dir.join(mname)).unwrap();
+            assert_eq!(d.metadata.kind, expected_kind, "{dname}");
+            assert_eq!(m.metadata.kind, FirmwareKind::Renesas, "{mname}");
+            assert_eq!(d.metadata.board, Some(board), "{dname}");
+            d.validate_companion(&m).unwrap();
+            m.validate_companion(&d).unwrap();
+            d.validate_companion_version_for_pair(&m, m.metadata.version)
+                .unwrap();
+            if live_series == 0x23 {
+                d.validate_target(live_series, 0, board, bl).unwrap();
+            } else {
+                assert!(d.validate_target(live_series, 0, board, bl).is_err());
+                d.validate_target_with_policy(live_series, 0, board, bl, true)
+                    .unwrap();
+            }
+        }
     }
 }
