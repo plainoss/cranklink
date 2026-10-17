@@ -20,6 +20,7 @@ import { BackupView } from "./components/views/BackupView.tsx";
 import { DiagnosticsDrawer } from "./components/views/DiagnosticsDrawer.tsx";
 import { Badge } from "./components/ui/Badge.tsx";
 import { Button } from "./components/ui/Button.tsx";
+import { OperationModal } from "./components/ui/OperationModal.tsx";
 
 interface AppProps {
   controller: SessionController;
@@ -69,6 +70,7 @@ export function App({ controller }: AppProps) {
       <div className="min-h-screen bg-[#f4f3ef] text-stone-900 font-sans flex flex-col justify-between selection:bg-stone-900 selection:text-white">
         <ConnectView state={state} controller={controller} />
         <DiagnosticsDrawer state={state} controller={controller} />
+        <OperationModal state={state} />
         <span style="display:none" data-testid="status-message">
           {state.statusMessage}
         </span>
@@ -192,13 +194,13 @@ export function App({ controller }: AppProps) {
           </div>
         </div>
 
-        {/* 2. The 3 Focused Goal Hub Cards */}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
-            Goal Hub
-          </span>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Goal 1: Tune Assist */}
+        {/* Persistent Sleek App Shell Navigation */}
+        <nav
+          className="bg-white border border-stone-200/90 rounded-2xl p-2 shadow-xs flex items-center justify-between gap-2 overflow-x-auto"
+          aria-label="Application sections"
+        >
+          <div className="flex items-center gap-2 w-full">
+            {/* 1. Ride Tuning (Default Home) */}
             <button
               type="button"
               onClick={() => {
@@ -206,40 +208,21 @@ export function App({ controller }: AppProps) {
                 setCurrentGoal("tune");
               }}
               data-testid="nav-section-parameters"
-              className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+              data-action="nav-tune"
+              className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer min-h-[44px] select-none ${
                 currentGoal === "tune"
-                  ? "bg-white border-amber-500 shadow-md ring-2 ring-amber-500/20"
-                  : "bg-white/80 border-stone-200 hover:border-stone-300 hover:bg-white"
+                  ? "bg-stone-900 text-white shadow-xs"
+                  : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
               }`}
             >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      currentGoal === "tune" ? "bg-amber-500 text-stone-950 font-bold" : "bg-amber-100 text-amber-900"
-                    }`}
-                  >
-                    <Zap size={18} />
-                  </div>
-                  {currentGoal === "tune" && (
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h4 className="text-sm font-bold text-stone-900">
-                  Tune Ride Feel & Assist
-                </h4>
-                <p className="text-[11px] text-stone-500 mt-1 leading-snug">
-                  Torque sliders (20..85 Nm), assist levels, and wheel size.
-                </p>
-              </div>
-              <div className="mt-3 pt-2 border-t border-stone-100 text-[11px] font-mono text-stone-600">
-                Boost: <strong className="text-stone-900">{boostVal} Nm</strong>
-              </div>
+              <Zap
+                size={18}
+                className={currentGoal === "tune" ? "text-amber-400" : "text-stone-500"}
+              />
+              <span>Ride Tuning</span>
             </button>
 
-            {/* Goal 2: Firmware Wizard */}
+            {/* 2. Firmware & Recovery */}
             <button
               type="button"
               onClick={() => {
@@ -247,41 +230,21 @@ export function App({ controller }: AppProps) {
                 setCurrentGoal("firmware");
               }}
               data-testid="nav-section-firmware"
-              className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+              data-action="nav-firmware"
+              className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer min-h-[44px] select-none ${
                 currentGoal === "firmware"
-                  ? "bg-white border-blue-500 shadow-md ring-2 ring-blue-500/20"
-                  : "bg-white/80 border-stone-200 hover:border-stone-300 hover:bg-white"
+                  ? "bg-stone-900 text-white shadow-xs"
+                  : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
               }`}
             >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      currentGoal === "firmware" ? "bg-blue-600 text-white font-bold" : "bg-blue-100 text-blue-900"
-                    }`}
-                  >
-                    <Disc3 size={18} />
-                  </div>
-                  {currentGoal === "firmware" && (
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-900">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h4 className="text-sm font-bold text-stone-900">
-                  Update or Repair Firmware
-                </h4>
-                <p className="text-[11px] text-stone-500 mt-1 leading-snug">
-                  Guarded dual-MCU (.dat) updater with companion checks.
-                </p>
-              </div>
-              <div className="mt-3 pt-2 border-t border-stone-100 text-[11px] text-emerald-700 font-medium flex items-center gap-1">
-                <CheckCircle2 size={12} />
-                <span>Verified Healthy</span>
-              </div>
+              <Disc3
+                size={18}
+                className={currentGoal === "firmware" ? "text-blue-400" : "text-stone-500"}
+              />
+              <span>Firmware & Recovery</span>
             </button>
 
-            {/* Goal 3: Backup & Restore */}
+            {/* 3. Backup & Restore */}
             <button
               type="button"
               onClick={() => {
@@ -289,40 +252,32 @@ export function App({ controller }: AppProps) {
                 setCurrentGoal("backup");
               }}
               data-testid="nav-section-journal"
-              className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+              data-action="nav-backup"
+              className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer min-h-[44px] select-none ${
                 currentGoal === "backup"
-                  ? "bg-white border-emerald-500 shadow-md ring-2 ring-emerald-500/20"
-                  : "bg-white/80 border-stone-200 hover:border-stone-300 hover:bg-white"
+                  ? "bg-stone-900 text-white shadow-xs"
+                  : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
               }`}
             >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      currentGoal === "backup" ? "bg-emerald-600 text-white font-bold" : "bg-emerald-100 text-emerald-900"
-                    }`}
-                  >
-                    <ShieldCheck size={18} />
-                  </div>
-                  {currentGoal === "backup" && (
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h4 className="text-sm font-bold text-stone-900">
-                  Backup & Restore Hub
-                </h4>
-                <p className="text-[11px] text-stone-500 mt-1 leading-snug">
-                  1-click restore points, JSON export, and safety rollbacks.
-                </p>
-              </div>
-              <div className="mt-3 pt-2 border-t border-stone-100 text-[11px] font-mono text-stone-600">
-                {state.snapshots.length} restore point{state.snapshots.length !== 1 ? "s" : ""}
-              </div>
+              <ShieldCheck
+                size={18}
+                className={currentGoal === "backup" ? "text-emerald-400" : "text-stone-500"}
+              />
+              <span>Backup & Restore</span>
+              {state.snapshots.length > 0 && (
+                <span
+                  className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-full ${
+                    currentGoal === "backup"
+                      ? "bg-stone-800 text-stone-200"
+                      : "bg-stone-100 text-stone-700 border border-stone-200"
+                  }`}
+                >
+                  {state.snapshots.length}
+                </span>
+              )}
             </button>
           </div>
-        </div>
+        </nav>
 
         {/* Category Navigation Dropdown (Mobile-responsive & quick switcher) */}
         <div className="w-full">
@@ -384,6 +339,9 @@ export function App({ controller }: AppProps) {
       {/* Diagnostics & Logs Drawer */}
       <DiagnosticsDrawer state={state} controller={controller} />
 
+      {/* Operation Progress Modal */}
+      <OperationModal state={state} />
+
       {/* Test-hook anchors with non-empty bounds for automation actionability */}
       <div style={{ position: "fixed", bottom: 0, right: 0, opacity: 0, pointerEvents: "auto", width: "16px", height: "16px", overflow: "hidden", zIndex: 1 }}>
         <span data-testid="status-message">{state.statusMessage}</span>
@@ -393,6 +351,33 @@ export function App({ controller }: AppProps) {
           onClick={() => {
             controller.setSection("parameters");
             setCurrentGoal("tune");
+          }}
+          style={{ width: "16px", height: "16px" }}
+        ></button>
+        <button
+          type="button"
+          data-testid="btn-hub-tune"
+          onClick={() => {
+            controller.setSection("parameters");
+            setCurrentGoal("tune");
+          }}
+          style={{ width: "16px", height: "16px" }}
+        ></button>
+        <button
+          type="button"
+          data-testid="btn-hub-firmware"
+          onClick={() => {
+            controller.setSection("firmware");
+            setCurrentGoal("firmware");
+          }}
+          style={{ width: "16px", height: "16px" }}
+        ></button>
+        <button
+          type="button"
+          data-testid="btn-hub-backup"
+          onClick={() => {
+            controller.setSection("journal");
+            setCurrentGoal("backup");
           }}
           style={{ width: "16px", height: "16px" }}
         ></button>

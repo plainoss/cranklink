@@ -8,8 +8,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Cpu,
-  ShieldAlert,
-  Loader2,
 } from "lucide-preact";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
@@ -78,31 +76,7 @@ export function FirmwareView({ state, controller, onBack }: FirmwareViewProps) {
         </p>
       </div>
 
-      {/* Flashing Progress Locked State */}
-      {isFlashing ? (
-        <Card className="flex flex-col items-center justify-center py-12 px-6 text-center gap-4 bg-amber-50/50 border-amber-300">
-          <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center animate-spin">
-            <Loader2 size={36} />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-stone-900">
-              Programming Drive Unit Firmware...
-            </h3>
-            <p className="text-sm text-amber-800 mt-1 max-w-md font-medium">
-              {state.statusMessage}
-            </p>
-          </div>
-          <div className="p-4 rounded-xl bg-amber-100/70 border border-amber-300/80 text-amber-950 text-xs max-w-md text-left flex items-start gap-3">
-            <ShieldAlert size={20} className="text-amber-800 shrink-0 mt-0.5" />
-            <div>
-              <strong className="block font-semibold">Keep Cables Firmly Connected</strong>
-              Do not turn off your computer or bike power during the flash cycle. The motor will reboot automatically once verified.
-            </div>
-          </div>
-        </Card>
-      ) : (
-        <>
-          {/* Step 1: Dropzone Container */}
+      {/* Step 1: Dropzone Container */}
           <div
             data-dropzone="true"
             onDragOver={(e) => {
@@ -250,8 +224,6 @@ export function FirmwareView({ state, controller, onBack }: FirmwareViewProps) {
               </div>
             </div>
           </details>
-        </>
-      )}
 
 
     </div>
