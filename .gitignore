@@ -2,6 +2,9 @@
 **/*.rs.bk
 *.wire.jsonl
 *.journal.jsonl
+backup-*.json
+initial_*.json
+final_*.json
 *.dat
 *.bin
 .DS_Store
