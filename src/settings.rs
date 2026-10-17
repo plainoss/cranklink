@@ -127,7 +127,7 @@ pub struct SettingSpec {
     #[serde(skip)]
     signed: bool,
     #[serde(rename = "wire_units_per_input")]
-    scale: f64,
+    pub scale: f64,
     #[serde(skip)]
     preserve: Option<usize>,
     #[serde(skip)]

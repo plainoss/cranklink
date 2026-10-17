@@ -143,10 +143,7 @@ export function buildSynchronizedFlashPlan(options: {
 
   if (overrideSingleTarget === "dcas") {
     const journal = `${prefix}.dcas.journal.jsonl`;
-    const cmd =
-      transport === "ble" || transport === "sim"
-        ? `--ble-firmware --ble-firmware-backup ${shellQuote(backupFile)} flash-dcas ${shellQuote(dcas.filename)} --companion ${shellQuote(rx.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${dcas.sha256} --journal ${shellQuote(journal)}${writeFlag}`
-        : `flash-dcas ${shellQuote(dcas.filename)} --companion ${shellQuote(rx.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${dcas.sha256} --journal ${shellQuote(journal)}${writeFlag}`;
+    const cmd = `--expect-serial ${cleanSerial} firmware flash dcas ${shellQuote(dcas.filename)} --companion ${shellQuote(rx.filename)} --expect-sha256 ${dcas.sha256} --journal ${shellQuote(journal)}${writeFlag}`;
     return {
       mode: "single-dcas",
       description: `${write ? "Program" : "Dry-run"} DCAS MCU only (${dcas.filename})`,
@@ -158,10 +155,7 @@ export function buildSynchronizedFlashPlan(options: {
 
   if (overrideSingleTarget === "rx") {
     const journal = `${prefix}.rx.journal.jsonl`;
-    const cmd =
-      transport === "ble" || transport === "sim"
-        ? `--ble-firmware --ble-firmware-backup ${shellQuote(backupFile)} flash-rx ${shellQuote(rx.filename)} --companion ${shellQuote(dcas.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${rx.sha256} --journal ${shellQuote(journal)}${writeFlag}`
-        : `flash-rx ${shellQuote(rx.filename)} --companion ${shellQuote(dcas.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${rx.sha256} --journal ${shellQuote(journal)}${writeFlag}`;
+    const cmd = `--expect-serial ${cleanSerial} firmware flash rx ${shellQuote(rx.filename)} --companion ${shellQuote(dcas.filename)} --expect-sha256 ${rx.sha256} --journal ${shellQuote(journal)}${writeFlag}`;
     return {
       mode: "single-rx",
       description: `${write ? "Program" : "Dry-run"} RX MCU only (${rx.filename})`,
@@ -174,7 +168,7 @@ export function buildSynchronizedFlashPlan(options: {
   // Default: Synchronized Dual-MCU Package (both chips)
   if (transport === "ble" || transport === "sim") {
     const journal = `${prefix}.pair.journal.jsonl`;
-    const cmd = `--ble-firmware ble flash-pair --dcas ${shellQuote(dcas.filename)} --rx ${shellQuote(rx.filename)} --expect-serial ${cleanSerial} --expect-dcas-sha256 ${dcas.sha256} --expect-rx-sha256 ${rx.sha256} --journal ${shellQuote(journal)} --backup ${shellQuote(backupFile)}${writeFlag}`;
+    const cmd = `--expect-serial ${cleanSerial} firmware flash ble-pair --dcas ${shellQuote(dcas.filename)} --rx ${shellQuote(rx.filename)} --expect-dcas-sha256 ${dcas.sha256} --expect-rx-sha256 ${rx.sha256} --journal ${shellQuote(journal)} --backup ${shellQuote(backupFile)}${writeFlag}`;
     return {
       mode: "ble-pair",
       description: `${write ? "Synchronized Dual-MCU Flash" : "Dual-MCU Non-Erasing Check"} (DCAS + RX in one serial-bound transaction)`,
@@ -190,14 +184,14 @@ export function buildSynchronizedFlashPlan(options: {
   const commands: string[] = [];
   if (write) {
     commands.push(
-      `--expect-motor-serial ${cleanSerial} settings read --output ${shellQuote(backupFile)}`,
+      `--expect-serial ${cleanSerial} settings read --output ${shellQuote(backupFile)}`,
     );
   }
   commands.push(
-    `flash-dcas ${shellQuote(dcas.filename)} --companion ${shellQuote(rx.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${dcas.sha256} --journal ${shellQuote(dJournal)}${writeFlag}`,
+    `--expect-serial ${cleanSerial} firmware flash dcas ${shellQuote(dcas.filename)} --companion ${shellQuote(rx.filename)} --expect-sha256 ${dcas.sha256} --journal ${shellQuote(dJournal)}${writeFlag}`,
   );
   commands.push(
-    `flash-rx ${shellQuote(rx.filename)} --companion ${shellQuote(dcas.filename)} --expect-serial ${cleanSerial} --expect-sha256 ${rx.sha256} --journal ${shellQuote(rJournal)}${writeFlag}`,
+    `--expect-serial ${cleanSerial} firmware flash rx ${shellQuote(rx.filename)} --companion ${shellQuote(dcas.filename)} --expect-sha256 ${rx.sha256} --journal ${shellQuote(rJournal)}${writeFlag}`,
   );
 
   return {

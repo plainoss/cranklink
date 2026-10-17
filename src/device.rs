@@ -17,7 +17,7 @@ pub struct PowerInfo {
     pub adapter_supply: bool,
     pub raw_state: u8,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Identity {
     pub slot: u8,
     pub cargo: String,
