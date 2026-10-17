@@ -124,7 +124,14 @@ pub fn flash_with_policy(
     );
     let boot = read_boot(session, slot)?;
     if boot.transport == Transport::Smpce02 {
-        return flash_fast(session, slot, image, boot, allow_unverified_model, &mut progress);
+        return flash_fast(
+            session,
+            slot,
+            image,
+            boot,
+            allow_unverified_model,
+            &mut progress,
+        );
     }
     // All capability and size checks above precede this destructive start.
     legacy(session, 0x21, [0, 0x0e, 0], 0x31, 6)

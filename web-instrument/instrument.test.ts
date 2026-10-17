@@ -238,5 +238,23 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
     // Read tire circumference via group 0x35 cmd 0x04
     sim.write(0x2afe, [13, 0x35, 0x04, 0]);
     assert.deepEqual(replies.at(-1), [13, 0x35, 0x06, 0xfc, 0x08, 0, 0]);
+
+    // Legacy EP800-CRG drive unit authentication exchange (0x16 0xd8 -> 0xda challenge, 0x16 0xe0 -> 0xe2 receipt)
+    replies.length = 0;
+    sim.write(0x2afe, [13, 0x16, 0xd8, 1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(replies.length, 3, "challenge emits 3 fragments");
+    assert.equal(replies[0][2], 0xda);
+    assert.equal(replies[0][3], 0x16);
+    assert.equal(replies[1][3], 0x26);
+    assert.equal(replies[2][3], 0x34);
+
+    replies.length = 0;
+    sim.write(0x2afe, [13, 0x16, 0xe0, 0x16, 1, 2, 3, 4, 5, 6]);
+    sim.write(0x2afe, [13, 0x16, 0xe0, 0x26, 7, 8, 9, 10, 11, 12]);
+    assert.equal(replies.length, 0, "first two proof fragments do not emit receipt");
+    sim.write(0x2afe, [13, 0x16, 0xe0, 0x34, 13, 14, 15, 16, 0xff, 0xff]);
+    assert.equal(replies.length, 1, "third proof fragment emits receipt");
+    assert.deepEqual(replies[0], [13, 0x16, 0xe2, 0xff, 0xff, 0xff, 0xff]);
+    assert.equal(sim.unitAuthenticated, true);
   });
 });

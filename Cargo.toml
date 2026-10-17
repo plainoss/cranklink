@@ -14,7 +14,7 @@ wasm-opt = false
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = []
+default = ["ble"]
 ble = ["dep:btleplug", "dep:tokio", "dep:futures-util", "dep:uuid", "dep:rpassword", "dep:dbus"]
 
 [dependencies]
