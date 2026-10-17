@@ -1,8 +1,9 @@
 # cranklink
 
 Open-source diagnostic, tuning, and recovery toolkit for compatible Shimano STEPS e-bike drive units.
+This repository is essentially a byproduct of a successful vibe-coded attempt to recover a bricked EP800-CRG motor found in the basement. The motor failed repair attempts through official software and dealer channels.
 
-Recover supported EP800 motors left unresponsive in bootloader mode after an interrupted update, inspect bus components, and safely customize ride settings—using an SM-PCE02 USB adapter or Bluetooth LE. No vendor accounts, .NET runtimes, or proprietary DLLs required.
+Recover supported motors left unresponsive in bootloader mode, inspect bus components, and customize ride settings—using an SM-PCE02 USB adapter or Bluetooth LE.
 
 - **Safe by default**: All firmware flashing runs as a dry-run unless `--write` is specified. Settings modifications automatically save timestamped pre-write backups with readback verification.
 - **Bootloader recovery**: Direct offline flashing and bootloader probing for compatible EP800 motors (`23/00`, DCASX board 1).
