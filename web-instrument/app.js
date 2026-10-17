@@ -18,6 +18,8 @@ const files = new BrowserFiles();
 let selectedTransport = null;
 let activeSimulator = null;
 let activeSimulatorOptions = {};
+let pendingBleDisconnect = null;
+let releaseBleSessionLock = null;
 let port,
   worker,
   busy = false,
@@ -205,7 +207,16 @@ function startWorker() {
       print("Rust WASM ready. Type help.\n");
       return;
     }
+    if (m.type === "ble-disconnected") {
+      const pending = pendingBleDisconnect;
+      pendingBleDisconnect = null;
+      if (m.code) pending?.reject(new Error(m.error || "Bluetooth cleanup failed; check the bike before reconnecting."));
+      else pending?.resolve();
+      return;
+    }
     if (m.type === "host-failed") {
+      pendingBleDisconnect?.reject(new Error("Browser host failed during Bluetooth cleanup."));
+      pendingBleDisconnect = null;
       ready = false;
       port?.close().catch(() => {});
       print(
@@ -216,11 +227,15 @@ function startWorker() {
     }
     if (m.type === "done") complete(m.code);
     if (m.type === "fatal") {
+      pendingBleDisconnect?.reject(new Error(m.error));
+      pendingBleDisconnect = null;
       ready = false;
       complete(1, m.error);
     }
   };
   worker.onerror = (e) => {
+    pendingBleDisconnect?.reject(new Error(e.message));
+    pendingBleDisconnect = null;
     ready = false;
     complete(1, e.message);
   };
@@ -269,6 +284,12 @@ function requestBlePasskey(signal) {
     if (signal?.aborted) dialog.close("cancel");
   });
 }
+function clearBlePasskey() {
+  cachedBlePasskey = null;
+  try {
+    sessionStorage.removeItem("esteps_ble_passkey");
+  } catch {}
+}
 async function withDeviceLock(action) {
   if (busy) throw new Error("A command is already running");
   busy = true;
@@ -294,12 +315,45 @@ async function withDeviceLock(action) {
 }
 async function adoptPort(next, transport) {
   if (port) {
-    await port.close();
-    await port.forget?.();
+    await releaseSelectedPort();
+  }
+  if (transport === "ble") {
+    await new Promise((resolve, reject) => {
+      navigator.locks.request("cranklink-ble-session", { ifAvailable: true }, async (lock) => {
+        if (!lock) {
+          reject(new Error("Another tab has an active Bluetooth session. Disconnect it first."));
+          return;
+        }
+        await new Promise((release) => {
+          releaseBleSessionLock = release;
+          resolve();
+        });
+      }).catch(reject);
+    });
   }
   port = next;
   selectedTransport = transport;
   return { transport, ...port.describe() };
+}
+async function releaseSelectedPort() {
+  try {
+    if (ready) {
+      await new Promise((resolve, reject) => {
+        pendingBleDisconnect = { resolve, reject };
+        worker.postMessage({ type: "ble-disconnect" });
+      });
+    }
+  } finally {
+    try {
+      if (port) {
+        await port.close();
+        await port.forget?.();
+      }
+    } finally {
+      releaseBleSessionLock?.();
+      releaseBleSessionLock = null;
+    }
+  }
 }
 async function selectGranted(requested = "auto") {
   return withDeviceLock(async () => {
@@ -386,7 +440,7 @@ async function run(line) {
       }
       const next =
         transport === "ble"
-          ? new WebBleGatt(selected, requestBlePasskey)
+          ? new WebBleGatt(selected, requestBlePasskey, clearBlePasskey)
           : transport === "serial"
             ? new WebSerialPort(selected)
             : new WebUsbPort(selected);
@@ -405,8 +459,7 @@ async function run(line) {
       } catch {}
       try {
         if (port) {
-          await port.close();
-          await port.forget?.();
+          await releaseSelectedPort();
         }
       } finally {
         port = null;
@@ -501,7 +554,7 @@ picker?.addEventListener("change", async () => {
   picker.value = "";
 });
 window.addEventListener("beforeunload", (event) => {
-  if (busy) {
+  if (busy || (selectedTransport === "ble" && releaseBleSessionLock)) {
     event.preventDefault();
     event.returnValue = "";
   }

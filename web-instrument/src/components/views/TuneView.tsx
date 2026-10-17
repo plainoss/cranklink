@@ -28,6 +28,8 @@ import {
   LEGACY_DESTINATION_LABELS,
   MODERN_DESTINATION_LABELS,
   TIRE_PRESETS,
+  settingAcceptsValue,
+  clampSettingValue,
   modelSpeedRange,
 } from "../../domain/schema.ts";
 
@@ -152,10 +154,20 @@ export function TuneView({
   const maxPowerTrail = getVal("max-power.trail", 500);
   const maxPowerEco = getVal("max-power.eco", 500);
 
+  const hasSetting = (name: string) => state.schema.some((setting) => setting.name === name);
+  const hasSection = (section: string) => state.schema.some((setting) => setting.section === section);
+  const geometryRange = (name: string) => {
+    const spec = state.schema.find((setting) => setting.name === name);
+    return { min: spec?.userMin ?? 0, max: spec?.userMax ?? 0, step: spec?.userStep ?? 1 };
+  };
+  const tireSpec = state.schema.find((setting) => setting.name === "tire-circumference");
+  const tireNudge = tireSpec ? Math.ceil(10 / tireSpec.userStep) * tireSpec.userStep : 10;
+
+
   const destinationLabels =
-    state.identity?.modelSlug === "ep800-crg"
-      ? LEGACY_DESTINATION_LABELS
-      : MODERN_DESTINATION_LABELS;
+    ["ep600", "ep801", "ep500"].includes(state.identity?.modelSlug || "")
+      ? MODERN_DESTINATION_LABELS
+      : LEGACY_DESTINATION_LABELS;
 
   const speedRange = modelSpeedRange(state.identity?.modelSlug);
   const speedSpec = state.schema.find((setting) => setting.name === "speed-limit");
@@ -171,7 +183,7 @@ export function TuneView({
 
   const isFiltering = searchFilterProp.trim().length > 0;
 
-  const showProfiles =
+  const showProfiles = hasSection("profiles") &&
     (activeGroup === "all" || activeGroup === "profiles" || isFiltering) &&
     (filterMatches("boost") ||
       filterMatches("trail") ||
@@ -183,7 +195,7 @@ export function TuneView({
       filterMatches("profile") ||
       filterMatches("pattern"));
 
-  const showGeometry =
+  const showGeometry = hasSection("geometry") &&
     (activeGroup === "all" || activeGroup === "geometry" || isFiltering) &&
     (filterMatches("tire") ||
       filterMatches("circumference") ||
@@ -199,7 +211,7 @@ export function TuneView({
 
   const showDrivetrain =
     (activeGroup === "all" || activeGroup === "drivetrain" || isFiltering) &&
-    (state.schema.length === 0 || state.schema.some((s) => s.section === "drivetrain")) &&
+    hasSection("drivetrain") &&
     (filterMatches("gear") ||
       filterMatches("shift") ||
       filterMatches("di2") ||
@@ -211,7 +223,7 @@ export function TuneView({
 
   const showMaintenance =
     (activeGroup === "all" || activeGroup === "maintenance" || isFiltering) &&
-    (state.schema.length === 0 || state.schema.some((s) => s.section === "maintenance")) &&
+    hasSection("maintenance") &&
     (filterMatches("maintenance") ||
       filterMatches("service") ||
       filterMatches("alert") ||
@@ -220,7 +232,7 @@ export function TuneView({
 
   const showOem =
     (activeGroup === "all" || activeGroup === "oem" || isFiltering) &&
-    (state.schema.length === 0 || state.schema.some((s) => s.section === "oem")) &&
+    hasSection("oem") &&
     (filterMatches("oem") ||
       filterMatches("power") ||
       filterMatches("limit") ||
@@ -232,6 +244,7 @@ export function TuneView({
       {showGeometry && (
         <Card className="p-0 flex flex-col divide-y divide-stone-200 shadow-xs border-stone-200">
           {/* Region / Destination Selector */}
+          {hasSetting("destination") && (
           <div className="px-4 py-4 sm:px-5 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
@@ -254,15 +267,17 @@ export function TuneView({
               onChange={(e) => handleStage("destination", Number(e.target.value))}
               className="w-full text-xs font-mono p-2.5 rounded-xl border border-stone-300 bg-white text-stone-900 min-h-[44px] cursor-pointer focus:outline-none focus:border-stone-500"
             >
-              {Object.entries(destinationLabels).map(([code, label]) => (
+              {Object.entries(destinationLabels).filter(([code]) => state.schema.find((setting) => setting.name === "destination")?.choices.includes(Number(code))).map(([code, label]) => (
                 <option key={code} value={code}>
                   {label}
                 </option>
               ))}
             </select>
           </div>
+          )}
 
           {/* Speed Assist Limit Slider */}
+          {hasSetting("speed-limit") && (
           <div
             className="px-4 py-4 sm:px-5 flex flex-col gap-3"
             data-testid="param-row-speed-limit"
@@ -291,7 +306,7 @@ export function TuneView({
               value={speedLimit}
               min={minSpeed}
               max={maxSpeed}
-              step={1}
+              step={speedSpec?.userStep ?? 1}
               unit="km/h"
               onChange={(val) => handleStage("speed-limit", val)}
               valueFormatter={(val) => `${val} km/h`}
@@ -304,7 +319,7 @@ export function TuneView({
             {/* Quick Speed Presets */}
             <div className="flex items-center gap-2 flex-wrap pt-1">
               <span className="text-[11px] font-medium text-stone-500">Presets:</span>
-              {[20, 25, 32].filter((spd) => spd >= minSpeed && spd <= maxSpeed).map((spd) => (
+              {[20, 25, 32].filter((spd) => speedSpec && settingAcceptsValue(speedSpec, spd)).map((spd) => (
                 <button
                   type="button"
                   key={spd}
@@ -320,8 +335,10 @@ export function TuneView({
               ))}
             </div>
           </div>
+          )}
 
           {/* Tire Circumference Stepper & Presets */}
+          {hasSetting("tire-circumference") && (
           <div
             className="px-4 py-4 sm:px-5 flex flex-col gap-3"
             data-testid="param-row-tire-circumference"
@@ -355,9 +372,10 @@ export function TuneView({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleStage("tire-circumference", tireCircumference - 10)}
+                  disabled={!tireSpec || tireCircumference <= tireSpec.userMin}
+                  onClick={() => tireSpec && handleStage("tire-circumference", clampSettingValue(tireSpec, tireCircumference - tireNudge))}
                   data-testid="stepper-minus-tire-circumference"
-                  title="Decrease 10mm"
+                  title={`Decrease ${tireNudge}mm`}
                   className="w-11 h-11 p-0 text-base shrink-0 min-w-[44px] min-h-[44px]"
                 >
                   <Minus size={16} />
@@ -368,9 +386,10 @@ export function TuneView({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleStage("tire-circumference", tireCircumference + 10)}
+                  disabled={!tireSpec || tireCircumference >= tireSpec.userMax}
+                  onClick={() => tireSpec && handleStage("tire-circumference", clampSettingValue(tireSpec, tireCircumference + tireNudge))}
                   data-testid="stepper-plus-tire-circumference"
-                  title="Increase 10mm"
+                  title={`Increase ${tireNudge}mm`}
                   className="w-11 h-11 p-0 text-base shrink-0 min-w-[44px] min-h-[44px]"
                 >
                   <Plus size={16} />
@@ -381,7 +400,7 @@ export function TuneView({
             {/* Tire Presets */}
             <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-stone-200/60">
               <span className="text-[11px] font-medium text-stone-500 mr-1">Common Sizes:</span>
-              {TIRE_PRESETS.map((preset) => (
+              {TIRE_PRESETS.filter((preset) => tireSpec && settingAcceptsValue(tireSpec, Number(preset.value))).map((preset) => (
                 <button
                   type="button"
                   key={preset.label}
@@ -397,14 +416,16 @@ export function TuneView({
               ))}
             </div>
           </div>
+          )}
 
           {/* Wired Light Terminal (Lamp) */}
+          {hasSetting("lamp") && (
           <div className="px-4 py-4 sm:px-5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Lightbulb size={18} className="text-amber-600" />
               <div>
                 <span className="text-sm font-semibold text-stone-900 block">
-                  12V Wired Light Port
+                  Wired Light Port
                 </span>
                 <span className="text-xs text-stone-500 font-mono">
                   Current: {lampVal === 1 ? "Always On" : lampVal === 2 ? "Auto" : "Off"}
@@ -417,7 +438,10 @@ export function TuneView({
                 { val: 0, label: "Off" },
                 { val: 1, label: "On" },
                 { val: 2, label: "Auto" },
-              ].map((opt) => (
+              ].filter((opt) => {
+                const spec = state.schema.find((setting) => setting.name === "lamp");
+                return spec && (spec.choices.length ? spec.choices.includes(opt.val) : opt.val >= spec.userMin && opt.val <= spec.userMax);
+              }).map((opt) => (
                 <button
                   type="button"
                   key={opt.val}
@@ -433,10 +457,12 @@ export function TuneView({
               ))}
             </div>
           </div>
+          )}
 
           {/* Advanced Geometry & Installation Details */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4 px-4 py-4 sm:px-5">
             {/* Motor Mounting Angle */}
+          {hasSetting("mounting-angle") && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
@@ -454,16 +480,16 @@ export function TuneView({
               <Slider
                 label="Mounting Pitch"
                 value={mountingAngle}
-                min={0}
-                max={60}
-                step={1}
+                {...geometryRange("mounting-angle")}
                 unit="°"
                 onChange={(val) => handleStage("mounting-angle", val)}
                 valueFormatter={(val) => `${val}°`}
               />
             </div>
+          )}
 
             {/* Speedometer Display Offset */}
+          {hasSetting("display-speed-adjustment") && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
@@ -481,16 +507,16 @@ export function TuneView({
               <Slider
                 label="Display Calibration"
                 value={speedAdjustment}
-                min={-50}
-                max={50}
-                step={5}
+                {...geometryRange("display-speed-adjustment")}
                 unit="0.1%"
                 onChange={(val) => handleStage("display-speed-adjustment", val)}
                 valueFormatter={(val) => `${(val * 0.1).toFixed(1)}%`}
               />
             </div>
+          )}
 
             {/* Lighting Reserve Time */}
+          {hasSetting("lighting-time") && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
@@ -508,16 +534,16 @@ export function TuneView({
               <Slider
                 label="Reserve Duration"
                 value={lightingTime}
-                min={0}
-                max={180}
-                step={10}
+                {...geometryRange("lighting-time")}
                 unit="min"
                 onChange={(val) => handleStage("lighting-time", val)}
                 valueFormatter={(val) => `${val} min`}
               />
             </div>
+          )}
 
             {/* Walk Assist Toggle */}
+          {hasSetting("walk-assist") && (
             <div className="flex items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-semibold text-stone-900 block">
@@ -531,7 +557,10 @@ export function TuneView({
                 {[
                   { val: 0, label: "Disabled" },
                   { val: 2, label: "Enabled" },
-                ].map((opt) => (
+                ].filter((opt) => {
+                  const spec = state.schema.find((setting) => setting.name === "walk-assist");
+                  return spec && settingAcceptsValue(spec, opt.val);
+                }).map((opt) => (
                   <button
                     type="button"
                     key={opt.val}
@@ -547,6 +576,8 @@ export function TuneView({
                 ))}
               </div>
             </div>
+          )}
+
           </div>
         </Card>
       )}

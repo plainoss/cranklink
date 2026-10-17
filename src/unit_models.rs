@@ -739,6 +739,13 @@ pub const UNIT_MODELS: &[UnitModel] = &[
     UnitModel {
         series: 0x20,
         unit: 0x00,
+        name: "DU-E6180",
+        part: None,
+        model_params: Some(&[0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    },
+    UnitModel {
+        series: 0x20,
+        unit: 0x00,
         name: "DU-E6180-TRK",
         part: None,
         model_params: Some(&[0x18, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]),

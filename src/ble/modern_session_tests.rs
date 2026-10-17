@@ -14,6 +14,7 @@ struct State {
     mode: u8,
     identity_fault: u8,
     padded_product: bool,
+    firmware: Option<[u8; 3]>,
 }
 struct Mock(Rc<RefCell<State>>);
 fn frames(op: u8, data: &str) -> Vec<Vec<u8>> {
@@ -75,14 +76,18 @@ impl Gatt for Mock {
         let mut reply = vec![bytes[0], bytes[1], bytes[2] + 2];
         match (bytes[1], bytes[2]) {
             (1, 0x3c) => reply.extend([1, 2, 3, 4, 5, 6]),
-            (0x16, 0x7c) => reply.extend(b"00-STD\0"),
-            (1, 0x2c) => reply.extend(if s.identity_fault == 1 {
-                [0x46, 0, 0]
-            } else if s.series == 0x37 {
+            (0x16, 0x7c) => reply.extend(if s.identity_fault == 1 {
+                &b"XX\0\0\0\0\0"[..]
+            } else if s.series == 0x35 {
+                &b"01\0\0\0\0\0"[..]
+            } else {
+                &b"00\0\0\0\0\0"[..]
+            }),
+            (1, 0x2c) => reply.extend(s.firmware.unwrap_or(if s.series == 0x37 {
                 [0x41, 1, 0]
             } else {
                 [0x46, 0, 1]
-            }),
+            })),
             (2, 0x14) => {
                 assert_eq!(&bytes[3..], &[13]);
                 reply.extend([13, s.series, if s.identity_fault == 2 { 1 } else { 0 }]);
@@ -213,7 +218,7 @@ fn modern_product_serial_uses_only_six_characters_from_each_padded_reply() {
 #[test]
 fn modern_identity_guards_send_no_credentials() {
     for fault in 0..=5 {
-        let (mut s, state) = session(if fault == 5 { 0x23 } else { 0x30 });
+        let (mut s, state) = session(if fault == 5 { 0x99 } else { 0x30 });
         state.borrow_mut().identity_fault = fault;
         let expected = if fault == 0 { "000000000000" } else { SERIAL };
         assert!(s.authenticate_unit_settings(expected).is_err());
@@ -295,5 +300,17 @@ fn modern_authentication_frames_and_secrets_are_redacted_on_success_and_failure(
                     && matches!(bytes[2], 0x68 | 0x6a | 0x6b | 0x70 | 0x72 | 0x73))
             );
         }
+    }
+}
+
+#[test]
+fn modern_family_authentication_accepts_other_firmware_versions() {
+    for firmware in [[0x44, 1, 0], [0x46, 0, 0], [0x47, 99, 0]] {
+        let (mut session, state) = session(0x30);
+        state.borrow_mut().firmware = Some(firmware);
+        session.authenticate_unit_settings(SERIAL).unwrap();
+        assert_eq!(auth_writes(&state, 0x68), frames(0x68, AUTH));
+        assert_eq!(auth_writes(&state, 0x70), frames(0x70, PROOF));
+        assert!(!session.poisoned);
     }
 }

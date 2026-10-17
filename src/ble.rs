@@ -10,7 +10,12 @@ use aes::{
 };
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io::Write, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Write,
+    path::Path,
+    time::Duration,
+};
 use zeroize::Zeroize;
 
 #[cfg(target_arch = "wasm32")]
@@ -65,6 +70,7 @@ pub trait Gatt {
     fn subscribe(&mut self, id: u16) -> Result<()>;
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>>;
     fn passkey(&mut self) -> Result<String>;
+    fn clear_passkey(&mut self) {}
     fn close(&mut self) -> Result<()>;
 }
 
@@ -169,6 +175,8 @@ pub struct BleSession {
     unit_auth_attempted: bool,
     master_routing: bool,
     master_routing_active: bool,
+    gateway_started_slots: BTreeSet<u8>,
+    master_pc_start_receipts: BTreeMap<u8, Vec<u8>>,
     firmware_active: bool,
 }
 impl BleSession {
@@ -195,6 +203,8 @@ impl BleSession {
             unit_auth_attempted: false,
             master_routing: false,
             master_routing_active: false,
+            gateway_started_slots: BTreeSet::new(),
+            master_pc_start_receipts: BTreeMap::new(),
             firmware_active: false,
         })
     }
@@ -213,6 +223,44 @@ impl BleSession {
     }
     pub fn is_master_routing(&self) -> bool {
         self.master_routing
+    }
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn configure_command_trace(&mut self, path: Option<&Path>) -> Result<()> {
+        let trace = path
+            .map(|path| OpenOptions::new().create_new(true).write(true).open(path))
+            .transpose()?;
+        self.trace = trace;
+        Ok(())
+    }
+    /// Release motor ownership between browser commands without shutting down
+    /// the gateway's Bluetooth radio. Explicit disconnect still calls stop().
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn pause_browser_command(&mut self) -> Result<()> {
+        ensure!(
+            !self.poisoned && !self.firmware_active,
+            "BLE session cannot be retained after failure or during firmware operations"
+        );
+        self.stop_pc_link()?;
+        Ok(())
+    }
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn resume_browser_command(&mut self, master: bool) -> Result<()> {
+        ensure!(
+            self.authenticated
+                && !self.poisoned
+                && !self.firmware_active
+                && self.linked_slot.is_none(),
+            "BLE session is not ready for another command"
+        );
+        ensure!(
+            !self.master_routing_active || master,
+            "disconnect before switching an active browser master session to normal routing"
+        );
+        self.master_routing = master;
+        self.unit_auth_attempted = false;
+        self.target_slot = None;
+        self.master_stock = None;
+        Ok(())
     }
     fn log(&mut self, direction: &str, id: u16, bytes: &[u8]) -> Result<()> {
         // Authentication material never enters traces, including nonce/status.
@@ -277,6 +325,14 @@ impl BleSession {
         let n = result?;
         if let Some(n) = &n {
             self.log("rx", n.characteristic, &n.value)?;
+            if n.characteristic == FREE_RESPONSE
+                && (4..=20).contains(&n.value.len())
+                && self.gateway_started_slots.contains(&n.value[0])
+                && n.value[1..4] == [0x32, 0x12, 1]
+            {
+                self.master_pc_start_receipts
+                    .insert(n.value[0], n.value.clone());
+            }
         }
         Ok(n)
     }
@@ -313,6 +369,13 @@ impl BleSession {
         bail!("BLE response timeout or notification overflow; reconnect before another command")
     }
     pub fn authenticate(&mut self) -> Result<()> {
+        let result = self.authenticate_gateway();
+        if result.is_err() {
+            self.io.clear_passkey();
+        }
+        result
+    }
+    fn authenticate_gateway(&mut self) -> Result<()> {
         ensure!(!self.authenticated, "BLE session already authenticated");
         for id in [PCE_COMMAND, FREE_COMMAND, FEATURE] {
             let c = self
@@ -400,6 +463,8 @@ impl BleSession {
         if control == 3 {
             self.target_slot = None;
             self.master_stock = None;
+            self.gateway_started_slots.clear();
+            self.master_pc_start_receipts.clear();
         }
         self.drain()?;
         let mut bytes = vec![0, control];
@@ -459,6 +524,23 @@ impl BleSession {
         Ok(slots)
     }
     fn discover_master_units(&mut self) -> Result<Vec<u8>> {
+        if self.master_routing_active {
+            let mode = self.gateway(4, &[], 0x24)?;
+            ensure!(
+                mode.first() == Some(&0xa0),
+                "retained BLE master routing was lost; reconnect before another command"
+            );
+            let bitmap = self.gateway(0x1b, &[], 0x3b)?;
+            ensure!(bitmap.len() >= 4, "truncated BLE master component bitmap");
+            let slots: Vec<u8> = (1..31)
+                .filter(|&s| bitmap[usize::from(s) / 8] & (1 << (s % 8)) != 0)
+                .collect();
+            ensure!(
+                !slots.is_empty(),
+                "retained BLE master session has no remote components"
+            );
+            return Ok(slots);
+        }
         // Master routing must establish PC owner zero before privileged commands.
         // Admit gateway revisions by identity and acknowledged state transitions;
         // require the motor to confirm the resulting owner before authentication.
@@ -501,6 +583,8 @@ impl BleSession {
             "BLE master PnP found no remote components"
         );
         self.gateway_mode = true;
+        self.gateway_started_slots = slots.iter().copied().collect();
+        self.master_pc_start_receipts.clear();
         let reply = self.gateway(0x0c, &[1], 0x2c)?;
         ensure!(
             reply.first() == Some(&0),
@@ -585,14 +669,27 @@ impl BleSession {
         } else {
             crate::device::select_motor_slot(&slots, selected)?
         };
-        crate::device::UnitIdentity::from_reply(slot, self.model_identity(slot)?)?
-            .require_motor()?;
+        let motor = crate::device::UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
+        motor.require_motor()?;
         self.linked_slot = Some(slot);
-        // UnitRecognition.startPcConnectMode delegates master connection setup
-        // to PCE 0C/01. Do not replace that gateway-owned session with the wired
-        // 32/10 + fixed-key sequence. Remote motor support retains its existing
-        // explicit link path; this master path is bound to verified PCE0D stock.
-        if slot != 0 {
+        // Initial master setup broadcasts PC start and all five keys through
+        // the gateway. Preserve its motor receipt instead of starting twice.
+        // Later commands restart only the motor released by the previous pause.
+        let receipt = if self.master_routing && self.gateway_started_slots.contains(&slot) {
+            Some(
+                if let Some(value) = self.master_pc_start_receipts.get(&slot).cloned() {
+                    Notification {
+                        characteristic: FREE_RESPONSE,
+                        value,
+                    }
+                } else {
+                    self.wait(|n| {
+                        n.characteristic == FREE_RESPONSE
+                            && n.value.starts_with(&[slot, 0x32, 0x12, 1])
+                    })?
+                },
+            )
+        } else if slot != 0 {
             self.drain()?;
             // Same logical PC-link start and unit keys as the wired application,
             // routed over FREE_COMMAND rather than serial/USB framing.
@@ -609,10 +706,14 @@ impl BleSession {
                 sleep(Duration::from_millis(100));
             }
             let pc = slot;
-            let receipt = self.wait(|n| {
+            Some(self.wait(|n| {
                 n.characteristic == FREE_RESPONSE && n.value.starts_with(&[pc, 0x32, 0x12, 1])
-            })?;
-            if self.master_routing {
+            })?)
+        } else {
+            None
+        };
+        if self.master_routing {
+            if let Some(receipt) = receipt {
                 ensure!(
                     receipt.value.len() >= 7
                         && receipt.value[4] == 0
@@ -621,17 +722,22 @@ impl BleSession {
                 );
             }
         }
-        let cargo = self.command(slot, 0x16, 0x7c, &[0], 0x7e)?;
-        ensure!(cargo.len() >= 7, "truncated BLE motor attribute reply");
+        self.gateway_started_slots.remove(&slot);
+        self.master_pc_start_receipts.remove(&slot);
+        let cargo = crate::motor_support::read_params(self, slot, motor.model_series)?;
+        ensure!(
+            motor.model_series == 0x08 || cargo.len() >= 7,
+            "truncated BLE motor attribute reply"
+        );
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
-        let m = self.command(slot, 1, 0x84, &[1], 0x86)?;
+        let rx_version = version(&self.command(slot, 1, 0x84, &[1], 0x86)?)?;
         Ok(Identity {
             slot,
             cargo: String::from_utf8_lossy(&cargo)
                 .trim_end_matches('\0')
                 .into(),
             dcas_version: version(&d)?,
-            rx_version: version(&m)?,
+            rx_version,
         })
     }
     pub fn stop(&mut self) -> Result<()> {
@@ -684,6 +790,8 @@ impl BleSession {
                 let p = self.command(slot, 0x32, 0x10, &[0, self.pc_slot, 0, 0], 0x12)?;
                 ensure!(p.first() == Some(&0), "BLE unit PC-link stop rejected");
             }
+            self.gateway_started_slots.remove(&slot);
+            self.master_pc_start_receipts.remove(&slot);
             // The master is stopped by the matching gateway 0C/00 below.
         }
         self.linked_slot = None;
@@ -725,7 +833,7 @@ impl BleSession {
         self.io.close()
     }
 
-    /// One attempt using the protocol verified for the exact live model/version.
+    /// One attempt using the authorization protocol for the live motor family.
     /// This neither changes settings nor enters an update/boot mode.
     pub fn authenticate_unit_settings(
         &mut self,
@@ -748,23 +856,25 @@ impl BleSession {
             hex::encode(serial).eq_ignore_ascii_case(expected_serial),
             "drive-unit authentication motor serial mismatch"
         );
-        let cargo = self.command(slot, 0x16, 0x7c, &[0], 0x7e)?;
-        let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
         let model = self.model_identity(slot)?;
+        ensure!(model.len() >= 3, "invalid motor stock identity");
+        let cargo = crate::motor_support::read_params(self, slot, model[1])?;
+        let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
         ensure!(
             model.len() >= 3 && model[2] == 0,
             "unsupported motor identity"
         );
         let firmware = version(&d)?;
-        let modern = match (model[1], firmware.as_str()) {
-            (0x23, "4.1.10.0" | "4.2.0.0") if cargo.as_slice() == b"00-CRG\0" => false,
-            (0x30 | 0x35, "4.6.0.1") | (0x37, "4.1.1.0") => true,
-            _ => bail!(
-                "drive-unit authentication is not verified for series {:02X} D{}",
-                model[1],
-                firmware
-            ),
-        };
+        let protocol =
+            crate::motor_support::authorization_for_motor(model[1], model[2], &cargo, &firmware)?;
+        if protocol == crate::motor_support::AuthProtocol::NotRequired {
+            self.unit_auth_attempted = true;
+            return Ok(
+                serde_json::json!({"unit_authentication_required":false,"firmware":firmware,
+                "scope":"this motor firmware does not require regulation-setting authentication"}),
+            );
+        }
+        let modern = protocol == crate::motor_support::AuthProtocol::Modern;
         let product = if modern {
             let first = self.command(slot, 1, 0xa4, &[0], 0xa6)?;
             let last = self.command(slot, 1, 0xac, &[0], 0xae)?;
@@ -837,7 +947,7 @@ impl BleSession {
             unit_auth::validate_ble_receipt(&n.value, pc, 0x16, 0xe2)?;
             Ok(serde_json::json!({"unit_authentication_receipt":true,
                 "reply_parameters_hex":hex::encode(&n.value[3..7]),"internal_status":0,"hardware_validated":false,
-                "firmware":firmware,"scope":"legacy EP800-CRG regulation-setting authentication; per-setting validation still required"}))
+                "firmware":firmware,"protocol":"legacy","scope":"regulation-setting authentication; per-setting validation still required"}))
         })();
         if result.is_err() {
             self.poisoned = true;
@@ -1009,13 +1119,17 @@ mod tests {
         stock_series: Option<u8>,
         master_info: Option<Vec<u8>>,
         master_stock_reply: Option<Vec<u8>>,
+        motor_params: Option<Vec<u8>>,
+        motor_version: Option<Vec<u8>>,
         initial_extended_mode: bool,
         mode_negotiated: bool,
         master_mode: bool,
         reject_master_mode: bool,
         wrong_pc_owner: bool,
+        omit_gateway_motor_receipt: bool,
         asynchronous_mode_completion: bool,
         motor_slot: Option<u8>,
+        motor_slots: Vec<u8>,
         gateway_version: Option<Vec<u8>>,
         gateway_stock: Option<Vec<u8>>,
         reject_pc_stop: bool,
@@ -1127,6 +1241,21 @@ mod tests {
                         if data[2] == 0 && s.timeout_pc_stop {
                             return Ok(());
                         }
+                        if data[2] == 1 && s.master_mode && !s.omit_gateway_motor_receipt {
+                            let owner = if s.wrong_pc_owner { 19 } else { 0 };
+                            let slots = if s.motor_slots.is_empty() {
+                                vec![s.motor_slot.unwrap_or(13)]
+                            } else {
+                                s.motor_slots.clone()
+                            };
+                            for slot in slots {
+                                notify(
+                                    &mut s,
+                                    FREE_RESPONSE,
+                                    vec![slot, 0x32, 0x12, 1, owner, 0xff, 0xff],
+                                );
+                            }
+                        }
                         vec![0x2c, u8::from(data[2] == 0 && s.reject_gateway_pc_stop)]
                     }
                     0x0d => {
@@ -1157,19 +1286,21 @@ mod tests {
                         "direct unit traffic requires acknowledged target selection"
                     );
                 }
-                assert_eq!(
-                    data[0],
-                    if matches!((data[1], data[2]), (1 | 2, 0x14))
-                        || (data[0] == 0
-                            && s.master_info
-                                .as_ref()
-                                .is_some_and(|info| info.len() >= 3 && info[1] != 0xff))
-                    {
-                        0
-                    } else {
-                        s.motor_slot.unwrap_or(13)
-                    }
-                );
+                let expected_slot = if matches!((data[1], data[2]), (1 | 2, 0x14))
+                    || (data[0] == 0
+                        && s.master_info
+                            .as_ref()
+                            .is_some_and(|info| info.len() >= 3 && info[1] != 0xff))
+                {
+                    0
+                } else {
+                    s.motor_slot.unwrap_or(13)
+                };
+                if expected_slot != 0 && !s.motor_slots.is_empty() {
+                    assert!(s.motor_slots.contains(&data[0]));
+                } else {
+                    assert_eq!(data[0], expected_slot);
+                }
                 let (group, cmd) = (data[1], data[2]);
                 if group == 0x32 && cmd == 0x30 {
                     return Ok(());
@@ -1201,6 +1332,28 @@ mod tests {
                     }
                     return Ok(());
                 }
+                if group == 0x33 && matches!(cmd, 0x68 | 0x70) {
+                    if data[3] == 0x34 {
+                        if cmd == 0x68 {
+                            for (selector, offset, length) in
+                                [(0x16, 0, 6), (0x26, 6, 6), (0x34, 12, 4)]
+                            {
+                                let mut fragment = vec![data[0], 0x33, 0x6a, selector];
+                                fragment.extend(offset..offset + length);
+                                fragment.resize(10, 0xff);
+                                notify(&mut s, FREE_RESPONSE, fragment);
+                            }
+                        } else {
+                            s.unit_authenticated = true;
+                            notify(
+                                &mut s,
+                                FREE_RESPONSE,
+                                vec![data[0], 0x33, 0x72, 0xff, 0xff, 0xff, 0xff],
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
                 let mut response = vec![data[0], group, cmd + 2];
                 match (group, cmd) {
                     (0x32, 0x10) => {
@@ -1213,12 +1366,19 @@ mod tests {
                             response.extend([if s.wrong_pc_owner { 19 } else { 0 }, 0xff, 0xff]);
                         }
                     }
-                    (0x16, 0x7c) => response.extend(b"00-CRG\0"),
+                    (0x16, 0x7c) => {
+                        response.extend(s.motor_params.clone().unwrap_or(b"00-CRG\0".to_vec()))
+                    }
                     (1, 0x1c) => {
                         response.extend(s.master_stock_reply.clone().unwrap_or(vec![0x23, 0, 0xff]))
                     }
-                    (1, 0x2c) => response.extend([0x42, 0, 0]),
+                    (1, 0x2c) => {
+                        response.extend(s.motor_version.clone().unwrap_or(vec![0x42, 0, 0]))
+                    }
+                    (1, 0xa4) => response.extend(b"\0ABCDE"),
+                    (1, 0xac) => response.extend(b"123456"),
                     (1, 0x84) => response.extend([0x41, 11, 0]),
+                    (1, 0xc0) => response.push(data[3]),
                     (1, 0x3c) => response.extend([1, 2, 3, 4, 5, 6]),
                     (1, 0x14) => {
                         response.extend([0, 0]);
@@ -1290,6 +1450,370 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
+    }
+    #[test]
+    fn motor_authorization_uses_family_across_firmware_versions_and_variants() {
+        for (series, params, modern) in [
+            (0x23, &b"00\0\0\0\0\0"[..], false),
+            (0x23, &b"00-CRG\0"[..], false),
+            (0x30, &b"00\0\0\0\0\0"[..], true),
+            (0x30, &b"00-CRG\0"[..], true),
+            (0x35, &b"01\0\0\0\0\0"[..], true),
+            (0x35, &b"01-CRG\0"[..], true),
+            (0x37, &b"00\0\0\0\0\0"[..], true),
+        ] {
+            for firmware in [match series {
+                0x30 => vec![0x44, 1, 0],
+                0x35 => vec![0x46, 0, 1],
+                _ => vec![0x47, 99, 0],
+            }] {
+                let (mut session, state) = mock();
+                {
+                    let mut s = state.borrow_mut();
+                    s.master_stock_reply = Some(vec![series, 0, 0xff]);
+                    s.motor_params = Some(params.to_vec());
+                    s.motor_version = Some(firmware);
+                }
+                session.set_master_routing(true).unwrap();
+                session.authenticate().unwrap();
+                session.start_component(Some(13), None).unwrap();
+                let receipt = session.authenticate_unit_settings("010203040506").unwrap();
+                assert_eq!(
+                    receipt["protocol"],
+                    if modern { "modern" } else { "legacy" }
+                );
+                assert!(state.borrow().unit_authenticated);
+                let writes = state.borrow();
+                assert_eq!(
+                    writes
+                        .writes
+                        .iter()
+                        .filter(|(id, bytes)| *id == FREE_COMMAND && bytes[1..3] == [0x33, 0x68])
+                        .count(),
+                    if modern { 3 } else { 0 }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn master_gateway_start_receipt_prevents_duplicate_motor_start() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        let identity = session.start_component(Some(13), None).unwrap();
+        assert_eq!(identity.cargo, "00-CRG");
+        assert_eq!(identity.dcas_version, "4.2.0.0");
+        assert_eq!(identity.rx_version, "4.1.11.0");
+        let mismatch = session
+            .authenticate_unit_settings("FFFFFFFFFFFF")
+            .unwrap_err();
+        assert!(mismatch.to_string().contains("motor serial mismatch"));
+        assert!(!session.unit_auth_attempted);
+        session.authenticate_unit_settings("010203040506").unwrap();
+        let writes = &state.borrow().writes;
+        for command in [
+            vec![13, 1, 0x1c, 0],
+            vec![13, 0x16, 0x7c, 0],
+            vec![13, 1, 0x2c, 0],
+            vec![13, 1, 0x84, 1],
+            vec![13, 1, 0x3c, 0],
+        ] {
+            assert!(writes.contains(&(FREE_COMMAND, command)));
+        }
+        assert!(!writes
+            .iter()
+            .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32]) }));
+        assert!(session.gateway_started_slots.is_empty());
+        assert!(session.master_pc_start_receipts.is_empty());
+    }
+    #[test]
+    fn master_gateway_start_without_motor_receipt_never_replays_start() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        state.borrow_mut().omit_gateway_motor_receipt = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        assert!(session.start(Some(13)).is_err());
+        assert!(session.poisoned);
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32]) }));
+    }
+    #[test]
+    fn browser_command_inventory_preserves_gateway_motor_start_until_selection() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        assert_eq!(session.units().unwrap().len(), 1);
+        assert!(session.linked_slot.is_none());
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(true).unwrap();
+        assert!(session.gateway_started_slots.contains(&13));
+        assert!(session.master_pc_start_receipts.contains_key(&13));
+        session.start(Some(13)).unwrap();
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32]) }));
+        assert!(session.gateway_started_slots.is_empty());
+        assert!(session.master_pc_start_receipts.is_empty());
+        session.pause_browser_command().unwrap();
+        session.stop().unwrap();
+    }
+    #[test]
+    fn browser_command_gateway_receipts_remain_available_for_other_motors() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 96, 0, 0]);
+        state.borrow_mut().motor_slots = vec![13, 14];
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        assert_eq!(session.units().unwrap().len(), 2);
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(true).unwrap();
+        session.start(Some(13)).unwrap();
+        assert!(!session.gateway_started_slots.contains(&13));
+        assert!(session.gateway_started_slots.contains(&14));
+        assert!(session.master_pc_start_receipts.contains_key(&14));
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(true).unwrap();
+        session.start(Some(14)).unwrap();
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND
+                && bytes[1] == 0x32
+                && (bytes[2] == 0x30 || (bytes[2] == 0x10 && bytes[3] == 1))
+        }));
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(true).unwrap();
+        session.start(Some(13)).unwrap();
+        let writes = &state.borrow().writes;
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, bytes)| {
+                    *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32, 0x10, 1])
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, bytes)| {
+                    *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32, 0x30])
+                })
+                .count(),
+            5
+        );
+        assert!(session.gateway_started_slots.is_empty());
+        assert!(session.master_pc_start_receipts.is_empty());
+    }
+    #[test]
+    fn browser_command_trace_replacement_is_atomic_and_redacts_credentials() {
+        let (mut session, state) = mock();
+        let first = path("first-command.trace");
+        let second = path("second-command.trace");
+        session.configure_command_trace(Some(&first)).unwrap();
+        session.log("tx", PCE_COMMAND, &[0, 4]).unwrap();
+        let writes = state.borrow().writes.len();
+        assert!(session.configure_command_trace(Some(&first)).is_err());
+        assert_eq!(state.borrow().writes.len(), writes);
+        session.log("tx", PCE_COMMAND, &[0, 5]).unwrap();
+        let first_text = std::fs::read_to_string(&first).unwrap();
+        assert!(first_text.contains("0004") && first_text.contains("0005"));
+        session.configure_command_trace(Some(&second)).unwrap();
+        session.log("tx", AUTH_CONTROL, b"credential").unwrap();
+        session.log("rx", AUTH_NONCE, b"challenge").unwrap();
+        session
+            .log("tx", FREE_COMMAND, &[13, 0x16, 0xd8, 1, 2, 3])
+            .unwrap();
+        session.log("tx", FREE_COMMAND, &[13, 1, 0x1c, 0]).unwrap();
+        let second_text = std::fs::read_to_string(&second).unwrap();
+        assert!(second_text.contains("0d011c00"));
+        assert!(!second_text.contains("credential") && !second_text.contains("challenge"));
+        assert!(!second_text.contains("16d8") && !second_text.contains("2af3"));
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), first_text);
+        session.configure_command_trace(None).unwrap();
+        session.log("tx", PCE_COMMAND, &[0, 4]).unwrap();
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), second_text);
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+    }
+    #[test]
+    fn browser_command_master_handoff_to_firmware_preserves_connection_and_guards() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        session.pause_browser_command().unwrap();
+        let auth_count = state
+            .borrow()
+            .writes
+            .iter()
+            .filter(|(id, _)| *id == AUTH_CONTROL)
+            .count();
+        session.resume_browser_command(true).unwrap();
+        let identity = session.start(Some(13)).unwrap();
+        assert_eq!(identity.rx_version, "4.1.11.0");
+        assert!(session.motor_firmware(&[0xff; 6]).is_err());
+        assert!(!session.firmware_active);
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 1, 0xc0]) }));
+        let link = session.motor_firmware(&[1, 2, 3, 4, 5, 6]).unwrap();
+        link.application_return().unwrap();
+        assert_eq!(
+            state
+                .borrow()
+                .writes
+                .iter()
+                .filter(|(id, _)| *id == AUTH_CONTROL)
+                .count(),
+            auth_count
+        );
+        assert!(!state.borrow().closed);
+        assert!(!state
+            .borrow()
+            .writes
+            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+        session.stop().unwrap();
+        session.close().unwrap();
+        assert!(state.borrow().closed);
+    }
+    #[test]
+    fn browser_commands_keep_gateway_connected_until_explicit_stop() {
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        let auth_count = state
+            .borrow()
+            .writes
+            .iter()
+            .filter(|(id, _)| *id == AUTH_CONTROL)
+            .count();
+        session.pause_browser_command().unwrap();
+        assert!(!state.borrow().closed);
+        assert!(!state
+            .borrow()
+            .writes
+            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+        session.resume_browser_command(false).unwrap();
+        session.start(Some(13)).unwrap();
+        assert_eq!(session.command(13, 0x10, 0x14, &[0], 0x16).unwrap()[0], 1);
+        session.pause_browser_command().unwrap();
+        assert_eq!(
+            state
+                .borrow()
+                .writes
+                .iter()
+                .filter(|(id, _)| *id == AUTH_CONTROL)
+                .count(),
+            auth_count
+        );
+        assert!(!state
+            .borrow()
+            .writes
+            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+        session.stop().unwrap();
+        session.close().unwrap();
+        assert!(state.borrow().closed);
+        assert_eq!(
+            state
+                .borrow()
+                .writes
+                .iter()
+                .filter(|(id, bytes)| *id == PCE_COMMAND && bytes == &[0, 0x0c, 0])
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn browser_commands_retain_master_routing_until_explicit_stop() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(true).unwrap();
+        session.start(Some(13)).unwrap();
+        assert!(state.borrow().master_mode);
+        let writes_before_pause = state.borrow().writes.len();
+        session.pause_browser_command().unwrap();
+        assert!(state.borrow().master_mode);
+        assert!(session.master_routing_active);
+        assert!(session.linked_slot.is_none());
+        assert_eq!(
+            &state.borrow().writes[writes_before_pause..],
+            &[(FREE_COMMAND, vec![13, 0x32, 0x10, 0, 0, 0, 0])]
+        );
+        assert!(!state
+            .borrow()
+            .writes
+            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+        assert!(session.resume_browser_command(false).is_err());
+        let writes_before_resume = state.borrow().writes.len();
+        session.resume_browser_command(true).unwrap();
+        session.start(Some(13)).unwrap();
+        let writes = state.borrow().writes[writes_before_resume..].to_vec();
+        assert_eq!(writes[0], (PCE_COMMAND, vec![0, 4]));
+        assert_eq!(writes[1], (PCE_COMMAND, vec![0, 0x1b]));
+        assert!(!writes.iter().any(|(id, bytes)| {
+            *id == PCE_COMMAND && matches!(bytes.get(1), Some(3 | 0x1d | 0x0c))
+        }));
+        assert!(writes.contains(&(FREE_COMMAND, vec![13, 0x32, 0x10, 1, 0, 0, 0])));
+        session.pause_browser_command().unwrap();
+        let writes_before_stop = state.borrow().writes.len();
+        session.stop().unwrap();
+        assert!(!state.borrow().master_mode);
+        assert!(!session.master_routing_active);
+        assert_eq!(
+            &state.borrow().writes[writes_before_stop..],
+            &[
+                (PCE_COMMAND, vec![0, 3, 0]),
+                (PCE_COMMAND, vec![0, 4]),
+                (PCE_COMMAND, vec![0, 0x0c, 0]),
+            ]
+        );
+        session.close().unwrap();
+        assert!(state.borrow().closed);
+    }
+    #[test]
+    fn browser_command_lost_master_mode_stops_before_motor_commands() {
+        let (mut session, state) = mock();
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        session.pause_browser_command().unwrap();
+        state.borrow_mut().master_mode = false;
+        session.resume_browser_command(true).unwrap();
+        let before = state.borrow().writes.len();
+        let error = session.start(Some(13)).unwrap_err();
+        assert!(error.to_string().contains("master routing was lost"));
+        assert_eq!(
+            &state.borrow().writes[before..],
+            &[(PCE_COMMAND, vec![0, 4])]
+        );
+    }
+    #[test]
+    fn browser_command_cleanup_failure_fences_session_without_replay() {
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        state.borrow_mut().timeout_pc_stop = true;
+        assert!(session.pause_browser_command().is_err());
+        let writes = state.borrow().writes.len();
+        assert!(session.resume_browser_command(false).is_err());
+        assert_eq!(state.borrow().writes.len(), writes);
+        assert!(session.poisoned);
     }
     #[test]
     fn batch_reuses_one_authenticated_master_session_for_two_writes_and_reads() {
@@ -1373,7 +1897,9 @@ mod tests {
             assert!(writes.contains(&(PCE_COMMAND, vec![0, 3, 0x20])));
             assert!(writes.contains(&(PCE_COMMAND, vec![0, 0x1d, 0])));
             assert!(writes.contains(&(PCE_COMMAND, vec![0, 0x1b])));
-            assert!(writes.contains(&(FREE_COMMAND, vec![13, 0x32, 0x10, 1, 0, 0, 0])));
+            assert!(!writes
+                .iter()
+                .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32]) }));
             assert!(!writes.iter().any(|(c, b)| *c == FREE_COMMAND && b[0] == 0));
             assert!(!writes.iter().any(|(c, b)| *c == PCE_COMMAND && b[1] == 6));
         }

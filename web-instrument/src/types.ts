@@ -5,6 +5,7 @@
 export type TransportType = "usb" | "serial" | "ble" | "sim";
 
 export type SimulatedModel = "ep800-crg" | "ep600" | "ep801";
+export type MotorModel = SimulatedModel | "ep500" | "e5100" | "e8000" | "e7000" | "e6100" | "e6000";
 
 export type FaultInjectionType =
   | "none"
@@ -60,7 +61,7 @@ export interface EnrichedSetting extends SettingSpec {
 export interface DeviceIdentity {
   slot: number;
   model: string;
-  modelSlug: SimulatedModel;
+  modelSlug: MotorModel;
   serial: string;
   dcasVersion: string;
   rxVersion: string;

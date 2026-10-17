@@ -1,6 +1,45 @@
 //! The browser runs the same synchronous CLI in a dedicated worker. Host RPC
 //! bridges WebUSB and durable browser files; no firmware logic lives in JS.
 use wasm_bindgen::prelude::*;
+thread_local! {
+    static BLE_SESSION: std::cell::RefCell<Option<crate::ble::BleSession>> = const { std::cell::RefCell::new(None) };
+}
+pub(crate) fn take_ble_session() -> Option<crate::ble::BleSession> {
+    BLE_SESSION.with(|slot| slot.borrow_mut().take())
+}
+pub(crate) fn take_ble_session_with_trace(
+    trace: Option<&std::path::Path>,
+) -> anyhow::Result<Option<crate::ble::BleSession>> {
+    BLE_SESSION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(session) = slot.as_mut() {
+            session.configure_command_trace(trace)?;
+        }
+        Ok(slot.take())
+    })
+}
+pub(crate) fn retain_ble_session(session: crate::ble::BleSession) {
+    BLE_SESSION.with(|slot| *slot.borrow_mut() = Some(session));
+}
+pub(crate) fn end_ble_session() -> anyhow::Result<()> {
+    if let Some(mut session) = take_ble_session() {
+        let stopped = session.stop();
+        let closed = session.close();
+        stopped?;
+        closed?;
+    }
+    Ok(())
+}
+#[wasm_bindgen]
+pub fn disconnect_ble() -> i32 {
+    match end_ble_session() {
+        Ok(()) => 0,
+        Err(error) => {
+            host_emit("stderr", &format!("error: {error:#}\n"));
+            1
+        }
+    }
+}
 #[wasm_bindgen(raw_module = "../host.js")]
 extern "C" {
     #[wasm_bindgen(catch)]

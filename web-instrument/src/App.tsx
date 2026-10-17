@@ -1,3 +1,4 @@
+import { friendlyMotorName } from "./domain/motorIdentity.ts";
 import { useState, useEffect } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
@@ -22,6 +23,7 @@ import {
 import type { InstrumentState } from "./types.ts";
 import type { SessionController } from "./core/sessionController.ts";
 import { ConnectView } from "./components/views/ConnectView.tsx";
+import { userFacingError } from "./domain/errors.ts";
 import { OverviewView } from "./components/views/OverviewView.tsx";
 import { TuneView } from "./components/views/TuneView.tsx";
 import { FirmwareView } from "./components/views/FirmwareView.tsx";
@@ -205,15 +207,7 @@ export function App({ controller }: AppProps) {
   }
 
   const identity = state.identity;
-  const getFriendlyModel = () => {
-    if (!identity) return "Shimano STEPS";
-    if (identity.modelSlug === "ep800-crg") {
-      return identity.isCargo ? "Shimano EP8 Cargo (DU-EP800-CRG)" : "Shimano EP8 (DU-EP800)";
-    }
-    if (identity.modelSlug === "ep801") return "Shimano EP801 (DU-EP801)";
-    if (identity.modelSlug === "ep600") return "Shimano EP6 (DU-EP600)";
-    return identity.model || "Shimano STEPS";
-  };
+  const getFriendlyModel = () => friendlyMotorName(identity);
 
   return (
       <div className="min-h-screen bg-[#f4f3ef] text-stone-900 font-sans flex flex-col lg:flex-row selection:bg-stone-900 selection:text-white pb-8">
@@ -300,7 +294,8 @@ export function App({ controller }: AppProps) {
                 <Compass size={14} />
                 <span>Bike & Geometry</span>
               </button>
-              <button
+              {state.schema.some((setting) => setting.section === "profiles") && (
+<button
                 type="button"
                 onClick={() => navigateTo("tune", "profiles")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-profiles"}
@@ -314,7 +309,9 @@ export function App({ controller }: AppProps) {
                 <Sliders size={14} />
                 <span>Assist Profiles</span>
               </button>
-              <button
+              )}
+              {state.schema.some((setting) => setting.section === "drivetrain") && (
+<button
                 type="button"
                 onClick={() => navigateTo("tune", "drivetrain")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-drivetrain"}
@@ -328,7 +325,9 @@ export function App({ controller }: AppProps) {
                 <Cog size={14} />
                 <span>Drivetrain & Di2</span>
               </button>
-              <button
+              )}
+              {state.schema.some((setting) => setting.section === "maintenance") && (
+<button
                 type="button"
                 onClick={() => navigateTo("tune", "maintenance")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-maintenance"}
@@ -342,7 +341,9 @@ export function App({ controller }: AppProps) {
                 <Wrench size={14} />
                 <span>Service & Maintenance</span>
               </button>
-              <button
+              )}
+              {state.schema.some((setting) => setting.section === "oem") && (
+<button
                 type="button"
                 onClick={() => navigateTo("tune", "oem")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-oem"}
@@ -356,6 +357,7 @@ export function App({ controller }: AppProps) {
                 <ShieldCheck size={14} />
                 <span>OEM Factory Bounds</span>
               </button>
+              )}
               <button
                 type="button"
                 onClick={() => navigateTo("tune", "all")}
@@ -525,7 +527,8 @@ export function App({ controller }: AppProps) {
                     <Compass size={14} />
                     <span>Bike & Geometry</span>
                   </button>
-                  <button
+                  {state.schema.some((setting) => setting.section === "profiles") && (
+<button
                     type="button"
                     onClick={() => navigateTo("tune", "profiles")}
                     data-testid="nav-group-profiles"
@@ -539,7 +542,9 @@ export function App({ controller }: AppProps) {
                     <Sliders size={14} />
                     <span>Assist Profiles</span>
                   </button>
-                  <button
+              )}
+                  {state.schema.some((setting) => setting.section === "drivetrain") && (
+<button
                     type="button"
                     onClick={() => navigateTo("tune", "drivetrain")}
                     data-testid="nav-group-drivetrain"
@@ -553,7 +558,9 @@ export function App({ controller }: AppProps) {
                     <Cog size={14} />
                     <span>Drivetrain & Di2</span>
                   </button>
-                  <button
+              )}
+                  {state.schema.some((setting) => setting.section === "maintenance") && (
+<button
                     type="button"
                     onClick={() => navigateTo("tune", "maintenance")}
                     data-testid="nav-group-maintenance"
@@ -567,7 +574,9 @@ export function App({ controller }: AppProps) {
                     <Wrench size={14} />
                     <span>Service & Maintenance</span>
                   </button>
-                  <button
+              )}
+                  {state.schema.some((setting) => setting.section === "oem") && (
+<button
                     type="button"
                     onClick={() => navigateTo("tune", "oem")}
                     data-testid="nav-group-oem"
@@ -581,6 +590,7 @@ export function App({ controller }: AppProps) {
                     <ShieldCheck size={14} />
                     <span>OEM Factory Bounds</span>
                   </button>
+              )}
                   <button
                     type="button"
                     onClick={() => navigateTo("tune", "all")}
@@ -760,7 +770,7 @@ export function App({ controller }: AppProps) {
               <div className="text-xs">
                 <p className="font-semibold">Operation Error</p>
                 <p className="text-red-700 mt-0.5 font-mono break-all">
-                  {state.errorBanner}
+                  {userFacingError(state.errorBanner)}
                 </p>
               </div>
             </div>
@@ -857,7 +867,7 @@ export function App({ controller }: AppProps) {
           zIndex: 1,
         }}
       >
-        <span data-testid="status-message">{state.statusMessage}</span>
+        <span data-testid="status-message">{state.errorBanner ? userFacingError(state.errorBanner) : state.statusMessage}</span>
         <button
           type="button"
           data-testid="btn-hub-tune"
