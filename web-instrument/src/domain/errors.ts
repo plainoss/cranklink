@@ -21,5 +21,8 @@ export function userFacingError(error: string): string {
   if (/browser host operation ble.open failed|Connection attempt failed/i.test(error)) {
     return "Couldn’t connect to the bike. Enable its Bluetooth connection mode and try again.";
   }
+  if (/globally disabled/i.test(error)) {
+    return "Web Bluetooth is disabled globally in this browser. Use Google Chrome or Microsoft Edge to connect wirelessly, or check your browser's Bluetooth settings.";
+  }
   return error.split(/\n\s*at |\nError:/)[0].replace(/^error:\s*/i, "").replace(/\s*\[exit \d+\]\s*$/, "").trim();
 }

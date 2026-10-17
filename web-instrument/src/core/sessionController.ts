@@ -298,7 +298,11 @@ export class SessionController {
 
       return identity;
     } catch (err: any) {
-      const msg = err?.message || String(err);
+      let msg = err?.message || String(err);
+      if (/globally disabled/i.test(msg)) {
+        msg =
+          "Web Bluetooth is disabled globally in this browser. Use Google Chrome or Microsoft Edge to connect wirelessly, or check your browser's Bluetooth settings.";
+      }
       this.update({
         phase: "error",
         errorBanner: msg,
