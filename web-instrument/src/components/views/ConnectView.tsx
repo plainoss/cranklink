@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   Bluetooth,
   Cable,
   ChevronDown,
@@ -17,9 +18,10 @@ import { Button } from "../ui/Button.tsx";
 interface ConnectViewProps {
   state: InstrumentState;
   controller: SessionController;
+  onOpenWarningModal?: () => void;
 }
 
-export function ConnectView({ state, controller }: ConnectViewProps) {
+export function ConnectView({ state, controller, onOpenWarningModal }: ConnectViewProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [simModel, setSimModel] = useState<SimulatedModel>("ep800-crg");
   const [simFault, setSimFault] = useState<FaultInjectionType>("none");
@@ -214,6 +216,19 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
         </section>
 
         {import.meta.env.DEV && <span className="sr-only" data-testid="empty-state-start-sim">Development simulator options are available in the connection menu.</span>}
+
+        {onOpenWarningModal && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={onOpenWarningModal}
+              data-testid="btn-open-warning-modal"
+              className="text-xs text-stone-500 hover:text-stone-800 underline cursor-pointer py-1"
+            >
+              Unofficial software &amp; hardware safety notice
+            </button>
+          </div>
+        )}
       </div>
     </main>
   );

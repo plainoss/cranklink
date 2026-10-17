@@ -28,6 +28,10 @@ async function openInstrument(page: Page) {
         Boolean((window as any).estepsTerminal?.status().ready));
     } catch { return false; } // A first-visit service worker may reload the page.
   }, { timeout: 30_000 }).toBe(true);
+  const dismissBtn = page.getByTestId("btn-dismiss-warning");
+  if (await dismissBtn.isVisible()) {
+    await dismissBtn.click();
+  }
   if (page.url().includes("/cranklink/")) {
     await expect.poll(() => page.evaluate(() =>
       navigator.serviceWorker.controller?.scriptURL || "")).toContain("/cranklink/coi-serviceworker.js");
@@ -148,6 +152,16 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Verify single-MCU recovery override is collapsed by default inside <details>
     const overrideDetails = page.getByTestId("single-mcu-override");
     await expect(overrideDetails).not.toHaveAttribute("open", "");
+
+    // Verify firmware risk notice is visible and can open the risk warning modal
+    await expect(page.getByTestId("fw-risk-notice")).toBeVisible();
+    await page.getByTestId("btn-review-fw-warning").click();
+    const modal = page.getByTestId("risk-warning-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText("Tested on EP800-CRG only");
+    await expect(modal).toContainText("No compatibility verification");
+    await page.getByTestId("btn-dismiss-warning").click();
+    await expect(modal).toBeHidden();
   });
 
   test("WebMCP external agent authorization flow", async ({ page }) => {
