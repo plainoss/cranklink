@@ -13,6 +13,7 @@ from patch_motor_speed import (
     encode_mov32,
     find_signatures,
     patch_binary,
+    analyze_flash_layout,
     verify_flash_simulation,
     find_matching_profile,
     verify_in_emulator,

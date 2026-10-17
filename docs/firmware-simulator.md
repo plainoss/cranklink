@@ -169,7 +169,7 @@ The native verifier selects four representative pairs when their profiles are pr
 
 ### Firmware patching and speed limit verification
 
-The firmware simulator also supports verifying modified binaries. `tools/patch_motor_speed.py` (aliased by `tools/patch_ep800_speed.py`) uses the simulator's motor execution, DCASX bootloader flash simulation, and GATT protocol pipeline to verify that patched firmware images across legacy DCASX families (EP800, E6100, E5100, E5000) accept arbitrary speed limit writes (up to 655.35 km/h / 65535 raw) and recalculate motor assist tables correctly. See [Multi-Motor Speed Limit Patcher](ep800-speed-limit-patcher.md) for details.
+`tools/patch_motor_speed.py` (aliased by `tools/patch_ep800_speed.py`) supports offline patching of selected legacy DCASX images within a tested 15–99 km/h range (default 60 km/h), retaining SET and startup ceiling enforcement. EP800 D4.2.0 verification checks application SET/GET, modeled EEPROM disk commits and fresh-machine reloads, the actual startup clamp, and expected assist thresholds. Other supported versions receive partial ceiling-function, startup-clamp and GET-handler checks. Flash layout analysis does not execute a bootloader; full boot and hardware behavior remain unverified. See the [patcher guide and exact verification scope](ep800-speed-limit-patcher.md).
 
 ## Execution boundaries and remaining work
 

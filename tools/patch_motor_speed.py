@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Shimano STEPS Firmware Speed Limit Patcher and Emulator Verification Tool.
 
-Patches DCASX motor firmware binaries (.bin or encrypted .dat) to support arbitrary
-(or large int, e.g. up to 65535 / 655.35 km/h) speed limits.
+Patches DCASX motor firmware binaries (.bin or encrypted .dat) for offline
+speed-limit research in the tested 15.00..99.00 km/h range.
 
 Supported drive unit families:
 - DU-EP800 / DU-EP800-CRG (Series 0x23, versions D4.1.10, D4.1.11, D4.2.0)
@@ -12,21 +12,21 @@ Supported drive unit families:
 
 The patch operates on 3 key locations in the firmware:
 1. get_max_speed_limit: Replaces destination-based speed limit lookup with returning
-   the configured maximum speed limit (default 65535 / 655.35 km/h or user specified)
+   the configured maximum speed limit (default 6000 / 60.00 km/h)
    using position-independent Thumb-2 movw/movt instructions.
-2. check_speed_limit: Converts the conditional upper bound check (cmp r0, r1; bhs)
-   into an unconditional branch, ensuring arbitrary speed limits are accepted.
-3. boot_clamp: Converts the boot-time speed limit clamp check (cmp r2, r3; bhs)
-   into an unconditional jump skipping the clamp, preventing restoration to stock limits.
+2. check_speed_limit: Retains/restores the conditional upper bound check.
+3. boot_clamp: Retains/restores the boot-time clamp to the configured ceiling.
 
-Can verify flashing simulation and setting acceptance using the firmware emulator (Unicorn).
+Analyzes flash layout offline and verifies selected application routines in Unicorn.
 """
 
 import argparse
 import hashlib
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import struct
 import sys
+import tempfile
 
 # Optional import of PyCryptodome for container handling
 try:
@@ -49,6 +49,28 @@ MOTOR_SERIES_NAMES = {
 }
 
 PATCHABLE_SERIES = {0x23, 0x20, 0x38, 0x22}
+# Conservative tested envelope. The stock assist routine uses signed halfwords;
+# accepting the full unsigned 16-bit range causes wrapping and zero thresholds.
+MIN_SPEED_RAW, MAX_SPEED_RAW, DEFAULT_SPEED_RAW = 1500, 9900, 6000
+
+
+def validate_speed_raw(value: int) -> None:
+    if not isinstance(value, int) or not MIN_SPEED_RAW <= value <= MAX_SPEED_RAW:
+        raise ValueError("Speed limit must be 1500..9900 raw (15.00..99.00 km/h)")
+
+
+def parse_speed_limit(value: str) -> int:
+    """Parse km/h only, rejecting non-finite values and sub-cent precision."""
+    try:
+        speed = Decimal(value)
+        if not speed.is_finite() or not Decimal("15") <= speed <= Decimal("99"):
+            raise ValueError("Speed limit must be 15.00..99.00 km/h")
+        raw = int(speed * 100)
+        if speed != Decimal(raw) / 100:
+            raise ValueError("Speed limit must use at most two decimal places")
+        return raw
+    except (InvalidOperation, ValueError) as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def common_key(md5: bytes) -> bytes:
@@ -247,18 +269,17 @@ def find_signatures(data: bytes) -> dict:
     }
 
 
-def patch_binary(data: bytes, max_speed_raw: int = 65535) -> tuple[bytes, dict]:
-    """Patch the DCASX firmware binary to allow an arbitrary/large speed limit.
+def patch_binary(data: bytes, max_speed_raw: int = DEFAULT_SPEED_RAW) -> tuple[bytes, dict]:
+    """Patch the ceiling while retaining runtime and startup enforcement.
 
     Args:
         data: Plaintext DCASX binary bytes.
-        max_speed_raw: Target max speed in raw units (0.01 km/h, e.g. 6000 for 60 km/h, 65535 for max 16-bit).
+        max_speed_raw: Target ceiling in 0.01 km/h units (1500..9900).
 
     Returns:
         (patched_data, patch_info)
     """
-    if not (1500 <= max_speed_raw <= 65535):
-        raise ValueError(f"Speed limit must be 1500..65535 (15.00..655.35 km/h), got {max_speed_raw}")
+    validate_speed_raw(max_speed_raw)
 
     patched = bytearray(data)
     sigs = find_signatures(data)
@@ -268,13 +289,14 @@ def patch_binary(data: bytes, max_speed_raw: int = 65535) -> tuple[bytes, dict]:
     patch1 = encode_mov32(max_speed_raw)
     patched[fn_offset:fn_offset + len(patch1)] = patch1
 
-    # Patch 2: check_speed_limit: change bhs (01 d2) to unconditional branch b (01 e0)
+    # Keep the requested value bounded by the new ceiling. Also repairs images
+    # produced by the earlier prototype, which bypassed this check entirely.
     check_offset = sigs["check_speed_bhs"]
-    patched[check_offset:check_offset + 2] = bytes.fromhex("01e0")
+    patched[check_offset:check_offset + 2] = bytes.fromhex("01d2")
 
-    # Patch 3: boot_clamp: change bhs (00 d2) to unconditional branch b (00 e0)
+    # Retain startup clamping of stale EEPROM values above the configured ceiling.
     clamp_offset = sigs["boot_clamp_bhs"]
-    patched[clamp_offset:clamp_offset + 2] = bytes.fromhex("00e0")
+    patched[clamp_offset:clamp_offset + 2] = bytes.fromhex("00d2")
 
     info = {
         "max_speed_raw": max_speed_raw,
@@ -288,70 +310,89 @@ def patch_binary(data: bytes, max_speed_raw: int = 65535) -> tuple[bytes, dict]:
     return bytes(patched), info
 
 
-def verify_flash_simulation(data: bytes) -> dict:
-    """Verify that the patched binary passes all bootloader flashing invariants.
+def analyze_flash_layout(data: bytes) -> dict:
+    """Validate the image header and calculate offline transfer dimensions.
 
-    Simulates the wired DCASX bootloader protocol:
-    - Sector erase calculation
-    - 64-byte chunk framing
-    - Buffer packet checksums
-    - Integrity check against payload
+    No bootloader, transport, erase, or transfer state machine is executed here.
+    These calculations cannot establish flashability or executable integrity.
     """
-    if len(data) < 50 or len(data) > 256 * 2048:
+    validate_dcas_header(data)
+    if len(data) > 256 * 2048:
         raise ValueError("Invalid DCASX image length")
     if data[40] not in PATCHABLE_SERIES or data[41] != 0x00 or data[42] != 4:
         raise ValueError("Invalid DCAS image compatibility header")
 
     erase_code = (len(data) - 1) // 2048
-    chunks = []
-    packet_seq = 255
-    for i in range(0, len(data), 64):
-        chunk = data[i:i + 64]
-        block = bytearray(64)
-        block[:len(chunk)] = chunk
-        if len(chunk) < 64:
-            block[len(chunk):] = b"\xff" * (64 - len(chunk))
-        packet_seq = (packet_seq + 1) & 0xff
-        checksum = sum(block) & 0xff
-        chunks.append({
-            "block_index": i // 64 + 1,
-            "packet_seq": packet_seq,
-            "bytes": len(chunk),
-            "checksum": checksum,
-        })
-
     return {
-        "status": "passed",
+        "status": "analyzed",
+        "bootloader_executed": False,
         "total_bytes": len(data),
-        "total_blocks": len(chunks),
+        "total_blocks": (len(data) + 63) // 64,
         "erase_code": erase_code,
         "erase_sectors": erase_code + 1,
+        "image_checksum": sum(data) & 0xff,
     }
+
+
+def verify_flash_simulation(data: bytes) -> dict:
+    """Compatibility alias; returns offline analysis, never a flash verdict."""
+    return analyze_flash_layout(data)
 
 
 def find_matching_profile(data: bytes, profiles: list[dict]) -> dict:
     """Find the base firmware simulation profile for a given DCASX image."""
-    series = data[40]
-    major = data[16] >> 4
-    minor = data[16] & 0x0f
-    patch = data[17]
+    supported = {
+        (0x23, b"\x42\x00\x00"): "ep800-4.2.0",
+        (0x23, b"\x41\x0b\x00"): "ep800-4.1.11",
+        (0x23, b"\x41\x0a\x00"): "ep800-4.1.10",
+        (0x20, b"\x48\x00\x00"): "e6100-4.8.0",
+        (0x38, b"\x41\x00\x00"): "e5100-4.1.0",
+        (0x22, b"\x45\x00\x00"): "e5000-4.5.0",
+    }
+    profile_id = supported.get((data[40], data[16:19]))
+    if profile_id is None:
+        raise ValueError("No exact simulation profile for this firmware version")
+    return next(p for p in profiles if p["id"] == profile_id)
 
-    if series == 0x23:
-        if major == 4 and minor == 2:
-            return next(p for p in profiles if p["id"] == "ep800-4.2.0")
-        elif major == 4 and minor == 1 and patch == 11:
-            return next(p for p in profiles if p["id"] == "ep800-4.1.11")
-        elif major == 4 and minor == 1 and patch == 10:
-            return next(p for p in profiles if p["id"] == "ep800-4.1.10")
-        return next(p for p in profiles if p["id"] == "ep800-4.2.0")
-    elif series == 0x20:
-        return next(p for p in profiles if p["id"] == "e6100-4.8.0")
-    elif series == 0x38:
-        return next(p for p in profiles if p["id"] == "e5100-4.1.0")
-    elif series == 0x22:
-        return next(p for p in profiles if p["id"] == "e5000-4.5.0")
-    else:
-        raise ValueError(f"No simulation profile available for series {series:#02x}")
+
+def boot_clamp_site(data: bytes, sigs: dict) -> tuple[int, int]:
+    """Resolve the shared clamp function entry and its literal RAM pointer."""
+    entry = sigs["boot_clamp_bhs"] - 22
+    if data[entry:entry + 2] != bytes.fromhex("80b5"):
+        raise ValueError("Unrecognized boot clamp preamble")
+    load = int.from_bytes(data[entry + 12:entry + 14], "little")
+    if load & 0xff00 != 0x4900:  # ldr r1, [pc, #imm]
+        raise ValueError("Unrecognized boot clamp cache load")
+    literal = ((entry + 12 + 4) & ~3) + (load & 0xff) * 4
+    cache = struct.unpack_from("<I", data, literal)[0]
+    if not 0x20000000 <= cache <= 0x2000fffe:
+        raise ValueError("Boot clamp cache outside RAM")
+    return entry + 0x10000, cache
+
+
+def verify_boot_clamp(motor, data: bytes, sigs: dict, ceiling: int) -> dict:
+    entry, cache = boot_clamp_site(data, sigs)
+    saved = bytes(motor.u.mem_read(cache, 2))
+    try:
+        for value in (MIN_SPEED_RAW, ceiling, 65535):
+            motor.u.mem_write(cache, value.to_bytes(2, "little"))
+            motor.call(entry)
+            actual = int.from_bytes(motor.u.mem_read(cache, 2), "little")
+            if actual != min(value, ceiling):
+                raise RuntimeError(f"Boot clamp mismatch: {value} became {actual}")
+    finally:
+        motor.u.mem_write(cache, saved)
+    return {"status": "verified", "entry": hex(entry)}
+
+
+def verify_assist_curve(motor, speed: int) -> list[int]:
+    """Check the EP8004.2 synthetic EU fixture's actual SET-generated table."""
+    data = motor.u.mem_read(0x200024b0, 16)
+    words = [int.from_bytes(data[i:i + 2], "little") for i in range(0, 16, 2)]
+    expected = [speed + 125, speed - 300, speed - 200, speed]
+    if words[4:] != expected:
+        raise RuntimeError(f"Assist curve mismatch at {speed}: {words[4:]} != {expected}")
+    return words
 
 
 def verify_in_emulator(
@@ -360,18 +401,13 @@ def verify_in_emulator(
     gateway_path: Path | None = None,
     patch_info: dict | None = None,
 ) -> dict:
-    """Verify flashing and setting acceptance using the firmware emulator (Unicorn).
+    """Execute selected application paths; full boot and flashing are unmodeled.
 
-    Performs:
-    1. DCASX flash simulation verification.
-    2. Booting the patched motor firmware in Unicorn.
-    3. Completing PC-link startup and regulation authentication (where supported).
-    4. Sending SET speed-limit (16b0) for multiple higher speed limits.
-    5. Verifying positive 16b2 acknowledgments.
-    6. Verifying GET speed-limit (16b4) readback matching 16b6.
-    7. Verifying EEPROM commit and reboot hydration.
-    8. Verifying motor assist curve calculation with higher speed limits.
+    EP8004.2 checks real SET/GET, modeled EEPROM commits/reloads, the actual
+    startup clamp, and expected assist thresholds. Other profiles check only
+    the ceiling function, startup clamp, and GET handler, reported as partial.
     """
+    validate_speed_raw(max_speed_raw)
     tools_dir = Path(__file__).resolve().parent / "firmware-sim"
     if str(tools_dir) not in sys.path:
         sys.path.insert(0, str(tools_dir))
@@ -379,138 +415,152 @@ def verify_in_emulator(
     from fw_sim.motor import Motor
     from fw_sim.gateway import Gateway
     from fw_sim.bus import Bus
-    from fw_sim.machine import INPUT
     from unicorn.arm_const import UC_ARM_REG_R0
     import json
 
-    flash_res = verify_flash_simulation(patched_bin)
-
+    flash_analysis = analyze_flash_layout(patched_bin)
+    sigs = find_signatures(patched_bin)
     profiles = json.loads((tools_dir / "profiles.json").read_text())
     base_profile = find_matching_profile(patched_bin, profiles)
-    patched_sha = hashlib.sha256(patched_bin).hexdigest()
-
     patched_profile = dict(base_profile)
-    patched_profile["sha256"] = patched_sha
+    patched_profile["sha256"] = hashlib.sha256(patched_bin).hexdigest()
     patched_profile["id"] = f"{base_profile['id']}-patched"
     patched_profile["base_profile"] = base_profile["id"]
 
-    # For EP800 D4.2.0: full gateway + bus + authentication + persistence verification
-    if base_profile["id"] == "ep800-4.2.0":
-        if gateway_path is None:
-            candidates = [
-                Path("/Users/manu/development/esteps-recover/evidence/ble-us-28-diagnosis-20261015/SCEM800.4.6.0.decoded.bin"),
-                Path("/Users/manu/development/esteps-recover/evidence/ble-master-hardware-20261016/SCEM800.4.4.0.dat.decoded.bin"),
-            ]
-            for c in candidates:
-                if c.exists():
-                    gateway_path = c
-                    break
-            if gateway_path is None:
-                raise FileNotFoundError("Could not find SC-EM800 gateway binary for emulator verification")
+    motor = Motor(patched_bin, patched_profile)
+    # Discover from the image, rather than trusting caller-supplied offsets.
+    motor.call(sigs["max_speed_fn"] + 0x10000)
+    max_speed_val = motor.u.reg_read(UC_ARM_REG_R0)
+    if max_speed_val != max_speed_raw:
+        raise RuntimeError(f"get_max_speed_limit returned {max_speed_val}, expected {max_speed_raw}")
+    boot_result = verify_boot_clamp(motor, patched_bin, sigs, max_speed_raw)
+    limitations = ["bootloader flashing", "full boot", "physical EEPROM and hardware"]
 
-        gw_data = Path(gateway_path).read_bytes()
-        gw_sha = hashlib.sha256(gw_data).hexdigest()
-        gw_profile = next(p for p in profiles if p["sha256"] == gw_sha and p["kind"] == "gateway")
-
-        gw = Gateway(gw_data, gw_profile, slot=13)
-        motor = Motor(patched_bin, patched_profile)
-        storage = motor.install_storage()
-
-        bus = Bus(gw, motor)
-        for p in gw.start():
-            bus.enqueue(p)
-        bus.drain()
-
-        if not motor.connected:
-            raise RuntimeError("Motor failed to connect in PC-link mode")
-
-        from test_persistence import authenticate
-        auth_replies = authenticate(motor)
-        if not (auth_replies and auth_replies[0]["payload"].startswith("16e2")):
-            raise RuntimeError("Motor authentication failed")
-
-        test_speeds = [2500, 3200]
-        if max_speed_raw >= 4500:
-            test_speeds.append(4500)
-        if max_speed_raw >= 5000:
-            test_speeds.append(5000)
-        if max_speed_raw >= 6000:
-            test_speeds.append(6000)
-        if max_speed_raw not in test_speeds:
-            test_speeds.append(max_speed_raw)
-
-        speed_results = []
-        for spd in test_speeds:
-            payload = bytes([0x16, 0xb0, spd & 0xff, spd >> 8, 1, 0xff])
-            motor.u.mem_write(INPUT, bytes([len(payload), 255]) + payload)
-            count = len(motor.output)
-            motor.call(motor.profile["dispatch"], 0, INPUT)
-            motor.call(motor.profile["scheduler"])
-            replies = motor.output[count:]
-
-            if not replies or not replies[0]["payload"].startswith("16b2"):
-                raise RuntimeError(f"Setting speed {spd} failed: {replies}")
-
-            read = motor.receive(bytes.fromhex("16b401"), 0)
-            if not read or not read[0]["payload"].startswith("16b6"):
-                raise RuntimeError(f"Reading speed {spd} failed: {read}")
-
-            read_val = int.from_bytes(bytes.fromhex(read[0]["payload"])[2:4], "little")
-            if read_val != spd:
-                raise RuntimeError(f"Speed readback mismatch: expected {spd}, got {read_val}")
-
-            speed_results.append({
-                "speed_raw": spd,
-                "speed_kmh": spd / 100.0,
-                "set_reply": replies[0]["payload"],
-                "get_reply": read[0]["payload"],
-                "status": "accepted",
-            })
-
-        # Verify assist curve calculation executes cleanly at high speed
-        motor.u.mem_write(0x2000047c, max_speed_raw.to_bytes(2, "little"))
-        motor.call(0x14fec)
-        curve_data = motor.u.mem_read(0x200024b0, 16)
-        curve_words = [int.from_bytes(curve_data[i:i+2], "little") for i in range(0, 16, 2)]
-
-        return {
-            "status": "verified",
-            "flash_simulation": flash_res,
-            "emulated_motor_connected": motor.connected,
-            "authenticated": True,
-            "tested_speed_limits": speed_results,
-            "assist_curve_table": curve_words,
-        }
-    else:
-        # For other versions (EP800 4.1.10/4.1.11, E6100, E5100, E5000): direct motor verification
-        motor = Motor(patched_bin, patched_profile)
+    if base_profile["id"] != "ep800-4.2.0":
         motor.write_byte(motor.profile["mode_ram"], 1)
         motor.write_byte(motor.profile["owner_ram"], 0)
-
-        # Call patched get_max_speed_limit function directly
-        if patch_info and "patch1_max_speed_fn_offset" in patch_info:
-            fn_addr = int(patch_info["patch1_max_speed_fn_offset"], 16)
-        else:
-            sigs = find_signatures(patched_bin)
-            fn_addr = sigs["max_speed_fn"] + 0x10000
-
-        motor.call(fn_addr)
-        max_speed_val = motor.u.reg_read(UC_ARM_REG_R0)
-        if max_speed_val != max_speed_raw:
-            raise RuntimeError(f"get_max_speed_limit returned {max_speed_val}, expected {max_speed_raw}")
-
-        # Test GET speed limit readback
         read = motor.receive(bytes.fromhex("16b401"), 0)
         if not read or not read[0]["payload"].startswith("16b6"):
             raise RuntimeError(f"Reading speed failed: {read}")
-
         return {
-            "status": "verified",
-            "flash_simulation": flash_res,
-            "emulated_motor_connected": True,
+            "status": "partial",
+            "scope": "ceiling_function_boot_clamp_and_get_handler",
+            "flash_analysis": flash_analysis,
             "max_speed_limit_returned": max_speed_val,
+            "boot_clamp": boot_result,
             "get_speed_reply": read[0]["payload"],
+            "unverified": limitations + ["SET authentication", "persistence", "assist curve"],
         }
+
+    if gateway_path is None:
+        candidates = [
+            Path("/Users/manu/development/esteps-recover/evidence/ble-us-28-diagnosis-20261015/SCEM800.4.6.0.decoded.bin"),
+            Path("/Users/manu/development/esteps-recover/evidence/ble-master-hardware-20261016/SCEM800.4.4.0.dat.decoded.bin"),
+        ]
+        gateway_path = next((p for p in candidates if p.exists()), None)
+        if gateway_path is None:
+            raise FileNotFoundError("Supply --gateway with a profiled SC-EM800 gateway binary")
+
+    gw_data = Path(gateway_path).read_bytes()
+    gw_sha = hashlib.sha256(gw_data).hexdigest()
+    gw_profile = next(p for p in profiles if p["sha256"] == gw_sha and p["kind"] == "gateway")
+    from test_persistence import authenticate
+
+    clamp_entry, cache = boot_clamp_site(patched_bin, sigs)
+
+    def connect(state_path):
+        # Each reload uses fresh CPU/RAM, reloads the on-disk record, and executes
+        # the real clamp function that the simulator's synthetic boot omits.
+        gateway = Gateway(gw_data, gw_profile, slot=13)
+        fresh = Motor(patched_bin, patched_profile)
+        reloading = state_path.exists()
+        fresh.install_storage(state_path)
+        if reloading:
+            fresh.call(clamp_entry)
+        # The first connection starts from the simulator's synthetic 2500 cache.
+        # Thus even a 1500 ceiling requires a real SET/commit before reload.
+        bus = Bus(gateway, fresh)
+        for packet in gateway.start():
+            bus.enqueue(packet)
+        bus.drain()
+        if not fresh.connected:
+            raise RuntimeError("Motor failed to connect in PC-link mode")
+        return fresh
+
+    def read_speed(machine):
+        replies = machine.receive(bytes.fromhex("16b401"), 0)
+        if not replies or not replies[0]["payload"].startswith("16b6"):
+            raise RuntimeError(f"Reading speed failed: {replies}")
+        return int.from_bytes(bytes.fromhex(replies[0]["payload"])[2:4], "little"), replies[0]["payload"]
+
+    def set_speed(machine, speed):
+        return machine.receive(b"\x16\xb0" + speed.to_bytes(2, "little") + b"\x01\xff", 0)
+
+    test_speeds = sorted({MIN_SPEED_RAW, max_speed_raw} | {
+        speed for speed in (2500, 3200, 4500, 5000, 6000) if speed <= max_speed_raw
+    })
+    speed_results = []
+    with tempfile.TemporaryDirectory(prefix="cranklink-speed-verify-") as directory:
+        state_path = Path(directory) / "eeprom.json"
+        motor = connect(state_path)
+        for speed in test_speeds:
+            auth_replies = authenticate(motor)
+            if not auth_replies or not auth_replies[0]["payload"].startswith("16e2"):
+                raise RuntimeError("Motor authentication failed")
+            before_commits = motor.storage.commits
+            replies = set_speed(motor, speed)
+            if not replies or not replies[0]["payload"].startswith("16b2"):
+                raise RuntimeError(f"Setting speed {speed} failed: {replies}")
+            value, get_reply = read_speed(motor)
+            if value != speed:
+                raise RuntimeError(f"Speed readback mismatch: expected {speed}, got {value}")
+            curve_words = verify_assist_curve(motor, speed)
+            if motor.storage.commits <= before_commits:
+                raise RuntimeError(f"No EEPROM commit for speed {speed}")
+            # Read from disk independently of the in-memory storage model.
+            persisted = json.loads(state_path.read_text())
+            record = bytes.fromhex(persisted["records"][str(0x29)])
+            if int.from_bytes(record[:2], "little") != speed or sum(record) & 255:
+                raise RuntimeError(f"Persisted speed mismatch at {speed}")
+
+            # Above-ceiling writes must not be acknowledged or change RAM/EEPROM.
+            for rejected_speed in {max_speed_raw + 1, 65535}:
+                rejected = set_speed(motor, rejected_speed)
+                if not rejected or not rejected[0]["payload"].startswith("16b3"):
+                    raise RuntimeError(f"Above-ceiling speed {rejected_speed} accepted")
+                if read_speed(motor)[0] != speed or json.loads(state_path.read_text()) != persisted:
+                    raise RuntimeError("Rejected speed changed RAM or EEPROM")
+
+            motor = connect(state_path)
+            reloaded, reboot_reply = read_speed(motor)
+            cached = int.from_bytes(motor.u.mem_read(cache, 2), "little")
+            if reloaded != speed or cached != speed:
+                raise RuntimeError(f"Speed did not survive reload/clamp: {speed} -> {reloaded}/{cached}")
+            if motor.byte(motor.profile["auth_ram"]) != 0:
+                raise RuntimeError("Authentication survived fresh-machine reload")
+            speed_results.append({
+                "speed_raw": speed,
+                "speed_kmh": speed / 100.0,
+                "set_reply": replies[0]["payload"],
+                "get_reply": get_reply,
+                "reboot_get_reply": reboot_reply,
+                "persisted": True,
+                "reloaded": True,
+                "assist_curve_table": curve_words,
+                "status": "accepted",
+            })
+
+    return {
+        "status": "verified",
+        "scope": "modeled_settings_persistence_and_assist",
+        "flash_analysis": flash_analysis,
+        "emulated_motor_connected": motor.connected,
+        "authenticated": True,
+        "tested_speed_limits": speed_results,
+        "assist_curve_table": curve_words,
+        "boot_clamp": boot_result,
+        "unverified": limitations,
+    }
 
 
 def main():
@@ -521,20 +571,17 @@ def main():
     parser.add_argument("-o", "--output", required=True, type=Path, help="Output patched firmware file (.bin or .dat)")
     parser.add_argument(
         "-s", "--speed-limit",
-        type=float,
-        default=655.35,
-        help="Target maximum speed limit in km/h (default: 655.35 / arbitrary large int 65535)",
+        type=parse_speed_limit,
+        default=DEFAULT_SPEED_RAW,
+        help="Target ceiling in km/h, 15.00..99.00 with at most two decimal places (default: 60.00)",
     )
-    parser.add_argument("--verify", action="store_true", help="Run emulator verification of flashing and setting acceptance")
+    parser.add_argument("--verify", action="store_true", help="Check selected application routines in the emulator; flashing is not emulated")
     parser.add_argument("--gateway", type=Path, help="Optional SC-EM800 gateway binary for emulator verification")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
 
     args = parser.parse_args()
 
-    if args.speed_limit > 655.35:
-        raw_speed = int(args.speed_limit)
-    else:
-        raw_speed = int(round(args.speed_limit * 100))
+    raw_speed = args.speed_limit
 
     if not args.input.exists():
         sys.exit(f"Error: input file '{args.input}' does not exist")
@@ -556,9 +603,6 @@ def main():
     else:
         output_bytes = patched_plain
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(output_bytes)
-
     result = {
         "input_file": str(args.input),
         "output_file": str(args.output),
@@ -571,6 +615,10 @@ def main():
         verify_res = verify_in_emulator(patched_plain, raw_speed, args.gateway, patch_info)
         result["verification"] = verify_res
 
+    # A failed verification must not leave behind a newly generated artifact.
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(output_bytes)
+
     if args.json:
         import json
         print(json.dumps(result, indent=2))
@@ -582,24 +630,26 @@ def main():
         print(f"  Patched SHA256: {patch_info['patched_sha256']}")
         print("  Patches applied:")
         print(f"    - get_max_speed_limit return:  {patch_info['patch1_max_speed_fn_offset']}")
-        print(f"    - check_speed_limit uncheck:   {patch_info['patch2_check_speed_offset']}")
-        print(f"    - boot_clamp bypass:           {patch_info['patch3_boot_clamp_offset']}")
+        print(f"    - SET ceiling check retained:  {patch_info['patch2_check_speed_offset']}")
+        print(f"    - boot ceiling clamp retained: {patch_info['patch3_boot_clamp_offset']}")
 
         if args.verify:
             print("\nEmulator Verification Results:")
             v = result["verification"]
-            fs = v["flash_simulation"]
-            print(f"  Bootloader Flashing Simulation: {fs['status'].upper()} ({fs['total_blocks']} blocks, erase code {fs['erase_code']})")
+            fs = v["flash_analysis"]
+            print(f"  Offline Flash Layout:          {fs['total_blocks']} blocks, erase code {fs['erase_code']}; bootloader NOT EXECUTED")
             if "tested_speed_limits" in v:
                 print(f"  Motor Execution:               CONNECTED & AUTHENTICATED")
                 for r in v["tested_speed_limits"]:
                     print(f"    Speed {r['speed_kmh']:6.2f} km/h ({r['speed_raw']:5d}): SET -> {r['set_reply']}  GET -> {r['get_reply']} ({r['status'].upper()})")
-                print(f"  Assist Ramp Curve Output:      {v['assist_curve_table'][:4]}")
+                print(f"  Assist Ramp Thresholds:        {v['assist_curve_table'][4:]}")
+                print("  EEPROM Persistence:            MODELED COMMIT, DISK RELOAD & STARTUP CLAMP CHECKED")
             else:
-                print(f"  Motor Execution:               CONNECTED")
+                print("  Motor Execution:               DIRECT FUNCTION/GET CHECKS ONLY")
                 print(f"    get_max_speed_limit return:  {v['max_speed_limit_returned']}")
                 print(f"    GET 16b4 readback:           {v['get_speed_reply']}")
-            print("  Status:                        100% VERIFIED")
+            print(f"  Status:                        {v['status'].upper()} ({v['scope']})")
+            print(f"  Unverified:                    {', '.join(v['unverified'])}")
 
 
 if __name__ == "__main__":
