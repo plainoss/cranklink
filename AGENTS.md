@@ -26,7 +26,7 @@ Always prefer fast local tooling over slow manual loops:
 ## 5. Concurrent PRs & Merge Queue Protocol
 - **Auto-Merge to Queue**: After creating a PR, mark it for auto-merging:
   ```bash
-  gh pr merge <PR_NUMBER> --auto --squash --delete-branch
+  gh pr merge <PR_NUMBER> --auto --squash
   # Or use the helper:
   ./tools/queue-pr.sh [PR_NUMBER]
   ```
