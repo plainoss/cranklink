@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "passed": true,
+  "setting": "lamp",
+  "level": "unchanged pinned production WASM worker, WebBleGatt and BrowserFiles in Chromium with stock gateway/motor functions",
+  "gateway": "sc-em800-4.6.0",
+  "motor": "ep800-4.2.0",
+  "modeled": [
+    "radio/pairing",
+    "EEPROM commit and boot cache hydration",
+    "initialized RAM/MMIO",
+    "PnP delivery and logical address handoff",
+    "motor M version peer"
+  ],
+  "not_validated": [
+    "physical RF",
+    "complete UI click workflow",
+    "full hardware boot",
+    "power loss during a commit"
+  ],
+  "results": [
+    {
+      "source_revision": "0cfb180f576544d75a63a7fbe36f38670ae8679c",
+      "modeled_connection_mode_ends_on_gateway_stop": false,
+      "successful_saves": 2,
+      "second_save_succeeded": true,
+      "retained_connection_contract_passed": false,
+      "connections_before_disconnect": 3,
+      "gateway_stops_before_disconnect": 3,
+      "initial_value": 0,
+      "saved_values": [
+        1,
+        2
+      ],
+      "firmware_read_after_power_cycle": 2,
+      "durable_backups_verified_before_set": 2,
+      "firmware_commits_before_power_cycle": 2,
+      "failure": null,
+      "cleanup_confirmed": true,
+      "wasm_sha256": "d50b043a181338127e685154ad48486ae3d75eabf130b01e94632a6448b796d8"
+    },
+    {
+      "source_revision": "0cfb180f576544d75a63a7fbe36f38670ae8679c",
+      "modeled_connection_mode_ends_on_gateway_stop": true,
+      "successful_saves": 1,
+      "second_save_succeeded": false,
+      "retained_connection_contract_passed": false,
+      "connections_before_disconnect": 1,
+      "gateway_stops_before_disconnect": 1,
+      "initial_value": 0,
+      "saved_values": [
+        1
+      ],
+      "firmware_read_after_power_cycle": 1,
+      "durable_backups_verified_before_set": 1,
+      "firmware_commits_before_power_cycle": 1,
+      "failure": "Gateway connection mode ended on reconnect before second save",
+      "cleanup_confirmed": true,
+      "wasm_sha256": "d50b043a181338127e685154ad48486ae3d75eabf130b01e94632a6448b796d8"
+    },
+    {
+      "source_revision": "158e8f5bc8d5e379c08ee3fa4ca4d59c9af10789",
+      "modeled_connection_mode_ends_on_gateway_stop": false,
+      "successful_saves": 2,
+      "second_save_succeeded": true,
+      "retained_connection_contract_passed": true,
+      "connections_before_disconnect": 1,
+      "gateway_stops_before_disconnect": 0,
+      "initial_value": 0,
+      "saved_values": [
+        1,
+        2
+      ],
+      "firmware_read_after_power_cycle": 2,
+      "durable_backups_verified_before_set": 2,
+      "firmware_commits_before_power_cycle": 2,
+      "failure": null,
+      "cleanup_confirmed": true,
+      "wasm_sha256": "a84803861a7917784f8fc2211782746e3ee02d7599e478b3944b9eb7dbf996f3"
+    },
+    {
+      "source_revision": "158e8f5bc8d5e379c08ee3fa4ca4d59c9af10789",
+      "modeled_connection_mode_ends_on_gateway_stop": true,
+      "successful_saves": 2,
+      "second_save_succeeded": true,
+      "retained_connection_contract_passed": true,
+      "connections_before_disconnect": 1,
+      "gateway_stops_before_disconnect": 0,
+      "initial_value": 0,
+      "saved_values": [
+        1,
+        2
+      ],
+      "firmware_read_after_power_cycle": 2,
+      "durable_backups_verified_before_set": 2,
+      "firmware_commits_before_power_cycle": 2,
+      "failure": null,
+      "cleanup_confirmed": true,
+      "wasm_sha256": "a84803861a7917784f8fc2211782746e3ee02d7599e478b3944b9eb7dbf996f3"
+    }
+  ]
+}

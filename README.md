@@ -218,6 +218,15 @@ The [web instrument](https://plainoss.github.io/cranklink/) compiles the same co
 
 See the [web instrument documentation](web-instrument/README.md).
 
+## Offline firmware simulator
+
+The headless simulator executes stock display/gateway and motor D firmware over a deterministic virtual packet bus. It currently covers 18 firmware profiles across three display models and six motor families, with 720 protocol/fault scenarios across 80 combinations. The native CLI can connect on macOS/Linux with `--port sim:/absolute/socket` for offline probe and supported settings reads. `ble-sim:/absolute/socket --ble-master` also exercises the actual Bluetooth client through a modeled GATT endpoint and stock SC-EM800 gateway firmware.
+
+See the [simulator setup, coverage and verification guide](docs/firmware-simulator.md). Images are user-supplied and hash-pinned; USB control, initialized parameter RAM and the absent motor M version peer are modeled. Verification includes 60 GATT firmware pairs with 1,200 repeated reads, 17 Bluetooth CLI cases and 29 additional native feature checks.
+
+An opt-in EP800 D4.2.0 fixture also executes stock lamp and wheel-circumference writes, including the motor's actual authorization/AES code, with modeled EEPROM commits and reloads. A Chromium harness runs unchanged historical WASM workers, `WebBleGatt` and browser storage: PR #11's old version fails its second save when gateway stop ends modeled connection mode; the fixed version completes both saves on one connection, preserves backups and reads the final value after a simulated power cycle. An always-advertising control separates that lifecycle assumption from the client behavior. See the [PR regression assessment and measured results](docs/simulator-pr-review.md). Full boot, RF, physical bus timing and complete UI click workflows remain outside this validation. The browser's existing GATT simulator remains available for UI development.
+
+
 ## Installation & builds
 
 Prebuilt binaries for Linux, macOS (Intel & Apple Silicon), and Windows are attached to tagged GitHub releases.
