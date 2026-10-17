@@ -546,7 +546,7 @@ export function TuneView({
 
       {/* 2. Assist Tuning Sliders Card */}
       {showProfiles && (
-        <Card className="flex flex-col gap-6 shadow-xs border-stone-200">
+        <Card className="p-0 flex flex-col gap-4 bg-transparent border-0 shadow-none">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-bold text-stone-900">
@@ -788,7 +788,7 @@ export function TuneView({
 
       {/* 3. Drivetrain & Electronic Shifting Section */}
       {showDrivetrain && (
-        <Card className="flex flex-col gap-6 shadow-xs border-stone-200">
+        <Card className="p-0 flex flex-col gap-4 bg-transparent border-0 shadow-none">
           <div>
             <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
               <Cog size={18} className="text-indigo-600" />
@@ -925,7 +925,7 @@ export function TuneView({
 
       {/* 4. Service & Maintenance Section */}
       {showMaintenance && (
-        <Card className="flex flex-col gap-6 shadow-xs border-stone-200">
+        <Card className="p-0 flex flex-col gap-4 bg-transparent border-0 shadow-none">
           <div>
             <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
               <Wrench size={18} className="text-emerald-600" />
@@ -991,7 +991,7 @@ export function TuneView({
 
       {/* 5. OEM Factory Bounds Section */}
       {showOem && (
-        <Card className="flex flex-col gap-6 shadow-xs border-stone-200">
+        <Card className="p-0 flex flex-col gap-4 bg-transparent border-0 shadow-none">
           <div>
             <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
               <ShieldCheck size={18} className="text-amber-600" />
