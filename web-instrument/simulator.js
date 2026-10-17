@@ -267,14 +267,19 @@ export class DeviceSimulator extends EventTarget {
     this.writes.push({ id, bytes: id === 0x2af3 || unitAuth ? "redacted" : b });
 
     if (id === 0x2afa) {
+      if (b[1] === 3) {
+        this.masterMode = b[2] === 0x20;
+      }
+      const gatewaySeries = { "ep800-crg": 0x23, ep600: 0x31, ep801: 0x23 }[this.model] ?? 0x23;
       const response = {
         3: [0x23, 0],
-        4: [0x24, 0x83],
+        4: [0x24, this.masterMode ? 0xa0 : 0x83],
         5: [0x25, 4, 4, 0],
         6: [0x26, 0],
         12: [0x2c, 0],
         13: [0x2d, 1, 0xff, 0],
-        27: [0x3b, 8, 32, 0, 0],
+        19: [0x33, 1, 0x1e, gatewaySeries, 2, 0xff, 0xff],
+        27: [0x3b, this.masterMode ? 0 : 8, 32, 0, 0],
         29: [0x3d, 0, 0],
       }[b[1]];
       if (!response) throw new Error(`unexpected simulated PCE command ${b[1]}`);
@@ -350,6 +355,9 @@ export class DeviceSimulator extends EventTarget {
       } else if (group === 1 && command === 0x84) {
         // RX firmware version: 4.1.11.0 (0x41, 11, 0)
         response.push(0x41, 11, 0);
+      } else if (group === 1 && command === 0x1c) {
+        const series = { "ep800-crg": 0x23, ep600: 0x30, ep801: 0x35 }[this.model];
+        response.push(series, 0, 0xff);
       } else if (group === 1 && command === 0x34) {
         // Model identity: [0, series, 0]
         const series = { "ep800-crg": 0x23, ep600: 0x30, ep801: 0x35 }[this.model];
