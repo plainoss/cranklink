@@ -3,18 +3,33 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { enrichSchema, formatSettingValue } from "./src/domain/schema.ts";
+import { enrichSchema, formatSettingValue, TIRE_PRESETS, settingAcceptsValue, clampSettingValue } from "./src/domain/schema.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
 } from "./src/domain/firmwarePackage.ts";
+import { userFacingError } from "./src/domain/errors.ts";
+import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { DeviceSimulator } from "./simulator.js";
 
 describe("Domain Schema Enrichment & Ordering", () => {
-  it("loads ep800-crg, ep600, and ep801 schemas and prioritizes Bike Hardware & Geometry", () => {
-    for (const model of ["ep800-crg", "ep600", "ep801"] as const) {
+  it("keeps E6000 geometry controls and presets within the detected schema", () => {
+    const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "e6000.json"), "utf8")), "e6000");
+    const tire = schema.find((setting) => setting.name === "tire-circumference")!;
+    const angle = schema.find((setting) => setting.name === "mounting-angle")!;
+    assert.deepEqual([tire.userMin, tire.userMax, tire.userStep], [2000, 2400, 1]);
+    assert.deepEqual([angle.userMin, angle.userMax, angle.userStep], [0, 45, 1]);
+    assert.deepEqual(TIRE_PRESETS.filter((preset) => settingAcceptsValue(tire, Number(preset.value))).map((preset) => preset.value), [2288, 2180, 2055]);
+    assert.equal(clampSettingValue(tire, 1990), 2000);
+    assert.equal(clampSettingValue(tire, 2405), 2400);
+    assert.equal(clampSettingValue({ ...tire, userStep: 5 }, 2003), 2005);
+    assert.equal(settingAcceptsValue({ ...tire, userStep: 5 }, 2003), false);
+  });
+
+  it("loads supported motor schemas and prioritizes Bike Hardware & Geometry", () => {
+    for (const model of ["ep800-crg", "ep600", "ep801", "ep500"] as const) {
       const raw = JSON.parse(
         fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8"),
       );
@@ -218,8 +233,138 @@ describe("SessionController Finite State Machine & Staging", () => {
   });
 });
 
+describe("BLE initial settings connection", () => {
+  function terminalFor(snapshot: any, commands: string[]) {
+    return {
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line: string) => {
+        commands.push(line);
+        const print = (globalThis as any).estepsTerminalPrint;
+        if (line === "connect ble") return { code: 0 };
+        if (line.startsWith("settings schema")) {
+          const model = line.split("--model ")[1];
+          print(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8"), "stdout");
+          return { code: 0 };
+        }
+        assert.equal(line, "--ble-master=master settings read", "Use master routing from the initial read without a preliminary probe");
+        assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+        print(JSON.stringify(snapshot), "stdout");
+        return { code: 0 };
+      },
+    };
+  }
+
+  it("loads verified identity and parameters from one read, preserving unavailable fields", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal(terminalFor({
+      identity: { slot: 0, cargo: "00-CRG", serial: "010203040506", model_series: 0x23, model_unit: 0, dcas_version: "4.1.11.0", rx_version: "4.1.11.0" },
+      values: { destination: { value: 0, raw: "01000000" }, "speed-limit": { value: 25, raw: "c409ffff" } },
+      unavailable: { lamp: "not available" },
+    }, commands));
+    const identity = await controller.connectAndSync("ble");
+    assert.equal(identity.serial, "010203040506");
+    assert.equal(identity.slot, 0);
+    assert.equal(controller.getState().phase, "ready");
+    assert.equal(controller.getState().liveValues["speed-limit"].value, 25);
+    assert.equal(controller.getState().unavailableValues.lamp, "not available");
+    assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+    assert.ok(!commands.includes("probe"));
+  });
+
+  it("refuses settings responses without a verified serial and does not reconnect", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal(terminalFor({ identity: { serial: null, model_series: 0x23 }, values: {} }, commands));
+    await assert.rejects(controller.connectAndSync("ble"), /verified serial identity/);
+    assert.equal(controller.getState().phase, "error");
+    assert.equal(controller.getState().identity, null);
+    assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+  });
+
+  it("selects each modern family schema and preserves standard/cargo identity", async () => {
+    (globalThis as any).window = globalThis;
+    for (const [series, cargo, slug, model] of [
+      [0x30, "00", "ep600", "DU-EP600"],
+      [0x30, "00-CRG", "ep600", "DU-EP600-CRG"],
+      [0x35, "01", "ep801", "DU-EP801"],
+      [0x35, "01-CRG", "ep801", "DU-EP801-CRG"],
+      [0x37, "00", "ep500", "DU-EP500"],
+    ] as const) {
+      const controller = new SessionController();
+      const commands: string[] = [];
+      controller.attachTerminal(terminalFor({
+        identity: { slot: 13, cargo, serial: "010203040506", model_series: series, model_unit: 0, dcas_version: "4.7.1.0", rx_version: "4.7.1.0" },
+        values: {}, unavailable: {},
+      }, commands));
+      const identity = await controller.connectAndSync("ble");
+      assert.equal(identity.modelSlug, slug);
+      assert.equal(identity.model, model);
+      assert.equal(identity.isCargo, cargo.endsWith("-CRG"));
+      assert.ok(commands.includes(`settings schema --model ${slug}`));
+      assert.equal(controller.getState().schema.find((setting) => setting.name === "speed-limit")?.userMax, 45);
+    }
+  });
+
+  it("loads actual older motor schemas without EP8 speed or profile defaults", async () => {
+    (globalThis as any).window = globalThis;
+    for (const [series, slug, model, count] of [
+      [0x38, "e5100", "DU-E5100", 14],
+      [0x12, "e8000", "DU-E8080", 3],
+      [0x21, "e7000", "DU-E7000", 3],
+      [0x20, "e6100", "DU-E6110", 3],
+      [0x20, "e6100", "DU-E6180", 3],
+      [0x20, "e6100", "DU-E6100-CRG", 3],
+      [0x20, "e6100", "DU-E6180-TRK", 3],
+      [0x08, "e6000", "E6000 family", 3],
+    ] as const) {
+      const controller = new SessionController();
+      const commands: string[] = [];
+      controller.attachTerminal(terminalFor({
+        identity: { model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },
+        values: {}, unavailable: {},
+      }, commands));
+      const identity = await controller.connectAndSync("ble");
+      assert.equal(identity.modelSlug, slug);
+      assert.equal(identity.model, model);
+      assert.equal(identity.isCargo, /-(CRG|TRK)$/.test(model));
+      assert.ok(commands.includes(`settings schema --model ${slug}`));
+      const schema = controller.getState().schema;
+      assert.equal(schema.length, count);
+      assert.equal(schema.some((setting) => setting.section === "profiles"), false);
+      assert.equal(schema.some((setting) => setting.name === "speed-limit"), slug === "e5100");
+      if (slug === "e5100") {
+        assert.equal(schema.find((setting) => setting.name === "speed-limit")?.userMax, 32);
+        assert.deepEqual(Object.keys(schema.find((setting) => setting.name === "destination")!.choiceLabels!), ["0", "1", "3", "4"]);
+      }
+    }
+  });
+});
+
+describe("Actual motor identity classification", () => {
+  it("uses safe family labels without guessing a shared-series variant", () => {
+    for (const [series, slug, name] of [[0x08, "e6000", "E6000 family"], [0x12, "e8000", "E8000 family"], [0x20, "e6100", "E6100 family"]] as const) {
+      assert.deepEqual(detectMotorIdentity({ model_series: series }), { modelSlug: slug, model: name, isCargo: false });
+    }
+  });
+
+  it("rejects unknown series, non-motor units, and inconsistent backend schema metadata", () => {
+    assert.throws(() => detectMotorIdentity({ model_series: 0xff }), /not supported/);
+    assert.throws(() => detectMotorIdentity({ model_series: 0x12, model_unit: 1 }), /not supported/);
+    assert.throws(() => detectMotorIdentity({ model_series: 0x12, settings_model: "ep801" }), /do not match/);
+  });
+
+  it("keeps cargo variants in the friendly model label", () => {
+    assert.equal(friendlyMotorName({ modelSlug: "ep801", model: "DU-EP801-CRG" } as any), "Shimano DU-EP801-CRG");
+    assert.equal(friendlyMotorName({ modelSlug: "ep600", model: "DU-EP600-CRG" } as any), "Shimano DU-EP600-CRG");
+  });
+});
+
 describe("Speed and destination staging", () => {
-  function connected(model: "ep800-crg" | "ep600" | "ep801", destination: number, speed: number) {
+  function connected(model: "ep800-crg" | "ep600" | "ep801" | "ep500", destination: number, speed: number) {
     const controller = new SessionController();
     (controller as any).update({
       phase: "ready", transport: "sim",
@@ -256,7 +401,7 @@ describe("Speed and destination staging", () => {
   });
 
   it("uses modern destination ranges and rejects unsupported legacy speeds", () => {
-    for (const model of ["ep600", "ep801"] as const) {
+    for (const model of ["ep600", "ep801", "ep500"] as const) {
       const controller = connected(model, 2, 24);
       controller.stageParameter("speed-limit", 45);
       assert.deepEqual(controller.getState().stagedValues, { destination: 5, "speed-limit": 45 });
@@ -269,6 +414,13 @@ describe("Speed and destination staging", () => {
     controller.stageParameter("speed-limit", 45);
     assert.deepEqual(controller.getState().stagedValues, {});
     assert.match(controller.getState().errorBanner!, /No supported destination/);
+  });
+
+  it("rejects another save while a transaction is committing", async () => {
+    const controller = connected("ep800-crg", 0, 25);
+    (controller as any).update({ phase: "committing" });
+    await assert.rejects(controller.commitStagedBatch(), /save is already running/);
+    assert.equal(controller.getState().phase, "committing");
   });
 
   it("writes destination before speed and keeps a failed save in settings", async () => {
@@ -308,6 +460,21 @@ describe("Speed and destination staging", () => {
 });
 
 describe("Wire-Level GATT Simulator Register Completeness", () => {
+  it("returns exact standard and cargo product attributes for authentication", () => {
+    for (const [model, attributes] of [
+      ["ep800-crg", "00-CRG\0"], ["ep600", "00\0\0\0\0\0"], ["ep801", "01\0\0\0\0\0"],
+    ] as const) {
+      const sim = new DeviceSimulator({ model });
+      const replies: number[][] = [];
+      const characteristic = sim.chars.find((entry: any) => entry.id === 0x2afd)!;
+      characteristic.addEventListener("characteristicvaluechanged", () => {
+        replies.push(Array.from(new Uint8Array(characteristic.value!.buffer)));
+      });
+      sim.write(0x2afe, [13, 0x16, 0x7c, 0]);
+      assert.deepEqual(replies.at(-1), [13, 0x16, 0x7e, ...new TextEncoder().encode(attributes)]);
+    }
+  });
+
   it("handles EP800-CRG, EP600, and EP801 identity and full register queries", () => {
     const sim = new DeviceSimulator({ model: "ep800-crg" });
     const replies: number[][] = [];
@@ -345,5 +512,73 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
     assert.equal(replies.length, 1, "third proof fragment emits receipt");
     assert.deepEqual(replies[0], [13, 0x16, 0xe2, 0xff, 0xff, 0xff, 0xff]);
     assert.equal(sim.unitAuthenticated, true);
+  });
+});
+
+
+describe("Concise connection errors", () => {
+  it("keeps known connection failures actionable without backend details", () => {
+    assert.match(userFacingError("error: BLE authentication failed: rejected\n[exit 1]"), /PIN was not accepted/);
+    assert.match(userFacingError("error: drive-unit authentication is not verified for series 23 D4.1.9.0"), /isn’t supported/);
+    const cleanup = userFacingError("error: cleanup also failed: BLE PC-link stop was not confirmed: BLE response timeout or notification overflow; reconnect before another command\n[exit 1]");
+    assert.equal(cleanup, "Bluetooth cleanup wasn’t confirmed. Check the bike’s state before reconnecting, then read settings to check the result.");
+    assert.doesNotMatch(cleanup, /overflow|PC-link|exit/);
+    assert.equal(userFacingError("error: Invalid value\n    at host_call (host.js:1)\n[exit 1]"), "Invalid value");
+  });
+
+  it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
+    for (const original of ["BLE authentication failed: rejected", "drive-unit authentication challenge rejected"]) {
+      const message = userFacingError(`error: ${original}\nThis cleanup also failed: BLE PC-link stop was not confirmed\n    at host_call (host.js:1)\n[exit 1]`);
+      assert.match(message, /cleanup wasn’t confirmed/);
+      assert.doesNotMatch(message, /PIN|authorization|host_call|exit/);
+    }
+  });
+});
+
+describe("Disconnect cleanup reporting", () => {
+  function connected(run: () => Promise<{ code: number }>) {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    controller.attachTerminal({
+      run,
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), initialize: async () => {}, import: async () => {} },
+    });
+    (controller as any).update({ phase: "ready", transport: "ble", identity: { serial: "010203040506" }, stagedValues: { "tire-circumference": 2010 } });
+    return controller;
+  }
+
+  function assertCleared(controller: SessionController) {
+    assert.equal(controller.getState().phase, "disconnected");
+    assert.equal(controller.getState().identity, null);
+    assert.equal(controller.getState().transport, null);
+    assert.deepEqual(controller.getState().stagedValues, {});
+  }
+
+  it("keeps a thrown cleanup failure visible after clearing the disconnected identity", async () => {
+    const controller = connected(async () => { throw new Error("Bluetooth cleanup failed; check the bike."); });
+    await assert.rejects(controller.disconnect(), /cleanup failed/);
+    assertCleared(controller);
+    assert.match(controller.getState().errorBanner!, /cleanup failed/);
+    assert.match(controller.getState().statusMessage, /cleanup was not confirmed/);
+  });
+
+  it("treats a nonzero terminal cleanup result as failure", async () => {
+    const controller = connected(async () => {
+      (globalThis as any).estepsTerminalPrint("BLE PC-link stop was not confirmed", "stderr");
+      return { code: 1 };
+    });
+    await assert.rejects(controller.disconnect(), /stop was not confirmed/);
+    assertCleared(controller);
+    assert.match(controller.getState().errorBanner!, /stop was not confirmed/);
+  });
+
+  it("reports a confirmed disconnect without a stale error", async () => {
+    const controller = connected(async () => ({ code: 0 }));
+    (controller as any).update({ errorBanner: "old failure" });
+    await controller.disconnect();
+    assertCleared(controller);
+    assert.equal(controller.getState().errorBanner, null);
+    assert.equal(controller.getState().statusMessage, "Disconnected.");
   });
 });

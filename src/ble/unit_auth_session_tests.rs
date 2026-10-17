@@ -9,8 +9,10 @@ struct State {
     pending: VecDeque<Notification>,
     mode: u8,
     wrong_model: bool,
+    malformed_params: bool,
     old_version: bool,
     firmware_4110: bool,
+    firmware_4111: bool,
     padded_receipt: bool,
 }
 struct Mock(Rc<RefCell<State>>);
@@ -65,13 +67,17 @@ impl Gatt for Mock {
                 reply.extend([13, 0x23, 0]);
             }
             (1, 0x3c) => reply.extend([6, 5, 4, 3, 2, 1, 0xff]),
-            (0x16, 0x7c) => reply.extend(if s.wrong_model {
-                b"00-STD\0"
+            (0x16, 0x7c) => reply.extend(if s.malformed_params {
+                &b"00-CRG\0\0"[..]
+            } else if s.wrong_model {
+                &b"00-STD\0"[..]
             } else {
-                b"00-CRG\0"
+                &b"00-CRG\0"[..]
             }),
             (1, 0x2c) => reply.extend(if s.firmware_4110 {
                 [0x41, 10, 0]
+            } else if s.firmware_4111 {
+                [0x41, 11, 0]
             } else if s.old_version {
                 [0x41, 0, 0]
             } else {
@@ -217,11 +223,11 @@ fn full_exchange_matches_independent_numeric_serial_fixture_in_wire_order() {
     );
 }
 #[test]
-fn wrong_serial_or_unsupported_model_version_sends_no_authentication_material() {
+fn wrong_serial_or_unsupported_identity_sends_no_authentication_material() {
     for variant in 0..3 {
         let (mut s, state) = session();
         state.borrow_mut().wrong_model = variant == 1;
-        state.borrow_mut().old_version = variant == 2;
+        state.borrow_mut().malformed_params = variant == 2;
         let serial = if variant == 0 {
             "010203040506"
         } else {
@@ -339,4 +345,28 @@ fn ble_receipt_padding_cannot_hide_errors_wrong_routes_or_short_status() {
     ] {
         assert!(unit_auth::validate_ble_receipt(&bytes, 0, 0x16, 0xe2).is_err());
     }
+}
+
+#[test]
+fn stock_4111_uses_legacy_authentication() {
+    let (mut session, state) = session();
+    state.borrow_mut().firmware_4111 = true;
+    let result = session.authenticate_unit_settings("060504030201").unwrap();
+    assert_eq!(result["firmware"], "4.1.11.0");
+    assert_eq!(result["unit_authentication_receipt"], true);
+    assert_eq!(auth_writes(&state, 0xd8).len(), 1);
+    assert_eq!(auth_writes(&state, 0xe0).len(), 3);
+    assert!(!state.borrow().writes.iter().any(|w| w[1] == 0x33));
+}
+
+#[test]
+fn legacy_family_authentication_accepts_other_firmware_versions() {
+    let (mut session, state) = session();
+    state.borrow_mut().old_version = true;
+    let receipt = session.authenticate_unit_settings("060504030201").unwrap();
+    assert_eq!(receipt["firmware"], "4.1.0.0");
+    assert_eq!(receipt["protocol"], "legacy");
+    assert_eq!(auth_writes(&state, 0xd8).len(), 1);
+    assert_eq!(auth_writes(&state, 0xe0).len(), 3);
+    assert!(!state.borrow().writes.iter().any(|p| p[1] == 0x33));
 }

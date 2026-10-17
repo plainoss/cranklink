@@ -10,6 +10,12 @@ Firmware is not included. Wired flashing/recovery retains the CLI's model, board
 
 The speed slider and presets use the full model-supported range (15–32 km/h on EP800, 14–45 km/h on EP600/EP801). Choosing a speed stages a compatible destination when the current one cannot support it; both changes appear in the save review. Returning the speed to its previous value removes a destination change added only for that speed. Explicitly selecting a destination adjusts the staged speed into that destination's range. A rejected save keeps the settings screen and staged values available for correction.
 
+For Bluetooth discovery, turn the bike on just before connecting. If it is not listed, turn it off and on again, then enable the display or gateway's Bluetooth connection mode if needed. Close other apps connected to the bike.
+
+The instrument selects settings from the detected motor family: EP800, EP600, EP801, EP500, E5100, E8000/E8080, E7000, E6100-family, or E6000-family. Older E-series schemas expose wheel circumference, mounting angle, and lighting only; unsupported speed and profile controls are hidden. E5100 includes common settings and speed controls. Shared-series variants use the verified product name when available; ambiguous E6000 products retain a family label.
+
+Initial BLE connection selects master routing before reading motor identity and settings together and keeps the authenticated connection between commands. That route remains active for subsequent saves and automatic reads until Disconnect. Each command releases motor PC-link ownership afterward; the next command confirms the retained route and inventory, freshly checks motor identity, and reestablishes motor ownership and any required authorization. Explicit Disconnect restores normal routing, stops the gateway session, and closes GATT; an operation failure closes the connection without replaying the command. Enable the bike's connection mode before reconnecting. Rejected gateway PINs are cleared so the next connection prompts again. Known Bluetooth errors show a short recovery message; full details remain in Diagnostics.
+
 ## Build locally
 
 Requires Rust 1.90+, its WASM target, and Node.js 22 with npm. Run from the repository root:

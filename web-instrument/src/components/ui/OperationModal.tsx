@@ -37,6 +37,9 @@ export function OperationModal({ state }: OperationModalProps) {
   };
 
   const getNotice = () => {
+    if (state.transport === "ble") {
+      return "Keep Chrome open on this page and keep the bike powered on until the operation finishes.";
+    }
     if (state.phase === "flashing") {
       return "CRITICAL: Firmware flash in progress. Keep communication cables firmly connected and do not power off the bike.";
     }

@@ -80,10 +80,10 @@ pub(crate) fn encrypt_challenge(keys: &LegacyKeys, challenge: &[u8; 16]) -> [u8;
     proof
 }
 
-/// Keys for the supported EP600-family D4.6.0.1 authentication scheme.
+/// Keys for supported motors using the modern authentication scheme.
 /// These keys are distinct from the legacy, DCAS-serial-only keys above.
 /// No Debug implementation: key material must never enter diagnostic logs.
-pub(super) struct ModernKeys {
+pub(crate) struct ModernKeys {
     pub(super) auth_key: [u8; 16],
     pub(super) common_key: [u8; 16],
     pub(super) encrypt_key: [u8; 16],
@@ -101,7 +101,7 @@ impl Drop for ModernKeys {
 
 impl ModernKeys {
     /// The 33/68 authentication block: AES-ECB(encrypt_key, auth7 || FF*9).
-    pub(super) fn auth_ciphertext(&self) -> [u8; 16] {
+    pub(crate) fn auth_ciphertext(&self) -> [u8; 16] {
         let cipher = aes::Aes128::new(GenericArray::from_slice(&self.encrypt_key));
         let mut block = self.auth_key;
         cipher.encrypt_block(GenericArray::from_mut_slice(&mut block));
@@ -110,7 +110,7 @@ impl ModernKeys {
 
     /// The 33/70 proof: decrypt the received challenge with encrypt_key, then
     /// encrypt that nonce with update_key. Both operations use one unpadded block.
-    pub(super) fn challenge_proof(&self, encrypted_challenge: &[u8; 16]) -> [u8; 16] {
+    pub(crate) fn challenge_proof(&self, encrypted_challenge: &[u8; 16]) -> [u8; 16] {
         let decryptor = aes::Aes128::new(GenericArray::from_slice(&self.encrypt_key));
         let encryptor = aes::Aes128::new(GenericArray::from_slice(&self.update_key));
         let mut nonce = Zeroizing::new(*encrypted_challenge);
@@ -124,7 +124,7 @@ impl ModernKeys {
 /// Use the final six product-serial characters as bytes, without hex
 /// parsing or case conversion. Reject ambiguous, truncated or padded text before
 /// any caller can send an authentication attempt to the motor.
-pub(super) fn derive_modern(serial: &[u8; 6], product_serial: &str) -> Result<ModernKeys> {
+pub(crate) fn derive_modern(serial: &[u8; 6], product_serial: &str) -> Result<ModernKeys> {
     ensure!(
         product_serial.len() >= 6 && product_serial.bytes().all(|b| b.is_ascii_graphic()),
         "product serial requires at least six printable ASCII characters without spaces"

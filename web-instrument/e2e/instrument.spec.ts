@@ -201,6 +201,19 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
       model: reject ? "ep801" : "ep800-crg",
       fault: reject ? "auth_reject" : "none",
     });
+    const connect = device.gatt.connect;
+    let radioShutdown = false;
+    device.gatt.connect = async () => {
+      if (radioShutdown) throw new Error("Gateway connection mode ended");
+      return connect();
+    };
+    const write = device.write.bind(device);
+    device.write = (id: number, bytes: number[]) => {
+      const result = write(id, bytes);
+      if (id === 0x2afa && bytes[1] === 0x0c && bytes[2] === 0) radioShutdown = true;
+      return result;
+    };
+    (window as any).testBluetoothDevice = device;
     let chooserCalls = 0;
     Object.defineProperty(navigator, "bluetooth", {
       configurable: true,
@@ -222,6 +235,7 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
 }
 
 test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
+  test.setTimeout(60_000);
   await selectSimulatedBluetoothDevice(page);
   await expect(page.getByTestId("status-message")).toContainText("74 parameters read");
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
@@ -242,10 +256,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   expect(state.settings).toHaveLength(74);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
-  expect(commands).toHaveLength(3);
-  expect(commands[0]).toBe("cranklink> connect ble");
-  expect(commands[1]).toBe("cranklink> probe");
-  expect(commands[2]).toMatch(/^cranklink> (?:--[^\n]+ )?settings read$/);
+  expect(commands).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master settings read"]);
   expect(state.logs.filter((entry) => entry.stream === "stderr")).toEqual([]);
   expect(state.logs.some((entry) => entry.stream === "notice" && /Bluetooth/i.test(entry.text))).toBe(true);
   expect(state.logs.map((entry) => entry.text).join("\n")).not.toMatch(/firmware operations disabled/i);
@@ -254,12 +265,47 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   await expect(page.getByTestId("console-body")).toBeVisible();
   await expect(page.locator(".console-log-line.stderr")).toHaveCount(0);
   await expect(page.locator(".console-log-line.notice").first()).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const controller = (window as any).estepsInstrumentController;
+    const motorStarts = () => (window as any).testBluetoothDevice.writes.filter((w: any) => w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 1).length;
+    const initialMotorStarts = motorStarts();
+    controller.stageParameter("tire-circumference", 2150);
+    await controller.commitStagedBatch();
+    const firstMotorStarts = motorStarts() - initialMotorStarts;
+    controller.stageParameter("tire-circumference", 2151);
+    await controller.commitStagedBatch();
+    await controller.readAllParameters();
+    const device = (window as any).testBluetoothDevice;
+    return {
+      wheel: controller.getState().liveValues["tire-circumference"].value,
+      firstMotorStarts,
+      connections: device.connections,
+      connected: device.gatt.connected,
+      stops: device.writes.filter((w: any) => w.id === 0x2afa && w.bytes[1] === 0x0c && w.bytes[2] === 0).length,
+    };
+  });
+  expect(saved).toEqual({ wheel: 2151, firstMotorStarts: 1, connections: 1, connected: true, stops: 0 });
+  const unloadIsGuarded = () => page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(await unloadIsGuarded(), "An idle retained Bluetooth session requires explicit disconnect before leaving").toBe(true);
+  await page.evaluate(() => (window as any).estepsInstrumentController.disconnect());
+  expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
+  expect(await unloadIsGuarded(), "Confirmed disconnect releases the unload guard").toBe(false);
 });
 
-test("Bluetooth authentication rejection still reports a real error", async ({ page }) => {
+test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {
   await selectSimulatedBluetoothDevice(page, true);
+  await expect.poll(() => page.evaluate(() => (window as any).estepsInstrumentController.getState().phase)).toBe("ready");
+  await page.evaluate(async () => {
+    const controller = (window as any).estepsInstrumentController;
+    controller.stageParameter("walk-assist", 0);
+    await controller.commitStagedBatch().catch(() => {});
+  });
   await expect(page.getByTestId("error-banner")).toBeVisible();
-  await expect(page.getByTestId("status-message")).toContainText("Handshake failed:");
+  await expect(page.getByTestId("status-message")).toContainText("cleanup wasn’t confirmed");
   const state = await page.evaluate(() => {
     const state = (window as any).estepsInstrumentController.getState();
     return {
@@ -269,15 +315,16 @@ test("Bluetooth authentication rejection still reports a real error", async ({ p
       chooserCalls: (window as any).testBluetoothChooserCalls(),
     };
   });
-  expect(state.phase).toBe("error");
-  expect(state.settings).toHaveLength(0);
+  expect(state.phase).toBe("ready");
+  expect(state.settings.length).toBeGreaterThan(0);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
   expect(commands).toHaveLength(3);
-  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> probe"]);
-  expect(commands[2]).toMatch(/^cranklink> (?:--expect-serial|--ble-expect-serial) [A-F0-9]+(?: --ble-unit-auth)? settings read$/);
+  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master settings read"]);
+  expect(commands[2]).toContain("settings batch");
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
   const authLogs = await page.evaluate(() => (window as any).estepsInstrumentController.getState().logs);
   expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
+  expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
 });

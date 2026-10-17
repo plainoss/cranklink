@@ -9,7 +9,7 @@
 import type {
   InstrumentState,
   TransportType,
-  SimulatedModel,
+  MotorModel,
   SimulatorOptions,
   DeviceIdentity,
   SettingEntry,
@@ -18,6 +18,7 @@ import type {
   WorkspaceSection,
   SettingSectionId,
 } from "../types.ts";
+import { detectMotorIdentity } from "../domain/motorIdentity.ts";
 import { enrichSchema, formatSettingValue, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
 import {
   classifyFirmwareRole,
@@ -184,7 +185,7 @@ export class SessionController {
    * Consolidated Zero-Click Handshake:
    * 1. Opens physical link or simulator
    * 2. Runs `probe` and parses actual JSON identity
-   * 3. Loads the verified model schema (`ep800-crg`, `ep600`, or `ep801`)
+   * 3. Loads the verified model schema (`ep800-crg`, `ep600`, `ep801`, or `ep500`)
    * 4. Runs `settings read` (with automatic unit auth on modern BLE/Sim models)
    *    and populates all live parameter values
    */
@@ -252,7 +253,25 @@ export class SessionController {
         statusMessage: "Identifying drive unit and firmware versions...",
       });
 
-      const identity = await this.probeIdentity(transport);
+      let initialSnapshot: any = null;
+      let identity: DeviceIdentity;
+      if (transport === "ble") {
+        this.update({
+          phase: "reading",
+          statusMessage: "Identifying drive unit and reading parameters over Bluetooth...",
+        });
+        const result = await this.exec("--ble-master=master settings read");
+        if (result.code !== 0) {
+          throw new Error(result.stderr || `Settings read failed (${result.code})`);
+        }
+        initialSnapshot = this.extractLastJsonObject(result.stdout);
+        if (!initialSnapshot?.identity || !initialSnapshot?.values) {
+          throw new Error("Settings response lacks drive-unit identity or parameters. Reload the updated application before reconnecting.");
+        }
+        identity = this.parseIdentity(initialSnapshot.identity, transport);
+      } else {
+        identity = await this.probeIdentity(transport);
+      }
 
       this.update({
         identity,
@@ -263,18 +282,11 @@ export class SessionController {
       const schema = await this.loadSchema(identity.modelSlug);
       this.update({ schema });
 
-      // On real BLE hardware (e.g. SC-EM800), the physical gateway shuts down and re-advertises
-      // after the probe session's PC-link stop. A short pause guarantees radio readiness.
-      const isSimulator = Boolean(
-        transport === "sim" ||
-        this.terminal?.simulator ||
-        (typeof window !== "undefined" && (window as any).estepsDeviceSimulator)
-      );
-      if (transport === "ble" && !isSimulator) {
-        await new Promise((r) => setTimeout(r, 1200));
+      if (initialSnapshot) {
+        this.applyParameterSnapshot(initialSnapshot, identity);
+      } else {
+        await this.readAllParameters(transport, identity);
       }
-
-      await this.readAllParameters(transport, identity);
       this.refreshSnapshots();
 
       if (this.state.phase === "reading" || this.state.phase === "probing") {
@@ -308,35 +320,27 @@ export class SessionController {
       throw new Error("Could not parse JSON identity from probe output.");
     }
 
-    const series: number | undefined = parsed.model_series;
-    const isCargo = parsed.cargo === true || parsed.cargo === "00-CRG";
+    return this.parseIdentity(parsed, transport);
+  }
 
-    let modelSlug: SimulatedModel = "ep800-crg";
-    let modelDisplay = "DU-EP800-CRG";
-
-    if (series === 0x30 || (transport === "sim" && this.state.simulatorOptions.model === "ep600")) {
-      modelSlug = "ep600";
-      modelDisplay = "DU-EP600";
-    } else if (series === 0x35 || (transport === "sim" && this.state.simulatorOptions.model === "ep801")) {
-      modelSlug = "ep801";
-      modelDisplay = "DU-EP801";
-    } else if (!isCargo) {
-      modelDisplay = "DU-EP800";
+  private parseIdentity(parsed: any, transport: TransportType): DeviceIdentity {
+    if (!/^[0-9a-f]{12}$/i.test(String(parsed.serial || ""))) {
+      throw new Error("Drive-unit response lacks a verified serial identity.");
     }
+    const series: number | undefined = parsed.model_series;
+    const detected = detectMotorIdentity(parsed);
 
     return {
       slot: parsed.slot ?? 13,
-      model: modelDisplay,
-      modelSlug,
-      serial: String(parsed.serial || "010203040506").toUpperCase(),
+      ...detected,
+      serial: String(parsed.serial).toUpperCase(),
       dcasVersion: String(parsed.dcas_version || "—"),
       rxVersion: String(parsed.rx_version || "—"),
-      isCargo,
       modelSeries: series,
     };
   }
 
-  private async loadSchema(modelSlug: SimulatedModel) {
+  private async loadSchema(modelSlug: MotorModel) {
     try {
       const res = await fetch(`./schemas/${modelSlug}.json`);
       if (res.ok) {
@@ -381,37 +385,7 @@ export class SessionController {
       }
 
       const snapshot = this.extractLastJsonObject(readRes.stdout);
-      const liveValues: Record<string, SettingEntry> = {};
-      const unavailableValues: Record<string, string> = {};
-
-      if (snapshot && snapshot.values) {
-        for (const [key, entry] of Object.entries<any>(snapshot.values)) {
-          liveValues[key] = {
-            value: entry?.value ?? null,
-            raw: entry?.raw ?? "",
-          };
-        }
-      }
-      if (snapshot && snapshot.unavailable) {
-        for (const [key, reason] of Object.entries<any>(snapshot.unavailable)) {
-          unavailableValues[key] = String(reason);
-        }
-      }
-
-      if (this.state.phase === "reading") {
-        this.update({
-          liveValues,
-          unavailableValues,
-          phase: "ready",
-          statusMessage: `Synced with ${identity.model} (${Object.keys(liveValues).length} parameters read).`,
-        });
-      } else {
-        this.update({
-          liveValues,
-          unavailableValues,
-        });
-      }
-      return liveValues;
+      return this.applyParameterSnapshot(snapshot, identity);
     } catch (err: any) {
       const msg = err?.message || String(err);
       this.update({
@@ -423,13 +397,36 @@ export class SessionController {
     }
   }
 
+  private applyParameterSnapshot(snapshot: any, identity: DeviceIdentity): Record<string, SettingEntry> {
+    if (!snapshot?.values || typeof snapshot.values !== "object" || Array.isArray(snapshot.values)) {
+      throw new Error("Drive-unit response lacks a valid settings snapshot.");
+    }
+    const liveValues: Record<string, SettingEntry> = {};
+    const unavailableValues: Record<string, string> = {};
+    for (const [key, entry] of Object.entries<any>(snapshot.values)) {
+      liveValues[key] = { value: entry?.value ?? null, raw: entry?.raw ?? "" };
+    }
+    for (const [key, reason] of Object.entries<any>(snapshot.unavailable || {})) {
+      unavailableValues[key] = String(reason);
+    }
+    this.update({
+      liveValues,
+      unavailableValues,
+      ...(this.state.phase === "reading" ? {
+        phase: "ready" as const,
+        statusMessage: `Synced with ${identity.model} (${Object.keys(liveValues).length} parameters read).`,
+      } : {}),
+    });
+    return liveValues;
+  }
+
   private buildSessionFlags(
     transport: TransportType,
     identity: DeviceIdentity,
     requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    const isModern = identity.modelSlug === "ep600" || identity.modelSlug === "ep801";
+    const isModern = identity.modelSlug === "ep600" || identity.modelSlug === "ep801" || identity.modelSlug === "ep500";
     if (isModern && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `--expect-serial ${cleanSerial} --ble-unit-auth `;
     }
@@ -437,10 +434,17 @@ export class SessionController {
   }
 
   public async disconnect(): Promise<void> {
+    let cleanupError: string | null = null;
     try {
       if (this.terminal) {
-        await this.exec("disconnect");
+        const result = await this.exec("disconnect");
+        if (result.code !== 0) {
+          throw new Error(result.stderr || `Bluetooth cleanup failed (${result.code}). Check the bike before reconnecting.`);
+        }
       }
+    } catch (err: any) {
+      cleanupError = err?.message || String(err);
+      throw err;
     } finally {
       this.speedDestinationBeforeAuto = null;
       this.update({
@@ -450,8 +454,8 @@ export class SessionController {
         liveValues: {},
         unavailableValues: {},
         stagedValues: {},
-        errorBanner: null,
-        statusMessage: "Disconnected.",
+        errorBanner: cleanupError,
+        statusMessage: cleanupError ? "Disconnected, but bike cleanup was not confirmed." : "Disconnected.",
       });
     }
   }
@@ -559,6 +563,9 @@ export class SessionController {
   public async commitStagedBatch(): Promise<any> {
     if (this.syncInProgress) {
       await this.syncInProgress.catch(() => {});
+    }
+    if (this.state.phase === "committing") {
+      throw new Error("A save is already running. Wait for it to finish.");
     }
     const { transport, identity, stagedValues } = this.state;
     if (!transport || !identity) {
