@@ -93,8 +93,10 @@ export class WebUsbPort {
     const d = this.device;
     if (d.vendorId !== FILTER.vendorId || d.productId !== FILTER.productId)
       throw new Error("Only SM-PCE02 1E44:7151 is supported");
-    // The verified control encoding below is for single-port FT232B/R/FT-X.
-    if (![4, 6, 0x10].includes(d.deviceVersionMajor))
+    // SM-PCE02 reports 0x0A00 on its single-port, 64-byte bulk interface.
+    // Its 2 Mbaud setup uses the same divisor as the verified FT232B/R/FT-X
+    // devices supported here.
+    if (![4, 6, 10, 0x10].includes(d.deviceVersionMajor))
       throw new Error(
         `FTDI chip revision ${d.deviceVersionMajor} needs a verified baud-rate encoding; no motor command sent`,
       );

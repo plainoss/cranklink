@@ -274,8 +274,38 @@ impl Session {
             "power unlock rejected: {}",
             hex::encode(p)
         );
-        let p = self.adapter(0x1a, &[2], 0x3a)?;
-        let state = *p.get(1).context("short power reply")?;
+        let mut state = self.power_state()?;
+        if matches!(state, 3 | 4) {
+            platform::notice("Charging SM-PCE02 adapter; keep USB connected (up to 90 seconds)...");
+            // Poll the supercapacitor every 3 seconds and require a level of
+            // at least 2703 before checking power readiness. Charging
+            // is automatic after power-limit unlock; do not reset the adapter
+            // or enable its discharge while waiting.
+            let started = Instant::now();
+            let limit = Duration::from_secs(90);
+            loop {
+                let remaining = limit.saturating_sub(started.elapsed());
+                ensure!(
+                    !remaining.is_zero(),
+                    "SM-PCE02 adapter did not finish charging within 90 seconds (power state 0x{state:02X}); keep USB connected and check its USB power supply before retrying"
+                );
+                sleep(remaining.min(Duration::from_secs(3)));
+                let p = self.adapter(0x1c, &[], 0x3c)?;
+                let voltage = p
+                    .get(..2)
+                    .context("short adapter capacitor voltage reply")?;
+                if u16::from_le_bytes([voltage[0], voltage[1]]) < 2703 {
+                    continue;
+                }
+                state = self.power_state()?;
+                match state {
+                    1 | 2 => break,
+                    3 | 4 => continue,
+                    _ => bail!("SM-PCE02 cannot supply power while charging (power state 0x{state:02X}); check bike battery power and the E-TUBE connection"),
+                }
+            }
+            platform::notice("SM-PCE02 adapter power is ready; continuing connection...");
+        }
         match state {
             1 => self.adapter_supply = false,
             2 => {
@@ -284,7 +314,6 @@ impl Session {
                 self.adapter_supply = true;
                 sleep(Duration::from_secs(1));
             }
-            3 | 4 => bail!("SM-PCE02 must charge before powering motor"),
             _ => bail!("unknown adapter power state {state}"),
         }
         sleep(Duration::from_secs(1));
@@ -292,6 +321,15 @@ impl Session {
             adapter_supply: self.adapter_supply,
             raw_state: state,
         })
+    }
+    fn power_state(&mut self) -> Result<u8> {
+        let p = self.adapter(0x1a, &[2], 0x3a)?;
+        ensure!(
+            p.first() == Some(&2),
+            "unexpected power reply: {}",
+            hex::encode(&p)
+        );
+        p.get(1).copied().context("short power reply")
     }
     pub fn set_protocol(&mut self, protocol: u8) -> Result<()> {
         self.ack(3, &[protocol | 0x20], 0x23)?;
@@ -900,6 +938,56 @@ mod tests {
             control,
             payload: payload.to_vec(),
         }
+    }
+    #[test]
+    fn initialize_waits_for_capacitor_and_ready_state_before_discharge() {
+        let (mut session, steps) = scripted(vec![
+            (frame(0x10, &[]), frame(0x30, &[0])),
+            (frame(0x1a, &[1]), frame(0x3a, &[1, 0])),
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 4])),
+            // Below the charge threshold: don't query readiness or discharge.
+            (frame(0x1c, &[]), frame(0x3c, &2702u16.to_le_bytes())),
+            (frame(0x1c, &[]), frame(0x3c, &2703u16.to_le_bytes())),
+            // Adequate voltage alone must not enable supply.
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 3])),
+            (frame(0x1c, &[]), frame(0x3c, &2703u16.to_le_bytes())),
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 2])),
+            (frame(0x1a, &[3]), frame(0x3a, &[3, 0])),
+        ]);
+        let power = session.initialize().unwrap();
+        assert_eq!(power.raw_state, 2);
+        assert!(power.adapter_supply);
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
+    fn initialize_preserves_external_supply_after_charging() {
+        let (mut session, steps) = scripted(vec![
+            (frame(0x10, &[]), frame(0x30, &[0])),
+            (frame(0x1a, &[1]), frame(0x3a, &[1, 0])),
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 3])),
+            (frame(0x1c, &[]), frame(0x3c, &2703u16.to_le_bytes())),
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 1])),
+        ]);
+        let power = session.initialize().unwrap();
+        assert_eq!(power.raw_state, 1);
+        assert!(!power.adapter_supply);
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
+    fn initialize_rejects_truncated_capacitor_reply_without_discharge() {
+        let (mut session, steps) = scripted(vec![
+            (frame(0x10, &[]), frame(0x30, &[0])),
+            (frame(0x1a, &[1]), frame(0x3a, &[1, 0])),
+            (frame(0x1a, &[2]), frame(0x3a, &[2, 4])),
+            (frame(0x1c, &[]), frame(0x3c, &[0x8f])),
+        ]);
+        assert!(session
+            .initialize()
+            .unwrap_err()
+            .to_string()
+            .contains("short adapter capacitor voltage reply"));
+        assert!(!session.adapter_supply);
+        assert!(steps.borrow().is_empty());
     }
     #[test]
     fn mixed_component_inventory_uses_only_address_selection_and_stock_reads() {

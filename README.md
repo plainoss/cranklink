@@ -182,6 +182,8 @@ For RX recovery, use `cranklink --port usb firmware probe --target rx --recovery
 
 Inspect SM-PCE02 connection status and power state:
 
+If the adapter reports that its internal supercapacitor needs charging, connection waits up to 90 seconds for it to become ready, then continues automatically. Keep USB connected during this wait. A charging timeout includes the raw power state; check the USB power source before retrying. See [USB connection and power states](docs/usb.md).
+
 ```sh
 cranklink --port usb adapter status
 ```
@@ -196,7 +198,9 @@ SM-PCE02 Adapter:
 The [web instrument](https://plainoss.github.io/cranklink/) compiles the same core engine to WebAssembly, providing an interactive UI for phones, tablets, and desktops:
 
 - Hardware connection via WebUSB, Web Serial, or Web Bluetooth (Chrome, Edge).
+- On Android, use WebUSB for the SM-PCE02. Direct USB supports its `0x0A00` device revision at 2 Mbaud.
 - Component discovery, firmware inspection, and settings backup & tuning sliders.
+- Speed sliders and presets stage a compatible destination automatically, with both changes shown before saving. Selecting a destination adjusts the staged speed to its supported range.
 - Built-in simulator for testing without connected hardware.
 
 See the [web instrument documentation](web-instrument/README.md).

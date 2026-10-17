@@ -4,7 +4,11 @@ Open [cranklink on GitHub Pages](https://plainoss.github.io/cranklink/). The bro
 
 Use a browser with the required WebUSB, Web Serial, or Web Bluetooth API, such as Chrome or Edge where supported. Browser and operating-system support determine which transports work; a phone supporting one API may lack another. Unavailable device buttons are disabled with an explanation; the simulator remains available to explore settings without hardware. A compatible BLE gateway is required for wireless access. The first visit may reload once while a service worker enables the isolation needed by WASM. Allow site storage and service workers.
 
+On Android, connect the SM-PCE02 with **USB** (WebUSB). The adapter's `0x0A00` device revision is supported at 2 Mbaud. If its internal supercapacitor needs charging, the connection screen shows progress and waits up to 90 seconds before continuing. Keep the USB cable connected; a timeout reports the power state and asks you to check the USB power source.
+
 Firmware is not included. Wired flashing/recovery retains the CLI's model, board, serial, and companion checks. BLE settings and opt-in firmware relay are experimental; BLE recovery and radio DFU are unavailable. See [recovery prerequisites](../README.md#recovering-an-interrupted-firmware-update), [settings and batch plans](../docs/settings-protocol.md), and [Bluetooth limitations](../docs/bluetooth.md).
+
+The speed slider and presets use the full model-supported range (15–32 km/h on EP800, 14–45 km/h on EP600/EP801). Choosing a speed stages a compatible destination when the current one cannot support it; both changes appear in the save review. Returning the speed to its previous value removes a destination change added only for that speed. Explicitly selecting a destination adjusts the staged speed into that destination's range. A rejected save keeps the settings screen and staged values available for correction.
 
 ## Build locally
 

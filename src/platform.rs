@@ -16,6 +16,14 @@ pub trait Port: Read + Write {
     fn set_timeout(&mut self, timeout: Duration) -> io::Result<()>;
 }
 
+/// Human-readable progress that keeps structured command stdout clean.
+pub(crate) fn notice(message: &str) {
+    #[cfg(target_arch = "wasm32")]
+    crate::wasm::host_emit("notice", &format!("{message}\n"));
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("{message}");
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use std::{thread::sleep, time::Instant};
 

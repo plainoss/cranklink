@@ -218,6 +218,95 @@ describe("SessionController Finite State Machine & Staging", () => {
   });
 });
 
+describe("Speed and destination staging", () => {
+  function connected(model: "ep800-crg" | "ep600" | "ep801", destination: number, speed: number) {
+    const controller = new SessionController();
+    (controller as any).update({
+      phase: "ready", transport: "sim",
+      identity: { modelSlug: model, serial: "010203040506" },
+      schema: enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8")), model),
+      liveValues: { destination: { value: destination, raw: "" }, "speed-limit": { value: speed, raw: "" } },
+    });
+    return controller;
+  }
+
+  it("pairs 32 km/h with destination 1 and removes the pair when speed is reverted", () => {
+    const controller = connected("ep800-crg", 0, 25);
+    controller.stageParameter("speed-limit", 32);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 1, "speed-limit": 32 });
+    controller.revertParameter("speed-limit");
+    assert.deepEqual(controller.getState().stagedValues, {});
+    controller.stageParameter("destination", 3);
+    controller.stageParameter("speed-limit", 32);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 1, "speed-limit": 32 });
+    controller.stageParameter("speed-limit", 25);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 3 });
+  });
+
+  it("preserves compatible regions and adjusts speed when a region is selected explicitly", () => {
+    const controller = connected("ep800-crg", 1, 32);
+    controller.stageParameter("speed-limit", 20);
+    assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 20 });
+    controller.stageParameter("speed-limit", 18);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 0, "speed-limit": 18 });
+    controller.stageParameter("speed-limit", 32);
+    assert.deepEqual(controller.getState().stagedValues, {});
+    controller.stageParameter("destination", 3);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 3, "speed-limit": 25 });
+  });
+
+  it("uses modern destination ranges and rejects unsupported legacy speeds", () => {
+    for (const model of ["ep600", "ep801"] as const) {
+      const controller = connected(model, 2, 24);
+      controller.stageParameter("speed-limit", 45);
+      assert.deepEqual(controller.getState().stagedValues, { destination: 5, "speed-limit": 45 });
+      controller.stageParameter("destination", 2);
+      assert.deepEqual(controller.getState().stagedValues, {});
+      controller.stageParameter("speed-limit", 14);
+      assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 14 });
+    }
+    const controller = connected("ep800-crg", 0, 25);
+    controller.stageParameter("speed-limit", 45);
+    assert.deepEqual(controller.getState().stagedValues, {});
+    assert.match(controller.getState().errorBanner!, /No supported destination/);
+  });
+
+  it("writes destination before speed and keeps a failed save in settings", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = connected("ep800-crg", 0, 25);
+    let operations: any[] = [];
+    let fail = false;
+    const files = new Map<string, Uint8Array>();
+    controller.attachTerminal({
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
+      files: {
+        list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {},
+        import: async (p, bytes) => { files.set(p, bytes); },
+      },
+      run: async () => {
+        operations = JSON.parse(new TextDecoder().decode([...files.values()].at(-1)));
+        if (fail) {
+          (globalThis as any).estepsTerminalPrint("write rejected", "stderr");
+          return { code: 1 };
+        }
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ results: operations.map((op) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        return { code: 0 };
+      },
+    });
+    controller.stageParameter("speed-limit", 32);
+    await controller.commitStagedBatch();
+    assert.deepEqual(operations.map(({ name, value }) => [name, value]), [["destination", "1"], ["speed-limit", "32"]]);
+    assert.equal(controller.getState().liveValues.destination.value, 1);
+    assert.equal(controller.getState().liveValues["speed-limit"].value, 32);
+    controller.stageParameter("speed-limit", 31);
+    fail = true;
+    await assert.rejects(controller.commitStagedBatch(), /write rejected/);
+    assert.equal(controller.getState().phase, "ready");
+    assert.equal(controller.getState().errorBanner, "write rejected");
+    assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 31 });
+  });
+});
+
 describe("Wire-Level GATT Simulator Register Completeness", () => {
   it("handles EP800-CRG, EP600, and EP801 identity and full register queries", () => {
     const sim = new DeviceSimulator({ model: "ep800-crg" });
