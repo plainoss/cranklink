@@ -1,7 +1,7 @@
-import { h, type ComponentChildren } from "preact";
+import type { ReactNode } from "react";
 
 export interface BadgeProps {
-  children: ComponentChildren;
+  children: ReactNode;
   variant?: "success" | "warning" | "danger" | "sim" | "neutral";
   className?: string;
   "data-testid"?: string;

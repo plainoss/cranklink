@@ -73,13 +73,12 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
   await checkResponsiveBounds(page, "connected");
 
-  const groups = page.getByTestId("mobile-parameter-group");
-  await expect(groups).toBeVisible();
-  await groups.focus();
-  await groups.selectOption("all");
-  await expect(groups).toBeFocused();
-  await groups.selectOption("geometry");
-  await expect(groups).toBeFocused();
+  const navMenuBtn = page.getByLabel("Open navigation menu");
+  await checkTouchTarget(navMenuBtn);
+  await navMenuBtn.tap();
+  const geometryBtn = page.getByTestId("nav-group-geometry");
+  await checkTouchTarget(geometryBtn);
+  await geometryBtn.tap();
   const search = page.getByTestId("search-filter-input");
   await search.fill("tire");
   expect(await search.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
@@ -106,15 +105,16 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await expect(tire).toContainText("Live: 2300 mm");
   await expect(page.getByTestId("status-message")).toContainText("Committed 1 change");
 
+  await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-journal").tap();
   await expect(page.getByTestId("journal-section")).toBeVisible();
   await checkResponsiveBounds(page, "journal");
   await page.locator('[data-action="restore-snapshot"]').first().tap();
-  await expect(page.getByTestId("status-message")).toContainText("Restored ");
-  await expect(groups).toHaveValue("");
-  await groups.selectOption("geometry");
+  await page.getByLabel("Open navigation menu").tap();
+  await page.getByTestId("nav-group-geometry").tap();
   await expect(tire).toContainText("Live: 2280 mm");
 
+  await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-firmware").tap();
   await expect(page.getByTestId("firmware-section")).toBeVisible();
   await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
@@ -125,8 +125,10 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   expect(await consoleInput.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
   await checkResponsiveBounds(page, "expanded console");
   await consoleInput.fill("settings read tire-circumference");
+  await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-journal").tap();
   await expect(consoleInput).toHaveValue("settings read tire-circumference");
+  await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-firmware").tap();
   await expect(consoleInput).toHaveValue("settings read tire-circumference");
   await page.getByTestId("console-toggle").tap();

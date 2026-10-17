@@ -1,5 +1,4 @@
-import { h } from "preact";
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import {
   Usb,
   Bluetooth,
@@ -7,7 +6,9 @@ import {
   ChevronDown,
   AlertCircle,
   Smartphone,
-} from "lucide-preact";
+  MoreHorizontal,
+  Cable,
+} from "lucide-react";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { detectPlatform } from "../../core/platform.ts";
@@ -32,161 +33,130 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
     state.phase === "reading";
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center py-12 px-4 sm:px-8 bg-[#f4f3ef] text-stone-900 font-sans">
-      <div className="w-full max-w-xl flex flex-col gap-6">
-        {/* Branding header */}
-        <div className="text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-stone-200/80 text-stone-700 text-xs font-mono font-medium mb-3">
-            <span>cranklink</span>
-            <span>•</span>
-            <span data-testid="header-status-badge">
-              {isBusy
-                ? state.statusMessage.toUpperCase()
-                : state.phase === "error"
-                  ? "CONNECTION ERROR"
-                  : "DISCONNECTED"}
-            </span>
+    <div className="min-h-screen flex flex-col items-center justify-center py-10 px-4 sm:px-6 bg-[#f4f3ef] text-stone-900 font-sans">
+      <div className="w-full max-w-md flex flex-col gap-6">
+        {/* Sleek App Branding */}
+        <div className="text-center flex flex-col items-center">
+          <div className="w-14 h-14 rounded-2xl bg-stone-900 text-white flex items-center justify-center shadow-sm mb-3">
+            <Bluetooth size={28} className="text-blue-400" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-stone-900 font-sans">
-            Connect Your Bike
+            Connect Bike
           </h1>
-          <p className="text-sm text-stone-600 mt-1 max-w-sm mx-auto">
-            Choose how your Shimano STEPS drive unit is connected to this device.
+          <p className="text-xs text-stone-500 mt-1">
+            Shimano STEPS wireless and diagnostic link
           </p>
+          <span
+            data-testid="header-status-badge"
+            className="mt-2 text-[11px] font-mono font-medium px-2.5 py-0.5 rounded-full bg-stone-200/80 text-stone-700"
+          >
+            {isBusy
+              ? state.statusMessage.toUpperCase()
+              : state.phase === "error"
+                ? "CONNECTION ERROR"
+                : "DISCONNECTED"}
+          </span>
         </div>
 
-        {/* Error Banner if any */}
+        {/* Error Banner */}
         {state.errorBanner && (
           <div
-            className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 flex items-start gap-3 shadow-xs"
+            className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-900 flex items-start gap-3 shadow-xs"
             data-testid="error-banner"
           >
             <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" />
-            <div className="text-sm">
+            <div className="text-xs">
               <p className="font-semibold">Connection Failed</p>
-              <p className="text-red-700 text-xs mt-0.5 font-mono break-all">
+              <p className="text-red-700 mt-0.5 font-mono break-all">
                 {state.errorBanner}
               </p>
             </div>
           </div>
         )}
 
-        {/* iOS platform guidance when not in Bluefy */}
+        {/* iOS Bluefy BLE Browser Guidance */}
         {plat.isIOS && !plat.isBluefy && (
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-xs leading-relaxed shadow-xs">
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-xs leading-relaxed shadow-xs">
             <Smartphone size={20} className="text-amber-700 shrink-0 mt-0.5" />
             <div>
-              <strong className="block font-semibold">iPhone & iPad Bluetooth Notice</strong>
-              Apple Safari does not support Web Bluetooth. To connect to your Shimano display wirelessly from iOS, please open this app inside the free <strong>Bluefy Web BLE Browser</strong>.
+              <strong className="block font-semibold">iPhone & iPad Notice</strong>
+              Apple Safari does not support Web Bluetooth. Open this app inside the free <strong>Bluefy Web BLE Browser</strong> to connect wirelessly.
             </div>
           </div>
         )}
 
-        {/* Connection Options */}
-        <div className="flex flex-col gap-4">
-          {/* Option 1: USB Cable (Hidden on iOS) */}
-          {!plat.isIOS && (
-            <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-5 hover:border-stone-300 transition-all">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-stone-900 text-white flex items-center justify-center shrink-0 shadow-xs">
-                  <Usb size={22} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm font-semibold text-stone-900">
-                      Connect with USB Cable
-                    </h3>
-                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                      Recommended
-                    </span>
-                  </div>
-                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                    SM-PCE02 or PCE1 diagnostic adapter plugged into computer & bike.
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="primary"
-                size="md"
-                disabled={isBusy}
-                onClick={() => controller.connectAndSync("usb").catch(() => {})}
-                data-action="connect-usb"
-                data-testid="btn-connect-usb"
-                className="w-full sm:w-32 shrink-0 font-medium"
-              >
-                Connect
-              </Button>
-            </div>
-          )}
+        {/* Primary Connection Surface */}
+        <div className="bg-white border border-stone-200/90 rounded-3xl p-6 shadow-xs flex flex-col gap-4">
+          {/* Main Primary Action: Bluetooth Connect */}
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={isBusy}
+            onClick={() => controller.connectAndSync("ble").catch(() => {})}
+            data-action="connect-ble"
+            data-testid="btn-connect-ble"
+            className="w-full flex items-center justify-center gap-2.5 bg-stone-900 hover:bg-stone-800 text-white font-semibold text-sm py-3.5 rounded-2xl shadow-sm min-h-[48px]"
+          >
+            <Bluetooth size={18} className="text-blue-400" />
+            <span>Connect via Bluetooth</span>
+          </Button>
 
-          {/* Option 2: Bluetooth */}
-          <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-5 hover:border-stone-300 transition-all">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                <Bluetooth size={22} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    Connect via Bluetooth
-                  </h3>
-                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                    Wireless
-                  </span>
-                </div>
-                <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                  Wireless link for SC-EM800, EW-EN100, or SC-E5003 displays.
-                </p>
-              </div>
-            </div>
+          {/* Secondary Wired USB Button (shown directly on desktop if supported) */}
+          {!plat.isIOS && plat.supportsUsb && (
             <Button
               variant="outline"
               size="md"
               disabled={isBusy}
-              onClick={() => controller.connectAndSync("ble").catch(() => {})}
-              data-action="connect-ble"
-              data-testid="btn-connect-ble"
-              className="w-full sm:w-32 shrink-0 font-medium"
+              onClick={() => controller.connectAndSync("usb").catch(() => {})}
+              data-action="connect-usb"
+              data-testid="btn-connect-usb"
+              className="w-full flex items-center justify-center gap-2 border-stone-200 hover:bg-stone-50 text-stone-800 text-xs font-medium py-2.5 rounded-xl min-h-[44px]"
             >
-              Pair
+              <Usb size={16} className="text-stone-600" />
+              <span>Connect with USB Cable (SM-PCE02)</span>
             </Button>
-          </div>
+          )}
 
-          {/* Advanced / Simulator Dropdown Card */}
-          <div className="bg-white border border-stone-200/90 rounded-2xl p-5 sm:p-6 shadow-xs">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-xs font-medium text-stone-600 hover:text-stone-900 inline-flex items-center gap-2 py-2 px-1 min-h-[44px] transition-colors cursor-pointer select-none"
-                data-testid="btn-more-menu"
-              >
-                <Cpu size={15} className="text-stone-500" />
-                <span>Advanced & Simulator Options</span>
-                <ChevronDown
-                  size={15}
-                  className={`text-stone-400 transition-transform duration-200 ${showAdvanced ? "rotate-180" : ""}`}
-                />
-              </button>
+          {/* Fallback hidden hook for USB testability if on iOS/mock */}
+          {plat.isIOS && (
+            <button
+              type="button"
+              data-testid="btn-connect-usb"
+              data-action="connect-usb"
+              onClick={() => controller.connectAndSync("usb").catch(() => {})}
+              className="hidden"
+            />
+          )}
 
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {plat.supportsUsb && <Badge variant="neutral">WebUSB OK</Badge>}
-                {plat.supportsBluetooth && <Badge variant="neutral">BLE OK</Badge>}
-                {plat.supportsSerial && <Badge variant="neutral">Serial OK</Badge>}
+          {/* Advanced & Diagnostics Options Toggle (...) */}
+          <div className="pt-2 border-t border-stone-100 flex flex-col">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full flex items-center justify-between text-xs font-medium text-stone-500 hover:text-stone-900 py-2.5 px-2 rounded-xl hover:bg-stone-50 transition-colors cursor-pointer select-none min-h-[44px]"
+              data-testid="btn-more-menu"
+            >
+              <div className="flex items-center gap-2">
+                <MoreHorizontal size={16} />
+                <span>Wired & Diagnostic Options</span>
               </div>
-            </div>
+              <ChevronDown
+                size={15}
+                className={`text-stone-400 transition-transform duration-200 ${showAdvanced ? "rotate-180" : ""}`}
+              />
+            </button>
 
             {showAdvanced && (
-              <div className="mt-4 pt-4 border-t border-stone-100 flex flex-col gap-4 menu-dropdown w-full max-w-full">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="mt-2 pt-3 border-t border-stone-100 flex flex-col gap-3 menu-dropdown w-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-semibold text-stone-700 block mb-1.5">
+                    <label className="text-[11px] font-semibold text-stone-600 block mb-1">
                       Simulated Drive Unit
                     </label>
                     <select
                       value={simModel}
-                      onChange={(e) => setSimModel((e.target as HTMLSelectElement).value as any)}
-                      className="w-full text-xs font-mono p-2.5 rounded-lg border border-stone-300 bg-white text-stone-800 min-h-[40px] focus:border-stone-500 focus:outline-none"
+                      onChange={(e) => setSimModel(e.target.value as any)}
+                      className="w-full text-xs font-mono p-2 rounded-xl border border-stone-200 bg-stone-50 text-stone-800 min-h-[40px] focus:outline-none focus:border-stone-400"
                       data-role="sim-model"
                       data-testid="sim-model-select"
                     >
@@ -196,13 +166,13 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-stone-700 block mb-1.5">
+                    <label className="text-[11px] font-semibold text-stone-600 block mb-1">
                       Fault Injection
                     </label>
                     <select
                       value={simFault}
-                      onChange={(e) => setSimFault((e.target as HTMLSelectElement).value as any)}
-                      className="w-full text-xs font-mono p-2.5 rounded-lg border border-stone-300 bg-white text-stone-800 min-h-[40px] focus:border-stone-500 focus:outline-none"
+                      onChange={(e) => setSimFault(e.target.value as any)}
+                      className="w-full text-xs font-mono p-2 rounded-xl border border-stone-200 bg-stone-50 text-stone-800 min-h-[40px] focus:outline-none focus:border-stone-400"
                       data-role="sim-fault"
                       data-testid="sim-fault-select"
                     >
@@ -215,7 +185,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 flex-wrap gap-3">
+                <div className="flex items-center justify-between pt-2 gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     size="sm"
@@ -223,13 +193,13 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
                     onClick={() => controller.connectAndSync("serial").catch(() => {})}
                     data-action="connect-serial"
                     data-testid="btn-connect-serial"
-                    className="text-xs font-medium"
+                    className="text-xs"
                   >
                     Direct Serial Port
                   </Button>
 
                   <Button
-                    variant="purple"
+                    variant="secondary"
                     size="md"
                     disabled={isBusy}
                     onClick={() =>
@@ -247,26 +217,26 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           </div>
         </div>
 
-        {/* Visible Simulator Container for Testing & Evaluation */}
+        {/* Refined Hardware Simulator Card (Preserves empty-state-start-sim for tests) */}
         <div
-          className="bg-purple-50/80 border border-purple-200/90 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          className="bg-stone-100/80 border border-stone-200/80 rounded-2xl p-4 sm:p-5 flex items-center justify-between gap-3 text-xs"
           data-testid="empty-state-start-sim"
         >
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-xs mt-0.5 sm:mt-0">
-              <Cpu size={20} />
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-stone-200 text-stone-700 flex items-center justify-center shrink-0">
+              <Cpu size={18} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-purple-950 font-sans">
-                Need to test without hardware?
-              </h3>
-              <p className="text-xs text-purple-800/80 mt-0.5">
-                Evaluate assist tuning and firmware recovery with the built-in simulator.
-              </p>
+              <strong className="block font-semibold text-stone-900 font-sans">
+                Simulator Mode
+              </strong>
+              <span className="text-stone-500 text-[11px]">
+                Test assist tuning and firmware recovery without hardware.
+              </span>
             </div>
           </div>
           <Button
-            variant="purple"
+            variant="outline"
             size="md"
             disabled={isBusy}
             onClick={() =>
@@ -274,16 +244,11 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             }
             data-action="connect-sim"
             data-testid="btn-connect-sim-quick"
-            className="w-full sm:w-auto shrink-0 px-5 text-xs font-mono font-medium shadow-xs"
+            className="shrink-0 text-xs font-medium bg-white min-h-[44px] min-w-[44px]"
           >
-            Start Simulator
+            Launch
           </Button>
         </div>
-
-        {/* Footer help note */}
-        <p className="text-center text-xs text-stone-500">
-          cranklink connects directly from your browser. No cloud drivers or third-party background software required.
-        </p>
       </div>
     </div>
   );

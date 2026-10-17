@@ -1,7 +1,7 @@
-import { h, type ComponentChildren } from "preact";
+import type { ReactNode } from "react";
 
 export interface CardProps {
-  children: ComponentChildren;
+  children: ReactNode;
   className?: string;
   onClick?: () => void;
   hoverable?: boolean;
@@ -17,17 +17,16 @@ export function Card({
 }: CardProps) {
   const clickableStyles =
     hoverable || onClick
-      ? "hover:border-stone-400 hover:shadow-md cursor-pointer active:scale-[0.99] transition-all"
+      ? "hover:border-stone-300 hover:shadow-sm cursor-pointer active:scale-[0.99] transition-all"
       : "";
 
-  // If the caller specified padding (e.g. p-, px-, py-), do not inject default padding
   const hasPadding = /(?:^|\s)p[xytrbl]?-/.test(className);
-  const defaultPadding = hasPadding ? "" : "p-5 sm:p-6";
+  const defaultPadding = hasPadding ? "" : "p-6 sm:p-7";
 
   return (
     <div
       onClick={onClick}
-      className={`bg-white border border-stone-200/90 rounded-2xl shadow-xs ${defaultPadding} ${clickableStyles} ${className}`.trim()}
+      className={`bg-white border border-stone-200/80 rounded-3xl shadow-xs ${defaultPadding} ${clickableStyles} ${className}`.trim()}
       data-testid={dataTestId}
     >
       {children}
