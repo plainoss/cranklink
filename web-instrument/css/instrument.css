@@ -1,13 +1,26 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
-/**
- * cranklink web-instrument - Modern Apple/Google Clean Aesthetic
- */
+/* Shared controls use HeroUI's BEM classes; app-specific layout stays in Tailwind. */
 
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+/* Legacy purple variant retained for Button API compatibility. */
+.button--purple {
+  background-color: #6d28d9;
+  color: white;
+  border-color: transparent;
+}
+
+.button--purple:hover {
+  background-color: #5b21b6;
+}
+
+.button--purple:active {
+  background-color: #4c1d95;
 }
 
 html,

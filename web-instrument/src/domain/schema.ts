@@ -51,12 +51,11 @@ export const PARAMETER_GROUPS: ParameterGroupInfo[] = [
 ];
 
 export const TIRE_PRESETS: SettingPreset[] = [
-  { label: '29" × 2.4" (2280 mm)', value: 2280 },
-  { label: '29" × 2.2" (2250 mm)', value: 2250 },
-  { label: '27.5" × 2.6" (2200 mm)', value: 2200 },
-  { label: '27.5" × 2.35" (2150 mm)', value: 2150 },
-  { label: '700c × 38 (2140 mm)', value: 2140 },
-  { label: '20" Cargo (1620 mm)', value: 1620 },
+  // Chart values are estimates; the loaded wheel's measured rollout is most accurate.
+  { label: '29" × 2.1" (2288 mm)', value: 2288 },
+  { label: '27.5" × 2.25" (2180 mm)', value: 2180 },
+  { label: '26" × 2.0" (2055 mm)', value: 2055 },
+  { label: '20" Cargo × 2.15" (1620 mm)', value: 1620 },
 ];
 
 export const LEGACY_DESTINATION_LABELS: Record<number, string> = {

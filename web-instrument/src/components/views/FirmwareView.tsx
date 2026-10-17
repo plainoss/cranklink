@@ -1,6 +1,5 @@
 import { useState, useRef, type DragEvent } from "react";
 import {
-  ArrowLeft,
   Disc3,
   UploadCloud,
   FileCheck2,
@@ -17,10 +16,9 @@ import { Badge } from "../ui/Badge.tsx";
 interface FirmwareViewProps {
   state: InstrumentState;
   controller: SessionController;
-  onBack?: () => void;
 }
 
-export function FirmwareView({ state, controller, onBack }: FirmwareViewProps) {
+export function FirmwareView({ state, controller }: FirmwareViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -46,22 +44,7 @@ export function FirmwareView({ state, controller, onBack }: FirmwareViewProps) {
       className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-4"
       data-testid="firmware-section"
     >
-      {/* Top action row */}
-      <div className="flex items-center justify-between">
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-2 text-xs font-semibold text-stone-600 hover:text-stone-900 cursor-pointer select-none py-1.5 px-3 rounded-xl hover:bg-stone-200/60 transition-colors"
-            data-testid="btn-back-overview"
-          >
-            <ArrowLeft size={15} />
-            <span>Back to Overview</span>
-          </button>
-        ) : (
-          <span className="text-xs font-mono font-medium text-stone-500">Firmware Studio</span>
-        )}
-
+      <div className="flex items-center justify-end">
         <Badge variant={firmware.companionValid ? "success" : "neutral"}>
           {firmware.companionValid ? "Companion Verified" : "Waiting for Files"}
         </Badge>

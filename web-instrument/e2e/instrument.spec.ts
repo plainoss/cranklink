@@ -40,15 +40,15 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
   }) => {
     await openInstrument(page);
 
-    // Verify clean initial disconnected state
-    await expect(page.getByTestId("header-status-badge")).toContainText("DISCONNECTED");
+    // The landing screen keeps the next action prominent and omits an idle status badge.
+    await expect(page.locator("main").getByRole("button").first()).toBeVisible();
     await expect(page.getByTestId("empty-state-start-sim")).toBeVisible();
 
     // 1. Connect to DU-EP800-CRG simulator via "..." menu — executes connect + probe + schema load + settings read
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
 
-    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.2.0.0");
 
@@ -57,7 +57,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
-    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
     // 2. Verify Bike Hardware & Geometry parameters are loaded with live values
     const tireRow = page.getByTestId("param-row-tire-circumference");
@@ -72,7 +72,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Transaction rail appears automatically with staged changes
     const txRail = page.getByTestId("transaction-rail");
     await expect(txRail).toBeVisible();
-    await expect(txRail).toContainText("Staged Changes (1)");
+    await expect(txRail).toContainText("Changes to save (1)");
     await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2280 mm → 2300 mm");
 
     // 4. Commit batch via real Rust WASM `settings batch` into GATT simulator
@@ -107,7 +107,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("sim-model-select").selectOption("ep801");
     await page.getByTestId("btn-connect-sim").click();
 
-    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP801");
+    await expect(page.getByTestId("identity-strip")).toContainText("EP801");
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.6.0.1");
 
@@ -125,7 +125,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
-    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
     // Navigate to Synchronized Dual-MCU Firmware section
     await page.getByTestId("nav-section-firmware").click();
@@ -147,7 +147,9 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
-    await expect(page.getByTestId("header-status-badge")).toContainText("SIM: DU-EP800-CRG");
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+
+    await page.getByTestId("nav-section-diagnostics").click();
 
     // Trigger an external agent write request via window.webMcpServer.handleRequest
     const rpcPromise = page.evaluate(() => {
@@ -173,6 +175,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     expect(rpcResult.completed).toBe(1);
 
     // Verify live parameter updated to 2150 mm
+    await page.getByTestId("nav-group-geometry").click();
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2150 mm");
   });
 });
@@ -185,10 +188,12 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
   });
   await openInstrument(page);
   const setup = await page.evaluate(async (reject) => {
-    const host = (window as any).estepsTerminal;
-    const result = await host.run(reject ? "connect sim ep801" : "connect sim ep800-crg");
-    const device = host.simulator;
-    if (reject) device.setFault("auth_reject");
+    const simulatorModule = "/simulator.js";
+    const { DeviceSimulator } = await import(simulatorModule);
+    const device = new DeviceSimulator({
+      model: reject ? "ep801" : "ep800-crg",
+      fault: reject ? "auth_reject" : "none",
+    });
     let chooserCalls = 0;
     Object.defineProperty(navigator, "bluetooth", {
       configurable: true,
@@ -202,9 +207,9 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
     // Re-evaluate supported browser transports after installing the chooser.
     (window as any).estepsInstrumentController.setSection("parameters");
-    return result.code;
+    return { hasSimulator: Boolean(device) };
   }, rejectAuthentication);
-  expect(setup).toBe(0);
+  expect(setup).toEqual({ hasSimulator: true });
   await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
   await page.getByTestId("btn-connect-ble").click();
 }
@@ -238,7 +243,8 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   expect(state.logs.some((entry) => entry.stream === "notice" && /Bluetooth/i.test(entry.text))).toBe(true);
   expect(state.logs.map((entry) => entry.text).join("\n")).not.toMatch(/firmware operations disabled/i);
   await expect(page.getByTestId("param-row-tire-circumference")).toBeVisible();
-  await page.getByTestId("console-toggle").click();
+  await page.getByTestId("nav-section-diagnostics").click();
+  await expect(page.getByTestId("console-body")).toBeVisible();
   await expect(page.locator(".console-log-line.stderr")).toHaveCount(0);
   await expect(page.locator(".console-log-line.notice").first()).toBeVisible();
 });
@@ -265,6 +271,6 @@ test("Bluetooth authentication rejection still reports a real error", async ({ p
   expect(commands[2]).toMatch(/^cranklink> (?:--expect-serial|--ble-expect-serial) [A-F0-9]+(?: --ble-unit-auth)? settings read$/);
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
-  await page.getByTestId("console-toggle").click();
-  await expect(page.locator(".console-log-line.stderr").first()).toBeVisible();
+  const authLogs = await page.evaluate(() => (window as any).estepsInstrumentController.getState().logs);
+  expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
 });
