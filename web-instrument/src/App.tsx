@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
-  Zap,
   Disc3,
   ShieldCheck,
   LogOut,
@@ -18,6 +17,7 @@ import {
   ShieldAlert,
   Cog,
   Wrench,
+  Save,
 } from "lucide-react";
 import type { InstrumentState } from "./types.ts";
 import type { SessionController } from "./core/sessionController.ts";
@@ -65,6 +65,7 @@ export function App({ controller }: AppProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
+  const [mobileReviewOpen, setMobileReviewOpen] = useState(false);
 
   // Sync state from sessionController
   useEffect(() => {
@@ -184,6 +185,11 @@ export function App({ controller }: AppProps) {
     state.phase === "connecting" ||
     state.phase === "probing" ||
     state.phase === "error";
+  const stagedCount = Object.keys(state.stagedValues).length;
+
+  useEffect(() => {
+    if (stagedCount === 0) setMobileReviewOpen(false);
+  }, [stagedCount]);
 
   if (isDisconnected) {
     return (
@@ -208,8 +214,6 @@ export function App({ controller }: AppProps) {
     if (identity.modelSlug === "ep600") return "Shimano EP6 (DU-EP600)";
     return identity.model || "Shimano STEPS";
   };
-
-  const stagedCount = Object.keys(state.stagedValues).length;
 
   return (
       <div className="min-h-screen bg-[#f4f3ef] text-stone-900 font-sans flex flex-col lg:flex-row selection:bg-stone-900 selection:text-white pb-8">
@@ -271,38 +275,26 @@ export function App({ controller }: AppProps) {
 
             {/* 2. Ride Tuning (Parent) */}
             <div className="flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => navigateTo("tune", activeCategory)}
-                data-testid={mobileDrawerOpen ? undefined : "nav-section-parameters"}
-                data-action="nav-tune"
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer min-h-[42px] ${
-                  currentGoal === "tune"
-                    ? "bg-stone-900 text-white shadow-xs"
-                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Zap size={16} className={currentGoal === "tune" ? "text-amber-400" : "text-stone-500"} />
-                  <span>Ride Feel & Tuning</span>
-                </div>
+              <div className="flex items-center justify-between px-3.5 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-500" data-testid={mobileDrawerOpen ? undefined : "nav-section-parameters"}>
+                <span>Tuning</span>
                 {stagedCount > 0 && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-amber-400 text-stone-950 font-bold">
+                  <span className="text-[10px] normal-case tracking-normal font-mono px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-950 font-bold">
                     {stagedCount}
                   </span>
                 )}
-              </button>
+              </div>
 
             {/* Tuning Sub-items */}
-            <div className="flex flex-col gap-0.5 pl-6 pr-1">
+            <div className="flex flex-col gap-0.5 px-1">
               <button
                 type="button"
                 onClick={() => navigateTo("tune", "geometry")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-geometry"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "geometry" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "geometry"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <Compass size={14} />
@@ -312,10 +304,11 @@ export function App({ controller }: AppProps) {
                 type="button"
                 onClick={() => navigateTo("tune", "profiles")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-profiles"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "profiles" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "profiles"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <Sliders size={14} />
@@ -325,10 +318,11 @@ export function App({ controller }: AppProps) {
                 type="button"
                 onClick={() => navigateTo("tune", "drivetrain")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-drivetrain"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "drivetrain" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "drivetrain"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <Cog size={14} />
@@ -338,10 +332,11 @@ export function App({ controller }: AppProps) {
                 type="button"
                 onClick={() => navigateTo("tune", "maintenance")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-maintenance"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "maintenance" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "maintenance"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <Wrench size={14} />
@@ -351,10 +346,11 @@ export function App({ controller }: AppProps) {
                 type="button"
                 onClick={() => navigateTo("tune", "oem")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-oem"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "oem" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "oem"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <ShieldCheck size={14} />
@@ -364,10 +360,11 @@ export function App({ controller }: AppProps) {
                 type="button"
                 onClick={() => navigateTo("tune", "all")}
                 data-testid={mobileDrawerOpen ? undefined : "nav-group-all"}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[36px] ${
+                aria-current={currentGoal === "tune" && activeCategory === "all" ? "page" : undefined}
+                className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer min-h-[40px] ${
                   currentGoal === "tune" && activeCategory === "all"
-                    ? "text-stone-900 bg-stone-100 font-bold"
-                    : "text-stone-500 hover:text-stone-800 hover:bg-stone-50"
+                    ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                    : "text-stone-600 border-transparent hover:text-stone-900 hover:bg-stone-100"
                 }`}
               >
                 <Layers size={14} />
@@ -503,34 +500,26 @@ export function App({ controller }: AppProps) {
                   <Gauge size={16} />
                   <span>Overview & Health</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => navigateTo("tune", activeCategory)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold min-h-[44px] ${
-                    currentGoal === "tune" ? "bg-stone-900 text-white" : "text-stone-700 hover:bg-stone-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Zap size={16} />
-                    <span>Ride Feel & Tuning</span>
-                  </div>
+                <div className="flex items-center justify-between px-3.5 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                  <span>Tuning</span>
                   {stagedCount > 0 && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-amber-400 text-stone-950 font-bold">
+                    <span className="text-[10px] normal-case tracking-normal font-mono px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-950 font-bold">
                       {stagedCount}
                     </span>
                   )}
-                </button>
+                </div>
 
                 {/* Mobile Tuning Sub-items */}
-                <div className="flex flex-col gap-0.5 pl-6 pr-1">
+                <div className="flex flex-col gap-0.5 px-1">
                   <button
                     type="button"
                     onClick={() => navigateTo("tune", "geometry")}
                     data-testid="nav-group-geometry"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "geometry" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "geometry"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <Compass size={14} />
@@ -540,10 +529,11 @@ export function App({ controller }: AppProps) {
                     type="button"
                     onClick={() => navigateTo("tune", "profiles")}
                     data-testid="nav-group-profiles"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "profiles" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "profiles"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <Sliders size={14} />
@@ -553,10 +543,11 @@ export function App({ controller }: AppProps) {
                     type="button"
                     onClick={() => navigateTo("tune", "drivetrain")}
                     data-testid="nav-group-drivetrain"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "drivetrain" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "drivetrain"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <Cog size={14} />
@@ -566,10 +557,11 @@ export function App({ controller }: AppProps) {
                     type="button"
                     onClick={() => navigateTo("tune", "maintenance")}
                     data-testid="nav-group-maintenance"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "maintenance" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "maintenance"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <Wrench size={14} />
@@ -579,10 +571,11 @@ export function App({ controller }: AppProps) {
                     type="button"
                     onClick={() => navigateTo("tune", "oem")}
                     data-testid="nav-group-oem"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "oem" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "oem"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <ShieldCheck size={14} />
@@ -592,10 +585,11 @@ export function App({ controller }: AppProps) {
                     type="button"
                     onClick={() => navigateTo("tune", "all")}
                     data-testid="nav-group-all"
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
+                    aria-current={currentGoal === "tune" && activeCategory === "all" ? "page" : undefined}
+                    className={`w-full flex items-center gap-2 border-l-[3px] px-3 py-2 rounded-lg text-xs font-medium text-left cursor-pointer min-h-[44px] ${
                       currentGoal === "tune" && activeCategory === "all"
-                        ? "text-stone-900 bg-stone-100 font-bold"
-                        : "text-stone-600 hover:bg-stone-50"
+                        ? "text-stone-950 bg-amber-100 border-amber-500 font-bold"
+                        : "text-stone-600 border-transparent hover:bg-stone-100"
                     }`}
                   >
                     <Layers size={14} />
@@ -728,9 +722,27 @@ export function App({ controller }: AppProps) {
             )}
 
             {stagedCount > 0 && (
-              <Badge variant="warning" className="hidden sm:inline-flex text-xs">
-                {stagedCount} staged
-              </Badge>
+              <>
+                <Badge variant="warning" className="hidden sm:inline-flex text-xs">
+                  {stagedCount} to save
+                </Badge>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentGoal !== "tune") navigateTo("tune", activeCategory);
+                    setMobileReviewOpen(true);
+                  }}
+                  aria-label={`Review ${stagedCount} changes and save to device`}
+                  aria-expanded={mobileReviewOpen}
+                  data-testid="btn-review-changes"
+                  className="lg:hidden relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-amber-300 bg-amber-100 text-amber-950 shadow-sm hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                >
+                  <Save size={19} strokeWidth={2.4} />
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-none text-stone-950">
+                    {stagedCount}
+                  </span>
+                </button>
+              </>
             )}
 
           </div>
@@ -768,6 +780,8 @@ export function App({ controller }: AppProps) {
               controller={controller}
               category={activeCategory}
               searchFilterProp={searchQuery}
+              mobileReviewOpen={mobileReviewOpen}
+              onMobileReviewOpenChange={setMobileReviewOpen}
             />
           )}
 

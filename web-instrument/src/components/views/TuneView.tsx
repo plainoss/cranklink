@@ -15,6 +15,7 @@ import {
   Wrench,
   Layers,
   ChevronDown,
+  X,
 } from "lucide-react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
@@ -43,6 +44,8 @@ interface TuneViewProps {
   controller: SessionController;
   category?: TuneCategory;
   searchFilterProp?: string;
+  mobileReviewOpen: boolean;
+  onMobileReviewOpenChange: (open: boolean) => void;
 }
 
 export function TuneView({
@@ -50,10 +53,11 @@ export function TuneView({
   controller,
   category,
   searchFilterProp = "",
+  mobileReviewOpen,
+  onMobileReviewOpenChange,
 }: TuneViewProps) {
   const [profileTab, setProfileTab] = useState<"1" | "2">("1");
   const [diffModalOpen, setDiffModalOpen] = useState(false);
-  const [mobileRailOpen, setMobileRailOpen] = useState(false);
 
   const isDesktop = typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
 
@@ -90,6 +94,7 @@ export function TuneView({
 
   const handleCommit = async () => {
     setDiffModalOpen(false);
+    onMobileReviewOpenChange(false);
     try {
       await controller.commitStagedBatch();
     } catch {
@@ -223,7 +228,7 @@ export function TuneView({
     <div className="w-full flex flex-col gap-6 py-2">
       {/* 1. Bike Hardware, Region & Geometry Section */}
       {showGeometry && (
-        <Card className="flex flex-col gap-6 shadow-xs border-stone-200">
+        <Card className="p-4 sm:p-5 flex flex-col gap-4 shadow-xs border-stone-200">
           <div>
             <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
               <Globe size={18} className="text-blue-600" />
@@ -235,7 +240,7 @@ export function TuneView({
           </div>
 
           {/* Region / Destination Selector */}
-          <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3">
+          <div className="p-3 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-sm font-semibold text-stone-900 block">
@@ -267,7 +272,7 @@ export function TuneView({
 
           {/* Speed Assist Limit Slider */}
           <div
-            className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3"
+            className="p-3 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-3"
             data-testid="param-row-speed-limit"
           >
             <div className="flex items-center justify-between">
@@ -1046,32 +1051,26 @@ export function TuneView({
         </Card>
       )}
 
-      {/* Mobile Review Dock Trigger (shown only on mobile before rail is opened) */}
-      {stagedCount > 0 && !mobileRailOpen && (
-        <button
-          type="button"
-          onClick={() => setMobileRailOpen(true)}
-          data-action="review-changes"
-          data-testid="btn-review-changes"
-          className="w-full py-3.5 px-4 rounded-xl bg-amber-500 text-stone-950 font-bold text-sm shadow-md hover:bg-amber-400 min-h-[48px] flex items-center justify-center gap-2 cursor-pointer select-none lg:hidden"
-        >
-          <span>Review {stagedCount} Staged Change{stagedCount > 1 ? "s" : ""}</span>
-        </button>
-      )}
-
       {/* Floating Bottom Transaction Rail (always on desktop; on mobile when review is tapped) */}
-      {stagedCount > 0 && (mobileRailOpen || isDesktop) && (
+      {stagedCount > 0 && (mobileReviewOpen || isDesktop) && (
         <aside
           tabIndex={-1}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-xl bg-stone-900 text-white rounded-2xl p-4 shadow-2xl flex items-center justify-between gap-4 z-40 border border-stone-700 animate-in fade-in slide-in-from-bottom-4 duration-200 transaction-rail"
+          className={`fixed z-40 border border-stone-700 bg-stone-900 text-white shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200 transaction-rail ${isDesktop ? "bottom-6 left-1/2 -translate-x-1/2 flex w-[calc(100%-2rem)] max-w-xl items-center justify-between gap-4 rounded-2xl p-4" : "inset-x-3 bottom-3 flex max-h-[min(60dvh,34rem)] flex-col gap-3 rounded-2xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"}`}
           data-testid="transaction-rail"
-          aria-label="Staged Transaction"
+          aria-label="Changes to save"
         >
-          <div className="flex flex-col">
-            <span className="text-xs font-medium text-amber-400">
-              Staged Changes ({stagedCount})
-            </span>
-            <div className="text-xs text-stone-300 font-mono mt-0.5">
+          <div className={`flex min-w-0 flex-col ${isDesktop ? "" : "min-h-0"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-amber-300">
+                Changes to save ({stagedCount})
+              </span>
+              {!isDesktop && (
+                <button type="button" onClick={() => onMobileReviewOpenChange(false)} aria-label="Close save panel" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-stone-300 hover:bg-white/10 hover:text-white">
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+            <div className={`mt-1 text-xs text-stone-300 ${isDesktop ? "font-mono" : "min-h-0 overflow-y-auto overscroll-contain"}`}>
               {Object.entries(state.stagedValues).map(([name, val]) => {
                 const live = state.liveValues[name]?.value ?? "unset";
                 const unit =
@@ -1083,21 +1082,21 @@ export function TuneView({
                     ? " Nm"
                     : "";
                 return (
-                  <div key={name} data-testid={`tx-item-${name}`}>
-                    {name}: {live}{unit} → {val}{unit}
+                  <div key={name} data-testid={`tx-item-${name}`} className={isDesktop ? "" : "border-t border-white/10 py-1.5 first:border-0"}>
+                    <span className={isDesktop ? "" : "font-medium text-white"}>{name.replaceAll("-", " ")}: </span>{live}{unit} → {val}{unit}
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className={`flex shrink-0 gap-2 ${isDesktop ? "items-center" : "items-center [&>*]:flex-1"}`}>
             <Button
               variant="custom"
               size="sm"
               onClick={() => {
                 controller.discardAllStaged();
-                setMobileRailOpen(false);
+                onMobileReviewOpenChange(false);
               }}
               data-testid="btn-discard-staged"
               className="bg-transparent text-stone-300 hover:bg-white/10 hover:text-white text-xs min-h-[44px] min-w-[44px]"
@@ -1108,21 +1107,21 @@ export function TuneView({
               variant="custom"
               size="sm"
               onClick={() => setDiffModalOpen(true)}
-              className="bg-amber-400 text-stone-950 hover:bg-amber-300 text-xs font-bold min-h-[44px] min-w-[44px]"
+              className={`${isDesktop ? "bg-amber-400 text-stone-950 hover:bg-amber-300" : "hidden"} text-xs font-bold min-h-[44px] min-w-[44px]`}
             >
-              Review Diff
+              Review changes
             </Button>
             <Button
               variant="custom"
               size="sm"
               onClick={async () => {
                 await controller.commitStagedBatch();
-                setMobileRailOpen(false);
+                onMobileReviewOpenChange(false);
               }}
               data-testid="btn-commit-batch"
               className="bg-white text-stone-950 hover:bg-stone-200 text-xs font-bold min-h-[44px] min-w-[44px]"
             >
-              Commit
+              Save to device
             </Button>
           </div>
         </aside>
@@ -1132,11 +1131,11 @@ export function TuneView({
       <Modal
         open={diffModalOpen}
         onOpenChange={(open) => setDiffModalOpen(open)}
-        title="Review Staged Parameters"
+        title="Review changes before saving"
       >
         <div className="flex flex-col gap-4">
           <p className="text-xs text-stone-600">
-            Verify parameter modifications before flashing to motor EEPROM:
+            Check these changes before saving them to your device:
           </p>
           <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 font-mono text-xs flex flex-col gap-1.5 max-h-60 overflow-y-auto">
             {Object.entries(state.stagedValues).map(([name, val]) => {
@@ -1163,7 +1162,7 @@ export function TuneView({
               onClick={handleCommit}
               className="bg-stone-900 text-white hover:bg-stone-800 min-h-[44px]"
             >
-              Commit Batch to Motor
+              Save to device
             </Button>
           </div>
         </div>

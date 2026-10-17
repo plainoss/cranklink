@@ -72,7 +72,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Transaction rail appears automatically with staged changes
     const txRail = page.getByTestId("transaction-rail");
     await expect(txRail).toBeVisible();
-    await expect(txRail).toContainText("Staged Changes (1)");
+    await expect(txRail).toContainText("Changes to save (1)");
     await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2280 mm → 2300 mm");
 
     // 4. Commit batch via real Rust WASM `settings batch` into GATT simulator
