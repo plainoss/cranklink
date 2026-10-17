@@ -312,7 +312,7 @@ enum SettingsCommand {
         /// Specific setting name to inspect (optional)
         name: Option<String>,
         /// Drive unit model schema
-        #[arg(long, default_value = "ep800-crg", value_parser = ["ep800-crg", "ep600", "ep801"])]
+        #[arg(long, default_value = "ep800-crg", value_parser = ["ep800-crg", "ep600", "ep801", "ep500", "e5100", "e8000", "e7000", "e6100", "e6000"])]
         model: String,
     },
     /// Read one setting, or every supported setting when no name is given
@@ -1305,16 +1305,42 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     let routing_decision = plan_ble_routing(cli.ble_master, &cli.command);
     let passkey = read_ble_passkey(&cli)?;
     notice_println!("Experimental Bluetooth transport: hardware validation pending.");
-    let mut session =
-        crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
+    #[cfg(target_arch = "wasm32")]
+    let cached = crate::wasm::take_ble_session_with_trace(cli.trace.as_deref())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let cached: Option<crate::ble::BleSession> = None;
+    #[cfg(target_arch = "wasm32")]
+    let routing_decision = if cached.as_ref().is_some_and(|s| s.is_master_routing())
+        && routing_decision.policy == BleRoutingPolicy::Auto
+    {
+        BleRoutingDecision {
+            route: "master",
+            policy: BleRoutingPolicy::Auto,
+            reason: "browser master routing retained until disconnect".into(),
+        }
+    } else {
+        routing_decision
+    };
+    let reused = cached.is_some();
+    let mut session = match cached {
+        Some(session) => session,
+        None => crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?,
+    };
     let result = (|| -> Result<Option<serde_json::Value>> {
-        session.authenticate()?;
-        if !matches!(
-            cli.command,
-            Command::Ble {
-                command: BleCommand::TestLink
-            }
-        ) {
+        if reused {
+            #[cfg(target_arch = "wasm32")]
+            session.resume_browser_command(routing_decision.is_master())?;
+        } else {
+            session.authenticate()?;
+        }
+        if !reused
+            && !matches!(
+                cli.command,
+                Command::Ble {
+                    command: BleCommand::TestLink
+                }
+            )
+        {
             session.set_master_routing(routing_decision.is_master())?;
         }
         match cli.command {
@@ -1418,6 +1444,20 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
             _ => unreachable!(),
         }
     })();
+    #[cfg(target_arch = "wasm32")]
+    let result: Result<Option<serde_json::Value>> = match result {
+        Ok(value) => match session.pause_browser_command() {
+            Ok(()) => {
+                crate::wasm::retain_ble_session(session);
+                if let Some(value) = value {
+                    out_println!("{}", serde_json::to_string_pretty(&value)?);
+                }
+                return Ok(());
+            }
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    };
     let stopped = session.stop();
     let closed = session.close();
     let result = finish_operation(
@@ -1530,12 +1570,26 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     )?;
 
     let passkey = read_ble_passkey(&cli)?;
-    let mut session =
-        crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
-    session.set_master_routing(true)?;
+    #[cfg(target_arch = "wasm32")]
+    let cached = crate::wasm::take_ble_session_with_trace(cli.trace.as_deref())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let cached: Option<crate::ble::BleSession> = None;
+    let reused = cached.is_some();
+    let mut session = match cached {
+        Some(session) => session,
+        None => crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?,
+    };
+    if !reused {
+        session.set_master_routing(true)?;
+    }
 
     let result = (|| -> Result<serde_json::Value> {
-        session.authenticate()?;
+        if reused {
+            #[cfg(target_arch = "wasm32")]
+            session.resume_browser_command(true)?;
+        } else {
+            session.authenticate()?;
+        }
         let (before, _) = ble_checked_start(&mut session, cli.slot, None, Some(serial_str))?;
         ensure!(
             parse_version(&before.dcas_version)? <= d.metadata.version
@@ -1862,6 +1916,12 @@ fn settings_model_name(name: &str) -> crate::settings::SettingsModel {
     match name {
         "ep600" => crate::settings::SettingsModel::Ep600,
         "ep801" => crate::settings::SettingsModel::Ep801,
+        "ep500" => crate::settings::SettingsModel::Ep500,
+        "e5100" => crate::settings::SettingsModel::E5100,
+        "e8000" => crate::settings::SettingsModel::E8000,
+        "e7000" => crate::settings::SettingsModel::E7000,
+        "e6100" => crate::settings::SettingsModel::E6100,
+        "e6000" => crate::settings::SettingsModel::E6000,
         _ => crate::settings::SettingsModel::Ep800Crg,
     }
 }
@@ -1875,12 +1935,10 @@ fn resolve_settings_model(
         identity.len() >= 3 && identity[2] == 0,
         "unsupported settings motor identity"
     );
-    match identity[1] {
-        0x23 if id.cargo == "00-CRG" => Ok(crate::settings::SettingsModel::Ep800Crg),
-        0x30 if id.dcas_version == "4.6.0.1" => Ok(crate::settings::SettingsModel::Ep600),
-        0x35 if id.dcas_version == "4.6.0.1" => Ok(crate::settings::SettingsModel::Ep801),
-        _ => anyhow::bail!("settings schema is not verified for this model/firmware"),
-    }
+    let params = crate::motor_support::read_params(session, id.slot, identity[1])?;
+    crate::motor_support::for_motor_params(identity[1], identity[2], &params)?
+        .settings
+        .context("named settings are not implemented for this motor")
 }
 
 fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleRoutingDecision {
@@ -2086,11 +2144,11 @@ fn execute_settings(
 ) -> Result<serde_json::Value> {
     let model = resolve_settings_model(session, id)?;
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
-    let serial_str = serial_raw
+    let serial = serial_raw
         .ok()
         .and_then(|r| crate::device::serial_bytes(&r).ok())
-        .map(hex::encode)
-        .unwrap_or_else(|| format!("slot{}", id.slot));
+        .map(hex::encode);
+    let serial_str = serial.clone().unwrap_or_else(|| format!("slot{}", id.slot));
 
     match command {
         SettingsCommand::Read { name, output } => {
@@ -2103,6 +2161,21 @@ fn execute_settings(
                     session, id.slot, model,
                 ))?;
                 snapshot["capabilities"] = crate::settings::capabilities_for_model(model);
+                // Include the identity verified in this session so browser
+                // callers can load settings without a separate probe connection.
+                let mut identity = serde_json::to_value(id)?;
+                identity["serial"] = serde_json::json!(serial);
+                identity["model_series"] = serde_json::json!(model.series());
+                identity["settings_model"] = serde_json::json!(model.slug());
+                let model_name =
+                    crate::motor_support::read_params(session, id.slot, model.series())
+                        .ok()
+                        .and_then(|params| {
+                            crate::unit_models::identify(model.series(), 0, None, Some(&params))
+                        });
+                identity["model_name"] = serde_json::json!(model_name.unwrap_or(model.name()));
+                identity["model_unit"] = serde_json::json!(0);
+                snapshot["identity"] = identity;
                 snapshot
             };
             if let Some(path) = output {

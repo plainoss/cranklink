@@ -405,17 +405,8 @@ export class EstepsInstrumentElement extends HTMLElement {
 
   private renderConnectionBar(state: InstrumentState, busy: boolean, isMoreMenuOpen = false): string {
     const isConnected = !!state.identity;
-    const isBrave = typeof navigator !== "undefined" && Boolean((navigator as any).brave);
-    const available = {
-      ble: "bluetooth" in navigator && !isBrave,
-      usb: "usb" in navigator,
-      serial: "serial" in navigator,
-    };
-    const unavailable = [
-      !available.ble && (isBrave ? "Bluetooth (disabled in Brave)" : "Bluetooth"),
-      !available.usb && "USB",
-      !available.serial && "Serial",
-    ].filter(Boolean);
+    const available = { ble: "bluetooth" in navigator, usb: "usb" in navigator, serial: "serial" in navigator };
+    const unavailable = [!available.ble && "Bluetooth", !available.usb && "USB", !available.serial && "Serial"].filter(Boolean);
 
     return `
       <section class="connection-bar" aria-label="Adapter Connection">
@@ -426,7 +417,7 @@ export class EstepsInstrumentElement extends HTMLElement {
               class="btn ${state.transport === "ble" ? "btn-primary" : ""}"
               data-action="connect-ble"
               data-testid="btn-connect-ble"
-              title="${available.ble ? "Connect a Bluetooth gateway" : isBrave ? "Web Bluetooth is disabled globally in Brave (use Chrome/Edge or enable brave://flags/#enable-web-bluetooth)" : "Web Bluetooth is unavailable in this browser"}"
+              title="${available.ble ? "Connect a Bluetooth gateway" : "Web Bluetooth is unavailable in this browser"}"
               ${busy || !available.ble ? "disabled" : ""}
             >
               Connect Bluetooth

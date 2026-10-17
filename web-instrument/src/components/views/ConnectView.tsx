@@ -12,9 +12,9 @@ import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../
 import type { SessionController } from "../../core/sessionController.ts";
 import {
   detectPlatform,
-  isBraveBrowser,
   checkBluetoothAvailability,
 } from "../../core/platform.ts";
+import { userFacingError } from "../../domain/errors.ts";
 import { Button } from "../ui/Button.tsx";
 
 interface ConnectViewProps {
@@ -28,14 +28,10 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
   const [simFault, setSimFault] = useState<FaultInjectionType>("none");
 
   const platform = detectPlatform();
-  const [isBrave, setIsBrave] = useState<boolean>(() => platform.isBrave);
   const [bleAvailable, setBleAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     let active = true;
-    isBraveBrowser().then((brave) => {
-      if (active && brave !== isBrave) setIsBrave(brave);
-    });
     checkBluetoothAvailability().then((avail) => {
       if (active) setBleAvailable(avail);
     });
@@ -48,7 +44,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
   const canUseBluetooth =
     platform.supportsBluetooth &&
     (!platform.isIOS || platform.isBluefy) &&
-    (!isBrave || bleAvailable === true);
+    bleAvailable !== false;
   const primaryTransport = canUseBluetooth
     ? "ble"
     : platform.supportsUsb
@@ -76,7 +72,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           ? "Connect with cable"
           : platform.isIOS && !platform.isBluefy
             ? "Open in Bluefy to connect"
-            : isBrave && bleAvailable !== true
+            : platform.supportsBluetooth && bleAvailable === false
               ? "Open in Chrome or Edge to connect"
               : "Connection unavailable";
 
@@ -92,23 +88,23 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" />
             <div className="text-sm min-w-0">
               <p className="font-semibold">Couldn’t connect</p>
-              <p className="text-red-700 mt-1 break-words">{state.errorBanner}</p>
+              <p className="text-red-700 mt-1 break-words">{userFacingError(state.errorBanner)}</p>
             </div>
           </div>
         )}
 
-        {isBrave && bleAvailable !== true && (
+        {platform.supportsBluetooth && bleAvailable === false && !platform.isIOS && (
           <div
             className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-sm leading-relaxed"
-            data-testid="brave-bluetooth-warning"
+            data-testid="bluetooth-unavailable-warning"
             role="status"
           >
             <AlertCircle size={20} className="text-amber-700 shrink-0 mt-0.5" />
             <div>
-              <strong className="block font-semibold">Brave disables Web Bluetooth by default</strong>
+              <strong className="block font-semibold">Web Bluetooth is unavailable or disabled</strong>
               <span>
                 To connect wirelessly, use a browser that supports Web Bluetooth (such as Google Chrome or Microsoft Edge),
-                or enable Web Bluetooth in Brave by opening <code className="bg-amber-100 px-1.5 py-0.5 rounded text-xs font-mono select-all">brave://flags/#enable-web-bluetooth</code> and relaunching.
+                or check your browser's Bluetooth settings and flags.
                 {platform.supportsUsb && " You can also connect directly via USB using an SM-PCE02 adapter."}
               </span>
             </div>
@@ -127,7 +123,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
           </div>
         )}
 
-        {!primaryTransport && !(platform.isIOS && !platform.isBluefy) && !(isBrave && bleAvailable !== true) && (
+        {!primaryTransport && !(platform.isIOS && !platform.isBluefy) && !(platform.supportsBluetooth && bleAvailable === false) && (
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-sm leading-relaxed">
             This browser does not provide a compatible connection. Try Chrome or Edge on a supported desktop device.
           </div>
@@ -146,6 +142,12 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             {primaryTransport === "ble" ? <Bluetooth size={18} className="text-blue-300" /> : <Usb size={18} />}
             <span>{primaryLabel}</span>
           </Button>
+
+          {canUseBluetooth && (
+            <p className="mt-3 text-xs text-stone-500 leading-relaxed" data-testid="bluetooth-discovery-hint">
+              For Bluetooth, turn the bike on just before connecting. If it isn’t listed, turn it off and on again, then enable its Bluetooth connection mode if needed.
+            </p>
+          )}
 
           {hasOptions && (
             <div className="mt-3">

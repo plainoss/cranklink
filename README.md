@@ -122,7 +122,7 @@ cranklink --port usb -s <SERIAL> settings read --output settings.json
 ```
 
 Replace `<SERIAL>` with the motor's 12-digit wire-order hex serial (e.g. `010203040506`, returned by `cranklink probe`).
-Over Bluetooth (`--port 'ble:DEVICE_ID'`), `cranklink` automatically selects BLE master routing (`--ble-master[=auto|normal|master]`, default `auto`) when writing or restoring settings that require PC-link owner zero (`destination`, `tire-circumference`, `lamp`, `lighting-time`), while preserving ordinary routing for reads, `--dry-run`, and other writes. Modifying or restoring `oem`-protected settings automatically performs drive-unit authentication on supported firmware (override with `--unit-auth` or `--no-auth`).
+Over Bluetooth (`--port 'ble:DEVICE_ID'`), `cranklink` automatically selects BLE master routing (`--ble-master[=auto|normal|master]`, default `auto`) when writing or restoring settings that require PC-link owner zero (`destination`, `tire-circumference`, `lamp`, `lighting-time`), while preserving ordinary routing for reads, `--dry-run`, and other writes. Modifying or restoring `oem`-protected settings automatically performs drive-unit authentication on supported motor families over USB/serial and BLE (EP800/EP800-CRG, EP600/EP600-CRG, EP801/EP801-CRG, EP500, E5100, and supported older E-series subsets; override with `--unit-auth` or `--no-auth`). Authorization is selected by live motor identity rather than an exact firmware-patch allowlist. Supported fields still depend on firmware and device permissions; see [settings compatibility](docs/settings-protocol.md#compatibility-and-validation).
 See [settings and batch plans](docs/settings-protocol.md), [Bluetooth setup and commands](docs/bluetooth.md), and [component selection](docs/unit-identification.md).
 
 ### 3. Recover an interrupted firmware update
@@ -200,6 +200,7 @@ The [web instrument](https://plainoss.github.io/cranklink/) compiles the same co
 - Hardware connection via WebUSB, Web Serial, or Web Bluetooth (Chrome, Edge).
 - On Android, use WebUSB for the SM-PCE02. Direct USB supports its `0x0A00` device revision at 2 Mbaud.
 - Component discovery, firmware inspection, and settings backup & tuning sliders.
+- Bluetooth reads motor identity and settings in one session and keeps the connection for later reads, writes, and validated firmware-pair commands. Use Disconnect to release it; a rejected PIN is cleared so reconnecting prompts again. Each command with `--trace PATH` creates its own trace file.
 - Speed sliders and presets stage a compatible destination automatically, with both changes shown before saving. Selecting a destination adjusts the staged speed to its supported range.
 - Built-in simulator for testing without connected hardware.
 

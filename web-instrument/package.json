@@ -7,6 +7,8 @@
     "build": "tsc && vite build && node scripts/copy-runtime-assets.mjs",
     "preview": "vite preview",
     "test": "node --experimental-strip-types --test *.test.ts",
+    "test:fast": "node --experimental-strip-types --test *.test.ts",
+    "test:smoke": "playwright test --grep @smoke",
     "test:e2e": "playwright test",
     "test:production": "playwright test --config playwright.production.config.ts"
   },

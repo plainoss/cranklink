@@ -1,3 +1,4 @@
+import { friendlyMotorName } from "../../domain/motorIdentity.ts";
 import { useState } from "react";
 import {
   Zap,
@@ -31,16 +32,9 @@ interface OverviewViewProps {
 export function OverviewView({ state, controller }: OverviewViewProps) {
   const [showFullSerial, setShowFullSerial] = useState(false);
   const identity = state.identity;
+  const hasSetting = (name: string) => state.schema.some((setting) => setting.name === name);
 
-  const getFriendlyModel = () => {
-    if (!identity) return "Shimano STEPS";
-    if (identity.modelSlug === "ep800-crg") {
-      return identity.isCargo ? "Shimano EP8 Cargo (DU-EP800-CRG)" : "Shimano EP8 (DU-EP800)";
-    }
-    if (identity.modelSlug === "ep801") return "Shimano EP801 (DU-EP801)";
-    if (identity.modelSlug === "ep600") return "Shimano EP6 (DU-EP600)";
-    return identity.model || "Shimano STEPS";
-  };
+  const getFriendlyModel = () => friendlyMotorName(identity);
 
   const getFirmwareStatusText = () => {
     const installed = identity?.dcasVersion || "4.2.0.0";
@@ -62,14 +56,14 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
     const rawDest = state.stagedValues["destination"] ?? state.liveValues["destination"]?.value;
     const destNum = Number(rawDest);
     const labels =
-      identity?.modelSlug === "ep800-crg"
-        ? LEGACY_DESTINATION_LABELS
-        : MODERN_DESTINATION_LABELS;
-    return labels[destNum] || (rawDest !== undefined ? `Region ${rawDest}` : "Europe / 25 km/h");
+      ["ep600", "ep801", "ep500"].includes(identity?.modelSlug || "")
+        ? MODERN_DESTINATION_LABELS
+        : LEGACY_DESTINATION_LABELS;
+    return labels[destNum] || (rawDest !== undefined ? `Region ${rawDest}` : "—");
   };
 
-  const tireCircumference = state.stagedValues["tire-circumference"] ?? state.liveValues["tire-circumference"]?.value ?? 2280;
-  const speedLimit = state.stagedValues["speed-limit"] ?? state.liveValues["speed-limit"]?.value ?? 25;
+  const tireCircumference = state.stagedValues["tire-circumference"] ?? state.liveValues["tire-circumference"]?.value ?? "—";
+  const speedLimit = state.stagedValues["speed-limit"] ?? state.liveValues["speed-limit"]?.value ?? "—";
   const lampState = state.stagedValues["lamp"] ?? state.liveValues["lamp"]?.value;
 
   const p1Boost = state.stagedValues["profile1.boost.torque"] ?? state.liveValues["profile1.boost.torque"]?.value ?? 85;
@@ -146,7 +140,8 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
             </span>
           </div>
 
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
+          {hasSetting("destination") && (
+<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
               Market Standard
             </span>
@@ -154,8 +149,10 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
               {getRegionLabel()}
             </span>
           </div>
+          )}
 
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
+          {hasSetting("speed-limit") && (
+<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
               Speed Assist Cutoff
             </span>
@@ -163,6 +160,7 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
               {speedLimit} km/h
             </span>
           </div>
+          )}
 
           <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
@@ -176,6 +174,7 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
       </Card>
 
       {/* 2. Active Drive Configuration & Live Operating State */}
+      {state.schema.some((setting) => setting.section === "profiles") && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Assist Profile 1 Summary */}
         <Card className="flex flex-col gap-4 border-stone-200">
@@ -234,6 +233,8 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
         </Card>
       </div>
 
+      )}
+
       {/* 3. Drivetrain & Installation Specs */}
       <Card className="flex flex-col gap-4 border-stone-200">
         <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
@@ -242,7 +243,8 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
         </h3>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
+          {hasSetting("shifting-system") && (
+<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
               Shifting System
             </span>
@@ -256,8 +258,10 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
                 : "Mechanical"}
             </span>
           </div>
+          )}
 
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
+          {hasSetting("front-teeth") && hasSetting("rear-teeth") && (
+<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
               Chainring / Cog
             </span>
@@ -266,6 +270,7 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
               {state.stagedValues["rear-teeth"] ?? state.liveValues["rear-teeth"]?.value ?? 11}T
             </span>
           </div>
+          )}
 
           <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
@@ -278,7 +283,7 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
 
           <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              12V Light Port
+              Wired Light Port
             </span>
             <span className="text-xs font-semibold text-stone-900">
               {Number(lampState) === 1 ? "Always On" : Number(lampState) === 2 ? "Auto" : "Off"}
@@ -301,7 +306,7 @@ export function OverviewView({ state, controller }: OverviewViewProps) {
             </span>
             <span className="text-xs font-semibold text-stone-900 flex items-center gap-1.5">
               <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>DCAS + RX In Sync</span>
+              <span>Drive-unit identity verified</span>
             </span>
           </div>
 

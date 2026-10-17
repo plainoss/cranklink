@@ -13,7 +13,7 @@ import type {
   EnrichedSetting,
   SettingSectionId,
   SettingPreset,
-  SimulatedModel,
+  MotorModel,
 } from "../types.ts";
 
 export interface ParameterGroupInfo {
@@ -58,6 +58,19 @@ export const TIRE_PRESETS: SettingPreset[] = [
   { label: '20" Cargo × 2.15" (1620 mm)', value: 1620 },
 ];
 
+export function settingAcceptsValue(setting: EnrichedSetting, value: number): boolean {
+  if (!Number.isFinite(value) || value < setting.userMin || value > setting.userMax) return false;
+  if (setting.choices.length) return setting.choices.includes(value);
+  const steps = (value - setting.userMin) / setting.userStep;
+  return Math.abs(steps - Math.round(steps)) < 1e-7;
+}
+
+export function clampSettingValue(setting: EnrichedSetting, value: number): number {
+  const bounded = Math.min(setting.userMax, Math.max(setting.userMin, value));
+  const snapped = setting.userMin + Math.round((bounded - setting.userMin) / setting.userStep) * setting.userStep;
+  return Math.min(setting.userMax, Math.max(setting.userMin, snapped));
+}
+
 export const LEGACY_DESTINATION_LABELS: Record<number, string> = {
   0: "Region 0 (25 km/h)",
   1: "Region 1 / US Class 1 (32 km/h)",
@@ -75,7 +88,7 @@ export const MODERN_DESTINATION_LABELS: Record<number, string> = {
 
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
-  const modern = model === "ep600" || model === "ep801";
+  const modern = model === "ep600" || model === "ep801" || model === "ep500";
   if (destination === 1) return { min: 19, max: 32 };
   if (destination === 0 || destination === 3 || (!modern && destination === 4)) {
     return { min: 15, max: 25 };
@@ -86,7 +99,7 @@ export function destinationSpeedRange(model: string | undefined, destination: nu
 }
 
 export function modelSpeedRange(model: string | undefined): { min: number; max: number } {
-  return model === "ep600" || model === "ep801" ? { min: 14, max: 45 } : { min: 15, max: 32 };
+  return model === "ep600" || model === "ep801" || model === "ep500" ? { min: 14, max: 45 } : { min: 15, max: 32 };
 }
 
 export function destinationForSpeed(model: string | undefined, speed: number, preferred: number, choices?: number[]): number | undefined {
@@ -396,7 +409,7 @@ function formatProfileSetting(name: string): {
 
 export function enrichSetting(
   spec: SettingSpec,
-  modelSlug: SimulatedModel = "ep800-crg",
+  modelSlug: MotorModel = "ep800-crg",
 ): EnrichedSetting {
   const scale = spec.wire_units_per_input || 1.0;
   const userMin = spec.min_raw / scale;
@@ -432,9 +445,9 @@ export function enrichSetting(
 
   if (spec.name === "destination") {
     choiceLabels =
-      modelSlug === "ep800-crg"
-        ? LEGACY_DESTINATION_LABELS
-        : MODERN_DESTINATION_LABELS;
+      modelSlug === "ep600" || modelSlug === "ep801" || modelSlug === "ep500"
+        ? MODERN_DESTINATION_LABELS
+        : LEGACY_DESTINATION_LABELS;
   }
 
   if (!choiceLabels && (spec.unit === "bool" || (spec.min_raw === 0 && spec.max_raw === 1 && spec.step_raw === 1 && spec.value_type === "number" && !spec.name.includes("display")))) {
@@ -457,7 +470,7 @@ export function enrichSetting(
 
 export function enrichSchema(
   specs: SettingSpec[],
-  modelSlug: SimulatedModel = "ep800-crg",
+  modelSlug: MotorModel = "ep800-crg",
 ): EnrichedSetting[] {
   const enriched = specs.map((s) => enrichSetting(s, modelSlug));
   return enriched.sort((a, b) => {

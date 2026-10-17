@@ -58,6 +58,7 @@ export class DeviceSimulator extends EventTarget {
       throw new Error("unknown simulated motor model");
     }
 
+    this.isSimulator = true;
     this.id = `simulated-etube-${model}`;
     this.name = {
       "ep800-crg": "Simulated DU-EP800-CRG",
@@ -284,6 +285,9 @@ export class DeviceSimulator extends EventTarget {
       }[b[1]];
       if (!response) throw new Error(`unexpected simulated PCE command ${b[1]}`);
       this.emit(0x2af9, response);
+      if (this.masterMode && b[1] === 0x0c && b[2] === 1) {
+        this.emit(0x2afd, [13, 0x32, 0x12, 1, 0, 0xff, 0xff]);
+      }
       return;
     }
 
@@ -374,7 +378,7 @@ export class DeviceSimulator extends EventTarget {
       } else if (group === 0x16 && command === 0x7c) {
         response.push(
           ...new TextEncoder().encode(
-            this.model === "ep800-crg" ? "00-CRG\0" : "00-STD\0",
+            this.model === "ep800-crg" ? "00-CRG\0" : this.model === "ep801" ? "01\0\0\0\0\0" : "00\0\0\0\0\0",
           ),
         );
       } else if (group === 1 && command === 0x2c) {

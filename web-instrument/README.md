@@ -10,6 +10,12 @@ Firmware is not included. Wired flashing/recovery retains the CLI's model, board
 
 The speed slider and presets use the full model-supported range (15–32 km/h on EP800, 14–45 km/h on EP600/EP801). Choosing a speed stages a compatible destination when the current one cannot support it; both changes appear in the save review. Returning the speed to its previous value removes a destination change added only for that speed. Explicitly selecting a destination adjusts the staged speed into that destination's range. A rejected save keeps the settings screen and staged values available for correction.
 
+For Bluetooth discovery, turn the bike on just before connecting. If it is not listed, turn it off and on again, then enable the display or gateway's Bluetooth connection mode if needed. Close other apps connected to the bike.
+
+The instrument selects settings from the detected motor family: EP800, EP600, EP801, EP500, E5100, E8000/E8080, E7000, E6100-family, or E6000-family. Older E-series schemas expose wheel circumference, mounting angle, and lighting only; unsupported speed and profile controls are hidden. E5100 includes common settings and speed controls. Shared-series variants use the verified product name when available; ambiguous E6000 products retain a family label.
+
+Initial BLE connection selects master routing before reading motor identity and settings together and keeps the authenticated connection between commands. That route remains active for subsequent saves and automatic reads until Disconnect. Each command releases motor PC-link ownership afterward; the next command confirms the retained route and inventory, freshly checks motor identity, and reestablishes motor ownership and any required authorization. Explicit Disconnect restores normal routing, stops the gateway session, and closes GATT; an operation failure closes the connection without replaying the command. Enable the bike's connection mode before reconnecting. Rejected gateway PINs are cleared so the next connection prompts again. Known Bluetooth errors show a short recovery message; full details remain in Diagnostics.
+
 ## Build locally
 
 Requires Rust 1.90+, its WASM target, and Node.js 22 with npm. Run from the repository root:
@@ -34,9 +40,18 @@ Open the displayed local URL on port 8030. The pinned wasm-bindgen CLI matches t
 From `web-instrument`, after the build:
 
 ```sh
-npm test
+# Fast dev tier: domain schemas, firmware package checks, and SessionController FSM (<100ms)
+npm run test:fast
+
+# Fast smoke E2E: connect, inline staging, atomic batch commit, and snapshot rollback (~2s)
+npm run test:smoke
+
+# Full parallel E2E: all wire-level GATT simulator, authentication, WebMCP, and mobile views (~7s)
+npm run test:e2e
+
+# Production suite: serves dist at /cranklink/ verifying service-worker COOP/COEP isolation
 npx playwright install chromium
 npm run test:production
 ```
 
-The production suite serves the exact `dist` output at `/cranklink/` without isolation headers and checks service-worker isolation, WASM startup, and the simulated settings workflow. This validates the published artifact and subpath; it does not test real adapters, motors, or Bluetooth radios.
+The production suite serves the exact `dist` output at `/cranklink/` without isolation headers and checks service-worker isolation, WASM startup, and the production UI controls. This validates the published artifact and subpath; it does not test real adapters, motors, or Bluetooth radios.

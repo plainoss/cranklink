@@ -16,25 +16,114 @@ pub enum SettingsModel {
     Ep800Crg,
     Ep600,
     Ep801,
+    Ep500,
+    E5100,
+    E8000,
+    E7000,
+    E6100,
+    E6000,
 }
 impl SettingsModel {
     pub fn name(self) -> &'static str {
         match self {
             Self::Ep800Crg => "DU-EP800/DU-EP800-CRG",
-            Self::Ep600 => "DU-EP600",
-            Self::Ep801 => "DU-EP801",
+            Self::Ep600 => "DU-EP600/DU-EP600-CRG",
+            Self::Ep801 => "DU-EP801/DU-EP801-CRG",
+            Self::Ep500 => "DU-EP500",
+            Self::E5100 => "DU-E5100",
+            Self::E8000 => "DU-E8000/DU-E8080",
+            Self::E7000 => "DU-E7000",
+            Self::E6100 => "DU-E6100 family",
+            Self::E6000 => "DU-E6000 family",
+        }
+    }
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Self::Ep800Crg => "ep800-crg",
+            Self::Ep600 => "ep600",
+            Self::Ep801 => "ep801",
+            Self::Ep500 => "ep500",
+            Self::E5100 => "e5100",
+            Self::E8000 => "e8000",
+            Self::E7000 => "e7000",
+            Self::E6100 => "e6100",
+            Self::E6000 => "e6000",
+        }
+    }
+    pub(crate) fn series(self) -> u8 {
+        match self {
+            Self::Ep800Crg => 0x23,
+            Self::Ep600 => 0x30,
+            Self::Ep801 => 0x35,
+            Self::Ep500 => 0x37,
+            Self::E5100 => 0x38,
+            Self::E8000 => 0x12,
+            Self::E7000 => 0x21,
+            Self::E6100 => 0x20,
+            Self::E6000 => 0x08,
         }
     }
     fn modern(self) -> bool {
-        self != Self::Ep800Crg
+        matches!(self, Self::Ep600 | Self::Ep801 | Self::Ep500)
     }
 }
 
-/// EP600/801 basic-mode settings. Hardware support requires separate validation.
+/// Modern basic-mode settings. Hardware support requires separate validation.
 /// The modern profile carries an additional meaningful byte. In particular,
 /// byte 5 contains carry-over/cut-off values and must survive sibling edits.
 pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
     let mut specs = schema();
+    if matches!(
+        model,
+        SettingsModel::E8000 | SettingsModel::E7000 | SettingsModel::E6100 | SettingsModel::E6000
+    ) {
+        specs.retain(|s| {
+            matches!(
+                s.name.as_str(),
+                "tire-circumference" | "mounting-angle" | "lamp"
+            )
+        });
+        for spec in &mut specs {
+            if spec.name == "lamp" {
+                spec.max = 1;
+                spec.choices = vec![0, 1];
+            }
+            if spec.name == "mounting-angle" {
+                spec.template.truncate(2);
+            }
+            if model == SettingsModel::E6000 {
+                if spec.name == "tire-circumference" {
+                    spec.min = 2000;
+                    spec.max = 2400;
+                }
+                if spec.name == "mounting-angle" {
+                    spec.max = 45;
+                }
+            }
+        }
+        return specs;
+    }
+    if model == SettingsModel::E5100 {
+        specs.retain(|s| {
+            matches!(
+                s.name.as_str(),
+                "lamp"
+                    | "lighting-time"
+                    | "walk-assist"
+                    | "tire-circumference"
+                    | "mounting-angle"
+                    | "destination"
+                    | "speed-limit"
+                    | "display-speed-adjustment"
+            ) || s.name.starts_with("maintenance-")
+        });
+        for spec in &mut specs {
+            if spec.name == "mounting-angle" {
+                spec.template.truncate(2);
+            }
+        }
+        return specs;
+    }
     if !model.modern() {
         return specs;
     }
@@ -91,9 +180,9 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
 }
 
 pub fn capabilities_for_model(model: SettingsModel) -> Value {
-    json!({"model":model.name(),"ble_hardware_validated":false,"usb_baseline_validated":!model.modern(),
-        "profile_mode":if model.modern(){"basic mode only"}else{"legacy profiles"},
-        "unsupported_features":if model.modern(){vec!["fine-tune profiles", "free-shift/modern automatic shifting", "OEM light-output and maximum-power tuning", "OEM torque-bound writes"]}else{vec![]}})
+    json!({"model":model.name(),"ble_hardware_validated":false,"usb_baseline_validated":model == SettingsModel::Ep800Crg,
+        "profile_mode":if model.modern(){"basic mode only"}else if model == SettingsModel::Ep800Crg {"legacy profiles"}else{"not implemented"},
+        "unsupported_features":if model.modern(){vec!["fine-tune profiles", "free-shift/modern automatic shifting", "OEM light-output and maximum-power tuning", "OEM torque-bound writes"]}else if model == SettingsModel::Ep800Crg {vec![]}else{vec!["assist profiles", "drivetrain and shifting settings", "OEM torque and power tuning"]}})
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -739,6 +828,12 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
         SettingsModel::Ep800Crg,
         SettingsModel::Ep600,
         SettingsModel::Ep801,
+        SettingsModel::Ep500,
+        SettingsModel::E5100,
+        SettingsModel::E8000,
+        SettingsModel::E7000,
+        SettingsModel::E6100,
+        SettingsModel::E6000,
     ]
     .into_iter()
     .any(|model| {
@@ -1477,6 +1572,53 @@ fn set_name(
 mod tests {
     use super::*;
     #[test]
+    fn older_schemas_expose_only_common_fields_with_their_own_ranges_and_layouts() {
+        for model in [
+            SettingsModel::E8000,
+            SettingsModel::E7000,
+            SettingsModel::E6100,
+            SettingsModel::E6000,
+        ] {
+            let specs = schema_for_model(model);
+            assert_eq!(specs.len(), 3);
+            let tire = spec_for_model("tire-circumference", model).unwrap();
+            let angle = spec_for_model("mounting-angle", model).unwrap();
+            let lamp = spec_for_model("lamp", model).unwrap();
+            assert_eq!(angle.template.len(), 2);
+            assert_eq!(tire.template, [0, 0, 0, 0]);
+            assert_eq!(lamp.choices, [0, 1]);
+            assert!(lamp.raw_value("2").is_err());
+            assert!(angle.raw_value("0").is_ok());
+            if model == SettingsModel::E6000 {
+                assert!(tire.raw_value("1999").is_err());
+                assert!(tire.raw_value("2000").is_ok());
+                assert!(tire.raw_value("2400").is_ok());
+                assert!(tire.raw_value("2401").is_err());
+                assert!(angle.raw_value("46").is_err());
+            } else {
+                assert!(tire.raw_value("1300").is_ok());
+                assert!(tire.raw_value("3000").is_ok());
+                assert!(angle.raw_value("60").is_ok());
+                assert!(angle.raw_value("61").is_err());
+            }
+            assert!(spec_for_model("destination", model).is_err());
+            assert!(spec_for_model("profile1.boost.torque", model).is_err());
+        }
+        let e5100 = schema_for_model(SettingsModel::E5100);
+        assert!(e5100.iter().any(|s| s.name == "tire-circumference"));
+        assert!(e5100.iter().any(|s| s.name == "speed-limit"));
+        assert!(e5100
+            .iter()
+            .all(|s| !s.name.starts_with("profile") && s.name != "assist-pattern"));
+        assert_eq!(
+            spec_for_model("mounting-angle", SettingsModel::E5100)
+                .unwrap()
+                .template
+                .len(),
+            2
+        );
+    }
+    #[test]
     fn decoded_snapshot_comparison_requires_all_values_and_ignores_reply_padding() {
         let before = serde_json::json!({"unavailable":{},"values":{"assist":{"value":5,"raw":"050000004d33ff"}}});
         let after = serde_json::json!({"unavailable":{},"values":{"assist":{"value":5,"raw":"05ffffffffffff"}}});
@@ -1492,7 +1634,11 @@ mod tests {
     }
     #[test]
     fn modern_basic_character_ranges_and_legacy_schema_are_distinct() {
-        for model in [SettingsModel::Ep600, SettingsModel::Ep801] {
+        for model in [
+            SettingsModel::Ep600,
+            SettingsModel::Ep801,
+            SettingsModel::Ep500,
+        ] {
             assert!(spec_for_model("profile1.trail.character", model)
                 .unwrap()
                 .raw_value("14")
