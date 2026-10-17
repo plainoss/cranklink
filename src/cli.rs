@@ -39,8 +39,37 @@ use crate::{
 };
 use anyhow::{ensure, Context, Result};
 use clap::builder::styling::{AnsiColor, Styles};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
+#[value(rename_all = "kebab-case")]
+pub enum OutputFormat {
+    #[default]
+    Auto,
+    Text,
+    Json,
+}
+
+impl OutputFormat {
+    pub fn is_json(self) -> bool {
+        match self {
+            OutputFormat::Json => true,
+            OutputFormat::Text => false,
+            OutputFormat::Auto => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    use std::io::IsTerminal;
+                    !std::io::stdout().is_terminal()
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    false
+                }
+            }
+        }
+    }
+}
 
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().bold())
@@ -111,6 +140,7 @@ struct Cli {
     #[arg(
         long,
         short = 's',
+        visible_aliases = ["expect-motor-serial", "ble-expect-serial"],
         global = true,
         help_heading = "Target Verification",
         help = "Require this 12-hex-digit motor serial (auto-sanitized from colons/hyphens)"
@@ -143,6 +173,15 @@ struct Cli {
         help = "Read 6-digit Bluetooth passkey from file"
     )]
     passkey_file: Option<PathBuf>,
+
+    #[arg(
+        long,
+        visible_alias = "ble-unit-auth",
+        global = true,
+        help_heading = "Authentication",
+        help = "Explicitly authenticate with the drive-unit (e.g. for modern EP801/EP600 BLE)"
+    )]
+    unit_auth: bool,
 
     #[arg(
         long,
@@ -183,10 +222,10 @@ struct Cli {
         global = true,
         help_heading = "Display & Output",
         default_value = "auto",
-        value_parser = ["auto", "text", "json"],
+        value_enum,
         help = "Output presentation format"
     )]
-    format: String,
+    format: OutputFormat,
 
     #[command(subcommand)]
     command: Command,
@@ -443,13 +482,17 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             }
         }
     }
-    if !cli.json {
-        if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
-            if f.eq_ignore_ascii_case("json") {
-                cli.json = true;
-            }
+    let mut format = cli.format;
+    if cli.json {
+        format = OutputFormat::Json;
+    } else if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
+        if f.eq_ignore_ascii_case("json") {
+            format = OutputFormat::Json;
+        } else if f.eq_ignore_ascii_case("text") {
+            format = OutputFormat::Text;
         }
     }
+    let is_json = format.is_json();
 
     // Sanitize serial number if provided
     if let Some(ser) = &cli.expect_serial {
@@ -506,7 +549,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             }
         )
     {
-        return execute_ble(cli);
+        return execute_ble(cli, is_json);
     }
 
     // Require BLE port for BLE-only operations
@@ -525,7 +568,8 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     let expect_serial = cli.expect_serial;
     let component = cli.component;
     let no_auth = cli.no_auth;
-    let json = cli.json;
+    let unit_auth = cli.unit_auth;
+    let json = is_json;
 
     match cli.command {
         Command::Session => {
@@ -591,10 +635,14 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             let power = session.initialize()?;
             err_println!("Adapter ready: {}", serde_json::to_string(&power)?);
             let units = session.units()?;
-            out_println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({ "units": units }))?
-            );
+            if is_json {
+                out_println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "units": units }))?
+                );
+            } else {
+                print_units_table(&units);
+            }
             Ok(())
         }
         Command::Probe => {
@@ -648,7 +696,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
 
                     // Check if setting write targets an OEM field requiring authentication
                     let model = resolve_settings_model(&mut s, &id)?;
-                    let is_oem = match &command {
+                    let is_oem = unit_auth || match &command {
                         SettingsCommand::Set { name, .. } => {
                             let specs = crate::settings::schema_for_model(model);
                             specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
@@ -1046,7 +1094,7 @@ fn execute_adapter_command(
     }
 }
 
-fn execute_ble(cli: Cli) -> Result<()> {
+fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     if matches!(
         cli.command,
         Command::Firmware {
@@ -1068,15 +1116,23 @@ fn execute_ble(cli: Cli) -> Result<()> {
     let mut session =
         crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
     session.set_master_routing(cli.ble_master)?;
-    let result = (|| -> Result<serde_json::Value> {
+    let result = (|| -> Result<Option<serde_json::Value>> {
         session.authenticate()?;
         match cli.command {
             Command::Ble {
                 command: BleCommand::TestLink,
-            } => Ok(
+            } => Ok(Some(
                 serde_json::json!({"authenticated":true,"protocol_reply_verified":true,"hardware_validated":false}),
-            ),
-            Command::Units => Ok(serde_json::json!({"units": session.units()?})),
+            )),
+            Command::Units => {
+                let units = session.units()?;
+                if is_json {
+                    Ok(Some(serde_json::json!({"units": units})))
+                } else {
+                    print_units_table(&units);
+                    Ok(None)
+                }
+            }
             Command::Probe => {
                 let (id, serial) = ble_checked_start(
                     &mut session,
@@ -1090,7 +1146,7 @@ fn execute_ble(cli: Cli) -> Result<()> {
                 ensure!(model.len() >= 3, "truncated motor model reply");
                 value["model_series"] = serde_json::json!(model[1]);
                 value["model_unit"] = serde_json::json!(model[2]);
-                Ok(value)
+                Ok(Some(value))
             }
             Command::Settings { command } => {
                 let (id, serial) = ble_checked_start(
@@ -1100,7 +1156,7 @@ fn execute_ble(cli: Cli) -> Result<()> {
                     cli.expect_serial.as_deref(),
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
-                let is_oem = match &command {
+                let is_oem = cli.unit_auth || match &command {
                     SettingsCommand::Set { name, .. } => {
                         let specs = crate::settings::schema_for_model(model);
                         specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
@@ -1122,7 +1178,7 @@ fn execute_ble(cli: Cli) -> Result<()> {
                     let receipt = session.authenticate_unit_settings(&serial)?;
                     notice_println!("Drive-unit authentication: {}", receipt);
                 }
-                execute_settings(&mut session, &id, command)
+                Ok(Some(execute_settings(&mut session, &id, command)?))
             }
             _ => unreachable!(),
         }
@@ -1134,7 +1190,9 @@ fn execute_ble(cli: Cli) -> Result<()> {
         stopped.context("BLE PC-link stop was not confirmed"),
     );
     let value = finish_operation(result, closed.context("BLE disconnect failed"))?;
-    out_println!("{}", serde_json::to_string_pretty(&value)?);
+    if let Some(val) = value {
+        out_println!("{}", serde_json::to_string_pretty(&val)?);
+    }
     Ok(())
 }
 
@@ -1660,6 +1718,61 @@ fn parse_version(v: &str) -> Result<Version> {
     Ok(Version(p.try_into().unwrap()))
 }
 
+fn print_units_table(units: &[crate::device::UnitIdentity]) {
+    if units.is_empty() {
+        out_println!("No connected E-TUBE components discovered.");
+        return;
+    }
+    out_println!("Connected E-TUBE Components ({} found):\n", units.len());
+    out_println!(
+        "  {:<4}  {:<12}  {:<20}  {:<11}  {}",
+        "SLOT",
+        "TYPE",
+        "MODEL",
+        "SERIES:UNIT",
+        "STATUS"
+    );
+    for u in units {
+        let type_desc = match u.model_unit {
+            0 if u.is_motor() => "Drive Unit",
+            1 => "Switch",
+            2 => "Display",
+            3 | 4 => "Derailleur",
+            _ => "Component",
+        };
+        let model_desc = if let Some(m) = u.model {
+            m.to_string()
+        } else if !u.model_candidates.is_empty() {
+            u.model_candidates.join(" / ")
+        } else {
+            "Unknown".to_string()
+        };
+        let status = if u.model.is_some() {
+            if let Some(p) = u.part {
+                format!("Identified (Part: 0x{p:02X})")
+            } else {
+                "Identified".to_string()
+            }
+        } else if !u.model_candidates.is_empty() {
+            format!("{} candidates", u.model_candidates.len())
+        } else {
+            "Unrecognized".to_string()
+        };
+        out_println!(
+            "  {:<4}  {:<12}  {:<20}  0x{:02X}:0x{:02X}    {}",
+            u.slot,
+            type_desc,
+            model_desc,
+            u.model_series,
+            u.model_unit,
+            status
+        );
+    }
+    out_println!(
+        "\nTip: Run 'cranklink probe' to inspect drive-unit firmware versions (DCAS/RX) and serial number."
+    );
+}
+
 fn progress_reporter() -> impl FnMut(usize, usize) {
     let mut last = 0;
     move |done, total| {
@@ -1851,5 +1964,19 @@ mod cli_tests {
             }
             _ => panic!("expected Firmware Flash Dcas"),
         }
+    }
+
+    #[test]
+    fn output_format_options() {
+        let cli_default = Cli::try_parse_from(["cranklink", "units"]).unwrap();
+        assert_eq!(cli_default.format, OutputFormat::Auto);
+
+        let cli_text = Cli::try_parse_from(["cranklink", "--format", "text", "units"]).unwrap();
+        assert_eq!(cli_text.format, OutputFormat::Text);
+        assert!(!cli_text.format.is_json());
+
+        let cli_json = Cli::try_parse_from(["cranklink", "--format", "json", "units"]).unwrap();
+        assert_eq!(cli_json.format, OutputFormat::Json);
+        assert!(cli_json.format.is_json());
     }
 }
