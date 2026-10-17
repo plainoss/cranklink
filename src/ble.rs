@@ -198,15 +198,21 @@ impl BleSession {
             firmware_active: false,
         })
     }
-    /// Select stock normal/master routing before opening the settings session.
+    /// Select stock normal/master routing before component discovery.
     /// This changes bus ownership, not nonvolatile settings or firmware.
     pub fn set_master_routing(&mut self, enabled: bool) -> Result<()> {
         ensure!(
-            !self.authenticated,
-            "select BLE routing before authentication"
+            !self.gateway_mode
+                && !self.master_routing_active
+                && self.linked_slot.is_none()
+                && !self.firmware_active,
+            "select BLE routing before component discovery"
         );
         self.master_routing = enabled;
         Ok(())
+    }
+    pub fn is_master_routing(&self) -> bool {
+        self.master_routing
     }
     fn log(&mut self, direction: &str, id: u16, bytes: &[u8]) -> Result<()> {
         // Authentication material never enters traces, including nonce/status.
@@ -991,6 +997,10 @@ mod tests {
         pending: VecDeque<Notification>,
         subscriptions: Vec<u16>,
         lamp: u8,
+        destination: u8,
+        speed_limit: u16,
+        unit_authenticated: bool,
+        reject_destination_write: bool,
         reject_lamp: bool,
         timeout_lamp: bool,
         invalid_nonce: bool,
@@ -1170,6 +1180,27 @@ mod tests {
                 if group == 0x10 && s.timeout_lamp {
                     return Ok(());
                 }
+                if group == 0x16 && cmd == 0xd8 {
+                    for fragment in [
+                        vec![data[0], 0x16, 0xda, 0x16, 0, 1, 2, 3, 4, 5],
+                        vec![data[0], 0x16, 0xda, 0x26, 6, 7, 8, 9, 10, 11],
+                        vec![data[0], 0x16, 0xda, 0x34, 12, 13, 14, 15, 0xff, 0xff],
+                    ] {
+                        notify(&mut s, FREE_RESPONSE, fragment);
+                    }
+                    return Ok(());
+                }
+                if group == 0x16 && cmd == 0xe0 {
+                    if data[3] == 0x34 {
+                        s.unit_authenticated = true;
+                        notify(
+                            &mut s,
+                            FREE_RESPONSE,
+                            vec![data[0], 0x16, 0xe2, 0xff, 0xff, 0xff, 0xff],
+                        );
+                    }
+                    return Ok(());
+                }
                 let mut response = vec![data[0], group, cmd + 2];
                 match (group, cmd) {
                     (0x32, 0x10) => {
@@ -1207,6 +1238,25 @@ mod tests {
                         }
                         s.lamp = data[3];
                     }
+                    (0x16, 0xac) => response.extend([data[3], s.destination, 0xff, 0xff]),
+                    (0x16, 0xa8) => {
+                        if !s.master_mode
+                            || s.wrong_pc_owner
+                            || !s.unit_authenticated
+                            || s.reject_destination_write
+                        {
+                            response[2] += 1;
+                        } else {
+                            s.destination = data[4];
+                        }
+                    }
+                    (0x16, 0xb4) => {
+                        response.extend_from_slice(&s.speed_limit.to_le_bytes());
+                        response.extend([0xff, 0xff]);
+                    }
+                    (0x16, 0xb0) => {
+                        s.speed_limit = u16::from_le_bytes([data[3], data[4]]);
+                    }
                     _ => panic!("unexpected unit command {group:02x}/{cmd:02x}"),
                 }
                 notify(&mut s, FREE_RESPONSE, response);
@@ -1224,6 +1274,8 @@ mod tests {
     fn mock() -> (BleSession, Rc<RefCell<State>>) {
         let state = Rc::new(RefCell::new(State {
             lamp: 1,
+            destination: 1,
+            speed_limit: 2500,
             ..State::default()
         }));
         (
@@ -1886,5 +1938,107 @@ mod tests {
         assert!(s.write(FEATURE, &[0, 0x80]).is_err());
         assert!(state.borrow().writes.is_empty());
         assert!(crate::device::Session::open("ble:any", None).is_err());
+    }
+    #[test]
+    fn post_auth_master_routing_authenticates_ep800_runs_mixed_destination_speed_batch_and_redacts_trace(
+    ) {
+        let (mut session, state) = mock();
+        let trace = path("post-auth-master-trace.jsonl");
+        session.trace = Some(
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&trace)
+                .unwrap(),
+        );
+        state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        // Resolve master routing after gateway authentication, before component discovery.
+        session.authenticate().unwrap();
+        assert!(!session.is_master_routing());
+        session.set_master_routing(true).unwrap();
+        assert!(session.is_master_routing());
+        let id = session.start_component(None, Some("DU-EP800-CRG")).unwrap();
+        assert_eq!(id.slot, 13);
+        assert_eq!(session.pc_slot, 0);
+        // After discovery, changing routing policy on the active session is rejected.
+        assert!(session.set_master_routing(false).is_err());
+
+        session.authenticate_unit_settings("010203040506").unwrap();
+
+        let prefix = path("mixed-dest-speed");
+        let ops: Vec<crate::settings::batch::Operation> =
+            serde_json::from_value(serde_json::json!([
+                {"op":"set","name":"destination","value":3},
+                {"op":"set","name":"speed-limit","value":25}
+            ]))
+            .unwrap();
+        let report = crate::settings::batch::run(
+            &mut session,
+            13,
+            &ops,
+            &prefix,
+            crate::settings::SettingsModel::Ep800Crg,
+        )
+        .unwrap();
+        assert_eq!(report["completed"], 2);
+        assert_eq!(state.borrow().destination, 3);
+        assert_eq!(state.borrow().speed_limit, 2500);
+
+        session.stop().unwrap();
+        session.close().unwrap();
+        assert!(!session.master_routing_active);
+        assert!(!state.borrow().master_mode);
+
+        let trace_text = std::fs::read_to_string(&trace).unwrap();
+        assert!(
+            !trace_text.contains("2af3")
+                && !trace_text.contains("2af4")
+                && !trace_text.contains("16d8")
+                && !trace_text.contains("16da")
+                && !trace_text.contains("16e0")
+                && !trace_text.contains("16e2"),
+            "gateway and drive-unit authentication material must remain absent from trace"
+        );
+        std::fs::remove_file(trace).unwrap();
+        std::fs::remove_file(report["journal"].as_str().unwrap()).unwrap();
+        for i in [0, 1] {
+            std::fs::remove_file(report["results"][i]["backup"].as_str().unwrap()).unwrap();
+        }
+    }
+    #[test]
+    fn rejected_destination_write_stops_without_route_retry_or_second_write() {
+        // Explicit normal routing or motor rejection must fail on the first attempt without retrying.
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.set_master_routing(false).unwrap();
+        let id = session.start(Some(13)).unwrap();
+        session.authenticate_unit_settings("010203040506").unwrap();
+        let backup = path("rejected-dest-backup.json");
+        let err = crate::settings::set_for_model(
+            &mut session,
+            id.slot,
+            "destination",
+            "3",
+            &backup,
+            crate::settings::SettingsModel::Ep800Crg,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("setting write failed"));
+        let dest_writes = state
+            .borrow()
+            .writes
+            .iter()
+            .filter(|(c, b)| *c == FREE_COMMAND && b.starts_with(&[13, 0x16, 0xa8]))
+            .count();
+        assert_eq!(dest_writes, 1, "must never retry a rejected write");
+        assert!(
+            !state
+                .borrow()
+                .writes
+                .contains(&(PCE_COMMAND, vec![0, 3, 0x20])),
+            "must never switch routes after a failed write"
+        );
+        session.stop().unwrap();
+        std::fs::remove_file(backup).unwrap();
     }
 }

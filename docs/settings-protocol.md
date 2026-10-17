@@ -24,13 +24,13 @@ Schema output describes implemented fields; it does not guarantee every field is
 Wired example; `010203040506` is illustrative. Replace it with the actual motor serial from `cranklink probe`:
 
 ```sh
-cranklink --expect-motor-serial 010203040506 settings read --output settings.json
-cranklink --expect-motor-serial 010203040506 settings read profile1.eco.character
-cranklink --expect-motor-serial 010203040506 settings set profile1.eco.character 4 --backup eco-before.json
-cranklink --expect-motor-serial 010203040506 settings restore eco-before.json --backup eco-current.json
+cranklink -s 010203040506 settings read --output settings.json
+cranklink -s 010203040506 settings read profile1.eco.character
+cranklink -s 010203040506 settings set profile1.eco.character 4 --backup eco-before.json
+cranklink -s 010203040506 settings restore eco-before.json --backup eco-current.json
 ```
 
-For BLE, use `--port 'ble:DEVICE_ID' --ble-expect-serial SERIAL`; see [Bluetooth settings](bluetooth.md). OEM writes may require `--unit-auth --expect-motor-serial SERIAL` on wired connections or `--ble-unit-auth --ble-expect-serial SERIAL` over BLE. Authentication support is model/version constrained and does not override unsupported settings or device permissions.
+For BLE, use `--port 'ble:DEVICE_ID' -s SERIAL`; see [Bluetooth settings](bluetooth.md). Writing or restoring `oem`-protected settings (direct `set`, standalone `restore`, or `batch`) automatically runs drive-unit authentication when `-s` / `--expect-serial` is provided (override with `--unit-auth` or `--no-auth`; suppressed during `--dry-run`). Over BLE, settings that require PC-link owner zero (`destination`, `tire-circumference`, `lamp`, `lighting-time`) also automatically select BLE master routing (`--ble-master[=auto|normal|master]`, default `auto`). Authentication support is model/version constrained and does not override unsupported settings or device permissions.
 
 Each write saves the motor serial, original value, and planned value to a new durable backup before sending changes, preserves sibling fields, and verifies readback. Backup files cannot be overwritten. `restore` checks the backup format and serial, restores its named setting, and requires a new backup for the current value. Unrelated settings remain unchanged; maintenance calendar restores retain the complete captured date.
 

@@ -23,7 +23,7 @@ fn pce_fragments(control: u8, payload: &[u8]) -> Result<Vec<Vec<u8>>> {
         payload.len() < 72,
         "motor relay message exceeds stock BLE limit"
     );
-    if payload.len() + 1 <= 18 {
+    if payload.len() < 18 {
         let mut value = vec![0, control];
         value.extend_from_slice(payload);
         return Ok(vec![value]);

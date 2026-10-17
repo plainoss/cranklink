@@ -310,6 +310,34 @@ export class DeviceSimulator extends EventTarget {
 
       if (group === 0x32 && command === 0x30) return;
 
+      if (group === 0x16 && command === 0xd8) {
+        if (this.fault === "auth_reject" || this.authFailure) {
+          this.emit(0x2afd, [slot, 0x16, 0xdb, 1]);
+          return;
+        }
+        for (const fragment of [
+          [slot, 0x16, 0xda, 0x16, 0, 1, 2, 3, 4, 5],
+          [slot, 0x16, 0xda, 0x26, 6, 7, 8, 9, 10, 11],
+          [slot, 0x16, 0xda, 0x34, 12, 13, 14, 15, 0xff, 0xff],
+        ]) {
+          this.emit(0x2afd, fragment);
+        }
+        return;
+      }
+
+      if (group === 0x16 && command === 0xe0) {
+        if (params[0] === 0x34) {
+          if (this.fault === "auth_reject" || this.authFailure) {
+            this.unitAuthenticated = false;
+            this.emit(0x2afd, [slot, 0x16, 0xe3, 0x45, 0, 0xff, 0]);
+          } else {
+            this.unitAuthenticated = true;
+            this.emit(0x2afd, [slot, 0x16, 0xe2, 0xff, 0xff, 0xff, 0xff]);
+          }
+        }
+        return;
+      }
+
       if (group === 0x33 && [0x68, 0x70].includes(command)) {
         this.authFragment(slot, command, params);
         return;

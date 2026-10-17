@@ -81,7 +81,9 @@ impl JsonRpcError {
             (
                 "AUTH_FAILED",
                 4003,
-                Some("Drive-unit authentication failed or is unsupported on this firmware version."),
+                Some(
+                    "Drive-unit authentication failed or is unsupported on this firmware version.",
+                ),
             )
         } else if text.contains("range") || text.contains("bounds") {
             (
@@ -199,11 +201,12 @@ pub fn run_session(
                     let _ = s.normal_stop();
                 }
 
-                match crate::device::Session::open(&active_port, trace_path.as_deref())
-                    .and_then(|mut s| {
+                match crate::device::Session::open(&active_port, trace_path.as_deref()).and_then(
+                    |mut s| {
                         let power = s.initialize()?;
                         Ok((s, power))
-                    }) {
+                    },
+                ) {
                     Ok((s, power)) => {
                         session = Some(s);
                         active_identity = None;
@@ -280,7 +283,11 @@ pub fn run_session(
                     }
                 };
 
-                let slot = req.params.get("slot").and_then(Value::as_u64).map(|v| v as u8);
+                let slot = req
+                    .params
+                    .get("slot")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u8);
                 let comp = req.params.get("component").and_then(Value::as_str);
 
                 match s.probe_component(slot, comp) {
@@ -366,8 +373,7 @@ pub fn run_session(
                 };
                 let specs = crate::settings::schema_for_model(model);
                 if let Some(target) = req.params.get("name").and_then(Value::as_str) {
-                    if let Some(spec) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(target))
-                    {
+                    if let Some(spec) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(target)) {
                         JsonRpcResponse {
                             jsonrpc: "2.0",
                             id,
@@ -431,7 +437,9 @@ pub fn run_session(
                             JsonRpcResponse {
                                 jsonrpc: "2.0",
                                 id,
-                                result: Some(serde_json::to_value(&fw.metadata).unwrap_or_default()),
+                                result: Some(
+                                    serde_json::to_value(&fw.metadata).unwrap_or_default(),
+                                ),
                                 error: None,
                             }
                         }
@@ -484,11 +492,13 @@ mod tests {
         assert_eq!(not_conn.name, "NOT_CONNECTED");
         assert_eq!(not_conn.hint.as_deref(), Some("Connect first"));
 
-        let hw = JsonRpcError::hardware_error(anyhow::anyhow!("motor serial mismatch: expected foo"));
+        let hw =
+            JsonRpcError::hardware_error(anyhow::anyhow!("motor serial mismatch: expected foo"));
         assert_eq!(hw.code, 4002);
         assert_eq!(hw.name, "SERIAL_MISMATCH");
 
-        let auth_err = JsonRpcError::hardware_error(anyhow::anyhow!("challenge authentication failed"));
+        let auth_err =
+            JsonRpcError::hardware_error(anyhow::anyhow!("challenge authentication failed"));
         assert_eq!(auth_err.code, 4003);
         assert_eq!(auth_err.name, "AUTH_FAILED");
     }

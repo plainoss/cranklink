@@ -99,8 +99,7 @@ pub(crate) fn flash_dcas_with_user_info(
         ensure!(image.len() <= 2 * 65536, "invalid DCAS2/2i image length");
         (image[0xca], image[0xcb], image[0xcc], image[0xcd])
     } else {
-        let (fw_series, fw_unit, dcas_ver, fw_board) =
-            (image[40], image[41], image[42], image[43]);
+        let (fw_series, fw_unit, dcas_ver, fw_board) = (image[40], image[41], image[42], image[43]);
         ensure!(dcas_ver == 4, "image/motor compatibility mismatch");
         (fw_series, fw_unit, dcas_ver, fw_board)
     };
@@ -125,8 +124,7 @@ pub(crate) fn flash_dcas_with_user_info(
         1 | 2 => {
             live_version >= crate::firmware::Version([3, 2, 0, 0])
                 && live.version[0] < 4
-                && (live_version < crate::firmware::Version([3, 2, 4, 0])
-                    || fw_board == live.board)
+                && (live_version < crate::firmware::Version([3, 2, 4, 0]) || fw_board == live.board)
         }
         _ => false,
     };
@@ -354,7 +352,11 @@ mod tests {
                     0x30 => vec![0x3c, self.identity.series, self.identity.unit],
                     0x29 => vec![
                         0x35,
-                        if self.wrong_serial { 9 } else { self.identity.serial[0] },
+                        if self.wrong_serial {
+                            9
+                        } else {
+                            self.identity.serial[0]
+                        },
                         self.identity.serial[1],
                         self.identity.serial[2],
                     ],
@@ -594,7 +596,8 @@ mod tests {
         let mut link = Replay::new_dcas2(256, 1, id.clone());
         link.expected_user_info = Some([0x55, 0x66]);
         let image = link.image.clone();
-        let r = flash_dcas_with_user_info(&mut link, &image, &id, Some([0x55, 0x66]), |_, _| {}).unwrap();
+        let r = flash_dcas_with_user_info(&mut link, &image, &id, Some([0x55, 0x66]), |_, _| {})
+            .unwrap();
         assert_eq!(r.bytes, image.len());
         let buffer_blocks: Vec<_> = link
             .sent

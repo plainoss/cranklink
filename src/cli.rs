@@ -40,7 +40,32 @@ use crate::{
 use anyhow::{ensure, Context, Result};
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default, serde::Serialize)]
+#[value(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum BleRoutingPolicy {
+    #[default]
+    Auto,
+    #[value(alias = "false", alias = "slave")]
+    Normal,
+    #[value(alias = "true")]
+    Master,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct BleRoutingDecision {
+    pub route: &'static str,
+    pub policy: BleRoutingPolicy,
+    pub reason: String,
+}
+
+impl BleRoutingDecision {
+    pub fn is_master(&self) -> bool {
+        self.route == "master"
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
 #[value(rename_all = "kebab-case")]
@@ -206,9 +231,14 @@ struct Cli {
         long,
         global = true,
         help_heading = "Safety",
-        help = "Use stock gateway master routing (experimental)"
+        value_name = "POLICY",
+        num_args = 0..=1,
+        default_missing_value = "master",
+        require_equals = true,
+        value_enum,
+        help = "BLE gateway routing policy (default: auto; --ble-master forces master routing)"
     )]
-    ble_master: bool,
+    ble_master: Option<BleRoutingPolicy>,
 
     // --- Display & Format ---
     #[arg(
@@ -313,6 +343,8 @@ enum SettingsCommand {
         /// Pre-restore backup path (auto-generated if omitted)
         #[arg(long)]
         backup: Option<PathBuf>,
+        #[arg(skip)]
+        parsed: Option<crate::settings::ParsedRestore>,
     },
     /// Run an ordered JSON plan in one session, backing up and verifying each write
     Batch {
@@ -509,6 +541,10 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         !cli.read_only || read_only_command_allowed(&cli.command),
         "--read-only rejects mutating commands (settings set/restore, firmware flash, power-cycle)"
     );
+    ensure!(
+        !(cli.unit_auth && cli.no_auth),
+        "--unit-auth and --no-auth cannot be used together"
+    );
 
     // Component validation
     if let Some(component) = &cli.component {
@@ -525,24 +561,33 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         );
     }
 
-    // Load batch plan if applicable
-    if let Command::Settings {
-        command:
-            SettingsCommand::Batch {
-                plan,
-                operations,
-                backup_prefix,
-            },
-    } = &mut cli.command
-    {
-        let prefix = backup_prefix.get_or_insert_with(|| {
-            PathBuf::from(format!("batch-{}", crate::platform::now_ms()))
-        });
-        ensure!(
-            !prefix.as_os_str().is_empty(),
-            "backup prefix must not be empty"
-        );
-        *operations = crate::settings::batch::load(plan)?;
+    // Normalize standalone restore or batch plan before opening a session
+    match &mut cli.command {
+        Command::Settings {
+            command: SettingsCommand::Restore { file, parsed, .. },
+        } => {
+            *parsed = Some(crate::settings::parse_restore_file(file)?);
+        }
+        Command::Settings {
+            command:
+                SettingsCommand::Batch {
+                    plan,
+                    operations,
+                    backup_prefix,
+                },
+        } => {
+            let prefix = backup_prefix.get_or_insert_with(|| {
+                PathBuf::from(format!("batch-{}", crate::platform::now_ms()))
+            });
+            ensure!(
+                !prefix.as_os_str().is_empty(),
+                "backup prefix must not be empty"
+            );
+            let mut loaded = crate::settings::batch::load(plan)?;
+            crate::settings::batch::preload_restores(&mut loaded)?;
+            *operations = loaded;
+        }
+        _ => {}
     }
 
     // BLE dispatch vs native wired dispatch
@@ -563,7 +608,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         "--passkey and --passkey-file require a Bluetooth port (--port ble:DEVICE_ID)"
     );
     ensure!(
-        !cli.ble_master,
+        cli.ble_master.is_none(),
         "--ble-master requires a Bluetooth port (--port ble:DEVICE_ID)"
     );
 
@@ -577,9 +622,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     let json = is_json;
 
     match cli.command {
-        Command::Session => {
-            session::run_session(port, trace, expect_serial)
-        }
+        Command::Session => session::run_session(port, trace, expect_serial),
         #[allow(unused_variables)]
         Command::Scan { ble, seconds, all } => {
             let ports = crate::platform::available_ports()?;
@@ -640,8 +683,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             }
         }
         Command::Units => {
-            let mut session =
-                Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
+            let mut session = Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
             session.initialize()?;
             let units = session.units()?;
             if is_json {
@@ -655,8 +697,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             Ok(())
         }
         Command::Probe => {
-            let mut session =
-                Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
+            let mut session = Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
             session.initialize()?;
             let result = session
                 .probe_component(slot, component.as_deref())
@@ -702,12 +743,10 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 } else {
                     print_setting_schema(spec);
                 }
+            } else if is_json {
+                out_println!("{}", serde_json::to_string_pretty(&specs)?);
             } else {
-                if is_json {
-                    out_println!("{}", serde_json::to_string_pretty(&specs)?);
-                } else {
-                    print_settings_schema_table(&specs);
-                }
+                print_settings_schema_table(&specs);
             }
             Ok(())
         }
@@ -721,28 +760,13 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     let motor_serial = hex::encode(crate::device::serial_bytes(&serial_raw)?);
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
 
-                    // Check if setting write targets an OEM field requiring authentication
                     let model = resolve_settings_model(&mut s, &id)?;
-                    let is_oem = unit_auth || match &command {
-                        SettingsCommand::Set { name, .. } => {
-                            let specs = crate::settings::schema_for_model(model);
-                            specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
-                        }
-                        SettingsCommand::Batch { operations, .. } => {
-                            let specs = crate::settings::schema_for_model(model);
-                            operations.iter().any(|op| {
-                                if let crate::settings::batch::Operation::Set { name, .. } = op {
-                                    specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
-                                } else {
-                                    false
-                                }
-                            })
-                        }
-                        _ => false,
-                    };
-
-                    if is_oem {
-                        ensure!(!no_auth, "setting requires drive-unit authentication, but --no-auth was specified");
+                    validate_settings_preflight(&command, model, &motor_serial)?;
+                    if command_requires_unit_auth(&command, model, unit_auth) {
+                        ensure!(
+                            !no_auth,
+                            "setting requires drive-unit authentication, but --no-auth was specified"
+                        );
                         let _receipt = s.authenticate_unit_settings(&motor_serial)?;
                     }
 
@@ -750,7 +774,8 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     Ok((val, model))
                 });
             let stopped = s.normal_stop();
-            let (value, model) = finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
+            let (value, model) =
+                finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
             print_settings_result(&value, &command, model, is_json)?;
             Ok(())
         }
@@ -766,7 +791,9 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             execute_adapter_command(port.as_deref(), trace.as_deref(), slot, command, is_json)
         }
         Command::Ble { .. } => {
-            anyhow::bail!("Bluetooth commands require selecting a Bluetooth port (--port ble:DEVICE_ID)")
+            anyhow::bail!(
+                "Bluetooth commands require selecting a Bluetooth port (--port ble:DEVICE_ID)"
+            )
         }
     }
 }
@@ -869,7 +896,9 @@ fn execute_firmware_command(
                         );
                     }
                 }
-                other => anyhow::bail!("unknown probe target '{other}'; supported targets are 'dcas' and 'rx'"),
+                other => anyhow::bail!(
+                    "unknown probe target '{other}'; supported targets are 'dcas' and 'rx'"
+                ),
             }
             Ok(())
         }
@@ -886,10 +915,7 @@ fn execute_firmware_command(
                 write,
             } => {
                 let fw = Firmware::load(&file)?;
-                ensure!(
-                    fw.metadata.kind.is_dcas(),
-                    "flash dcas requires a D image"
-                );
+                ensure!(fw.metadata.kind.is_dcas(), "flash dcas requires a D image");
                 let comp = Firmware::load(&companion)?;
                 fw.validate_companion(&comp)?;
                 if let Some(expected) = &expect_sha256 {
@@ -899,13 +925,18 @@ fn execute_firmware_command(
                     );
                 }
 
-                let serial_str = expect_serial
-                    .ok_or_else(|| anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)"))?;
+                let serial_str = expect_serial.ok_or_else(|| {
+                    anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
+                })?;
                 let serial = hex::decode(serial_str)?;
                 ensure!(serial.len() == 6, "expected six-byte serial");
 
                 let journal_path = journal.unwrap_or_else(|| {
-                    PathBuf::from(format!("cranklink-flash-dcas-{}-{}.journal.jsonl", serial_str, crate::platform::now_ms()))
+                    PathBuf::from(format!(
+                        "cranklink-flash-dcas-{}-{}.journal.jsonl",
+                        serial_str,
+                        crate::platform::now_ms()
+                    ))
                 });
                 let mut jnl = Journal::new(&journal_path)?;
                 jnl.record("inputs", &fw.metadata)?;
@@ -968,10 +999,14 @@ fn execute_firmware_command(
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
+                    if profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified
+                    {
                         out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
                     } else {
-                        out_println!(">> To execute live flash programming, add the --write flag.\n");
+                        out_println!(
+                            ">> To execute live flash programming, add the --write flag.\n"
+                        );
                     }
                     return Ok(());
                 }
@@ -1047,13 +1082,18 @@ fn execute_firmware_command(
                         "source SHA-256 differs from --expect-sha256"
                     );
                 }
-                let serial_str = expect_serial
-                    .ok_or_else(|| anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)"))?;
+                let serial_str = expect_serial.ok_or_else(|| {
+                    anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
+                })?;
                 let serial = hex::decode(serial_str)?;
                 ensure!(serial.len() == 6, "expected six-byte serial");
 
                 let journal_path = journal.unwrap_or_else(|| {
-                    PathBuf::from(format!("cranklink-flash-rx-{}-{}.journal.jsonl", serial_str, crate::platform::now_ms()))
+                    PathBuf::from(format!(
+                        "cranklink-flash-rx-{}-{}.journal.jsonl",
+                        serial_str,
+                        crate::platform::now_ms()
+                    ))
                 });
                 let mut jnl = Journal::new(&journal_path)?;
                 jnl.record("inputs", &fw.metadata)?;
@@ -1104,10 +1144,15 @@ fn execute_firmware_command(
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified || rx.retry_capable {
+                    if profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified
+                        || rx.retry_capable
+                    {
                         out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
                     } else {
-                        out_println!(">> To execute live flash programming, add the --write flag.\n");
+                        out_println!(
+                            ">> To execute live flash programming, add the --write flag.\n"
+                        );
                     }
                     return Ok(());
                 }
@@ -1142,7 +1187,8 @@ fn execute_firmware_command(
                 s.normal_stop()?;
                 jnl.record("application-after", &after)?;
                 ensure!(
-                    after.cargo == before.cargo && after.dcas_version == d.metadata.version.to_string(),
+                    after.cargo == before.cargo
+                        && after.dcas_version == d.metadata.version.to_string(),
                     "cargo or D version changed after RX update"
                 );
                 ensure!(
@@ -1226,7 +1272,12 @@ fn execute_adapter_command(
                 out_println!("Adapter power-cycle verified:");
                 out_println!("  Power-Stop:  Acknowledged");
                 out_println!("  Motor State: Offline while power removed");
-                out_println!("  Application: Restored (Cargo: {}, DCAS: v{}, Renesas: v{})", after.cargo, after.dcas_version, after.rx_version);
+                out_println!(
+                    "  Application: Restored (Cargo: {}, DCAS: v{}, Renesas: v{})",
+                    after.cargo,
+                    after.dcas_version,
+                    after.rx_version
+                );
             }
             Ok(())
         }
@@ -1251,13 +1302,21 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
         "Command unavailable in a BLE settings session. Use wired connection for bootloader probes and recovery"
     );
 
+    let routing_decision = plan_ble_routing(cli.ble_master, &cli.command);
     let passkey = read_ble_passkey(&cli)?;
     notice_println!("Experimental Bluetooth transport: hardware validation pending.");
     let mut session =
         crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?;
-    session.set_master_routing(cli.ble_master)?;
     let result = (|| -> Result<Option<serde_json::Value>> {
         session.authenticate()?;
+        if !matches!(
+            cli.command,
+            Command::Ble {
+                command: BleCommand::TestLink
+            }
+        ) {
+            session.set_master_routing(routing_decision.is_master())?;
+        }
         match cli.command {
             Command::Ble {
                 command: BleCommand::TestLink,
@@ -1273,8 +1332,16 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
             Command::Units => {
                 let units = session.units()?;
                 if is_json {
-                    Ok(Some(serde_json::json!({"units": units})))
+                    Ok(Some(serde_json::json!({
+                        "units": units,
+                        "ble_routing": routing_decision,
+                    })))
                 } else {
+                    out_println!(
+                        "BLE Routing: {} ({})",
+                        routing_decision.route,
+                        routing_decision.reason
+                    );
                     print_units_table(&units);
                     Ok(None)
                 }
@@ -1292,9 +1359,15 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                 ensure!(model.len() >= 3, "truncated motor model reply");
                 value["model_series"] = serde_json::json!(model[1]);
                 value["model_unit"] = serde_json::json!(model[2]);
+                value["ble_routing"] = serde_json::to_value(&routing_decision)?;
                 if is_json {
                     Ok(Some(value))
                 } else {
+                    out_println!(
+                        "BLE Routing: {} ({})",
+                        routing_decision.route,
+                        routing_decision.reason
+                    );
                     print_probe_card(
                         id.slot,
                         model[1],
@@ -1315,31 +1388,29 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     cli.expect_serial.as_deref(),
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
-                let is_oem = cli.unit_auth || match &command {
-                    SettingsCommand::Set { name, .. } => {
-                        let specs = crate::settings::schema_for_model(model);
-                        specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
-                    }
-                    SettingsCommand::Batch { operations, .. } => {
-                        let specs = crate::settings::schema_for_model(model);
-                        operations.iter().any(|op| {
-                            if let crate::settings::batch::Operation::Set { name, .. } = op {
-                                specs.iter().any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
-                            } else {
-                                false
-                            }
-                        })
-                    }
-                    _ => false,
-                };
-                if is_oem && (cli.unit_auth || matches!(model, crate::settings::SettingsModel::Ep801 | crate::settings::SettingsModel::Ep600)) {
-                    ensure!(!cli.no_auth, "setting requires drive-unit authentication, but --no-auth was specified");
+                validate_settings_preflight(&command, model, &serial)?;
+                if command_requires_unit_auth(&command, model, cli.unit_auth) {
+                    ensure!(
+                        !cli.no_auth,
+                        "setting requires drive-unit authentication, but --no-auth was specified"
+                    );
                     let _receipt = session.authenticate_unit_settings(&serial)?;
                 }
-                let val = execute_settings(&mut session, &id, &command)?;
+                let mut val = execute_settings(&mut session, &id, &command)?;
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert(
+                        "ble_routing".to_string(),
+                        serde_json::to_value(&routing_decision)?,
+                    );
+                }
                 if is_json {
                     Ok(Some(val))
                 } else {
+                    out_println!(
+                        "BLE Routing: {} ({})",
+                        routing_decision.route,
+                        routing_decision.reason
+                    );
                     print_settings_result(&val, &command, model, false)?;
                     Ok(None)
                 }
@@ -1361,6 +1432,10 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
 }
 
 fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
+    ensure!(
+        cli.ble_master != Some(BleRoutingPolicy::Normal),
+        "flash ble-pair requires BLE master routing; --ble-master=normal is not supported for firmware flashing"
+    );
     let Command::Firmware {
         command:
             FirmwareCommand::Flash {
@@ -1381,10 +1456,9 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         unreachable!()
     };
 
-    let serial_str = cli
-        .expect_serial
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("BLE firmware flashing requires --expect-serial <12-HEX>"))?;
+    let serial_str = cli.expect_serial.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("BLE firmware flashing requires --expect-serial <12-HEX>")
+    })?;
     let serial: [u8; 6] = hex::decode(serial_str)?.try_into().unwrap();
 
     let d = Firmware::load(dcas)?;
@@ -1406,7 +1480,9 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     } else {
         ensure!(
             crate::firmware::is_supported_rx_target(d.metadata.series, d.metadata.unit)
-                && d.metadata.board.is_some_and(crate::firmware::is_allowed_motor_board),
+                && d.metadata
+                    .board
+                    .is_some_and(crate::firmware::is_allowed_motor_board),
             "BLE pair updates require a supported motor firmware family and board"
         );
     }
@@ -1426,12 +1502,20 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     }
 
     let backup_path = backup.clone().unwrap_or_else(|| {
-        PathBuf::from(format!("backup-firmware-preupdate-{}-{}.json", serial_str, crate::platform::now_ms()))
+        PathBuf::from(format!(
+            "backup-firmware-preupdate-{}-{}.json",
+            serial_str,
+            crate::platform::now_ms()
+        ))
     });
     ensure!(!backup_path.exists(), "backup file already exists");
 
     let journal_path = journal.clone().unwrap_or_else(|| {
-        PathBuf::from(format!("cranklink-flash-blepair-{}-{}.journal.jsonl", serial_str, crate::platform::now_ms()))
+        PathBuf::from(format!(
+            "cranklink-flash-blepair-{}-{}.journal.jsonl",
+            serial_str,
+            crate::platform::now_ms()
+        ))
     });
     let mut jnl = Journal::new(&journal_path)?;
     jnl.record(
@@ -1506,9 +1590,15 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             link.application_return()?;
             jnl.record("dry-run-complete", &boot)?;
             out_println!("\n[DRY RUN - VALIDATION ONLY]");
-            out_println!("- DCAS & RX Bootloader Handshakes: Verified ({})", profile.family_name);
+            out_println!(
+                "- DCAS & RX Bootloader Handshakes: Verified ({})",
+                profile.family_name
+            );
             out_println!("- Motor Serial: Verified ({})", serial_str);
-            out_println!("- Pre-Update Settings Backup: Saved ({})", backup_path.display());
+            out_println!(
+                "- Pre-Update Settings Backup: Saved ({})",
+                backup_path.display()
+            );
             out_println!("- Flash State: UNMODIFIED (No bytes written)");
             if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
                 out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
@@ -1612,9 +1702,18 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     } else {
         out_println!("BLE firmware pair flashed successfully:");
         let app = value.get("application_after");
-        let cargo = app.and_then(|a| a.get("cargo")).and_then(|c| c.as_str()).unwrap_or("");
-        let dcas = app.and_then(|a| a.get("dcas_version")).and_then(|d| d.as_str()).unwrap_or("");
-        let rx = app.and_then(|a| a.get("rx_version")).and_then(|r| r.as_str()).unwrap_or("");
+        let cargo = app
+            .and_then(|a| a.get("cargo"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+        let dcas = app
+            .and_then(|a| a.get("dcas_version"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        let rx = app
+            .and_then(|a| a.get("rx_version"))
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
         out_println!("  Model Cargo: {}", cargo);
         out_println!("  DCAS (D):    v{}", dcas);
         out_println!("  Renesas (M): v{}", rx);
@@ -1735,18 +1834,11 @@ fn read_only_command_allowed(command: &Command) -> bool {
             command,
             SettingsCommand::Read { .. } | SettingsCommand::Schema { .. }
         ),
-        Command::Firmware { command } => matches!(
-            command,
-            FirmwareCommand::Inspect { .. }
-        ),
-        Command::Adapter { command } => matches!(
-            command,
-            AdapterCommand::Status
-        ),
-        Command::Ble { command } => matches!(
-            command,
-            BleCommand::Scan { .. } | BleCommand::TestLink
-        ),
+        Command::Firmware { command } => matches!(command, FirmwareCommand::Inspect { .. }),
+        Command::Adapter { command } => matches!(command, AdapterCommand::Status),
+        Command::Ble { command } => {
+            matches!(command, BleCommand::Scan { .. } | BleCommand::TestLink)
+        }
     }
 }
 
@@ -1789,6 +1881,202 @@ fn resolve_settings_model(
         0x35 if id.dcas_version == "4.6.0.1" => Ok(crate::settings::SettingsModel::Ep801),
         _ => anyhow::bail!("settings schema is not verified for this model/firmware"),
     }
+}
+
+fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleRoutingDecision {
+    let resolved_policy = policy.unwrap_or(BleRoutingPolicy::Auto);
+    match resolved_policy {
+        BleRoutingPolicy::Master => BleRoutingDecision {
+            route: "master",
+            policy: resolved_policy,
+            reason: "explicit --ble-master override".to_string(),
+        },
+        BleRoutingPolicy::Normal => BleRoutingDecision {
+            route: "normal",
+            policy: resolved_policy,
+            reason: "explicit --ble-master=normal override".to_string(),
+        },
+        BleRoutingPolicy::Auto => match command {
+            Command::Settings { command } => match command {
+                SettingsCommand::Set {
+                    name,
+                    dry_run: false,
+                    ..
+                } if crate::settings::requires_ble_master_routing(name) => BleRoutingDecision {
+                    route: "master",
+                    policy: resolved_policy,
+                    reason: format!(
+                        "setting '{}' write requires PC-link owner zero (master routing)",
+                        name
+                    ),
+                },
+                SettingsCommand::Restore {
+                    parsed: Some(parsed),
+                    ..
+                } if crate::settings::requires_ble_master_routing(&parsed.setting) => {
+                    BleRoutingDecision {
+                        route: "master",
+                        policy: resolved_policy,
+                        reason: format!(
+                            "setting '{}' restore requires PC-link owner zero (master routing)",
+                            parsed.setting
+                        ),
+                    }
+                }
+                SettingsCommand::Batch { operations, .. } => {
+                    if let Some(setting) = operations.iter().find_map(|op| match op {
+                        crate::settings::batch::Operation::Set { name, .. }
+                            if crate::settings::requires_ble_master_routing(name) =>
+                        {
+                            Some(name.as_str())
+                        }
+                        crate::settings::batch::Operation::Restore {
+                            parsed: Some(parsed),
+                            ..
+                        } if crate::settings::requires_ble_master_routing(&parsed.setting) => {
+                            Some(parsed.setting.as_str())
+                        }
+                        _ => None,
+                    }) {
+                        BleRoutingDecision {
+                            route: "master",
+                            policy: resolved_policy,
+                            reason: format!(
+                                "batch includes '{}' write requiring PC-link owner zero (master routing)",
+                                setting
+                            ),
+                        }
+                    } else {
+                        BleRoutingDecision {
+                            route: "normal",
+                            policy: resolved_policy,
+                            reason: "batch operations do not require master routing".to_string(),
+                        }
+                    }
+                }
+                SettingsCommand::Set { dry_run: true, .. } => BleRoutingDecision {
+                    route: "normal",
+                    policy: resolved_policy,
+                    reason: "dry-run validation uses ordinary BLE routing".to_string(),
+                },
+                _ => BleRoutingDecision {
+                    route: "normal",
+                    policy: resolved_policy,
+                    reason: "operation uses ordinary BLE routing".to_string(),
+                },
+            },
+            _ => BleRoutingDecision {
+                route: "normal",
+                policy: resolved_policy,
+                reason: "operation uses ordinary BLE routing".to_string(),
+            },
+        },
+    }
+}
+
+fn command_requires_unit_auth(
+    command: &SettingsCommand,
+    model: crate::settings::SettingsModel,
+    explicit_unit_auth: bool,
+) -> bool {
+    if matches!(command, SettingsCommand::Set { dry_run: true, .. }) {
+        return false;
+    }
+    if explicit_unit_auth {
+        return true;
+    }
+    let specs = crate::settings::schema_for_model(model);
+    let is_oem_setting = |name: &str| {
+        specs
+            .iter()
+            .any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
+    };
+    match command {
+        SettingsCommand::Set {
+            name,
+            dry_run: false,
+            ..
+        } => is_oem_setting(name),
+        SettingsCommand::Restore {
+            parsed: Some(parsed),
+            ..
+        } => is_oem_setting(&parsed.setting),
+        SettingsCommand::Batch { operations, .. } => operations.iter().any(|op| match op {
+            crate::settings::batch::Operation::Set { name, .. } => is_oem_setting(name),
+            crate::settings::batch::Operation::Restore {
+                parsed: Some(parsed),
+                ..
+            } => is_oem_setting(&parsed.setting),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+fn validate_settings_preflight(
+    command: &SettingsCommand,
+    model: crate::settings::SettingsModel,
+    expected_serial: &str,
+) -> Result<()> {
+    let specs = crate::settings::schema_for_model(model);
+    match command {
+        SettingsCommand::Set { name, value, .. } => {
+            let spec = specs
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "setting {name} is unsupported for {}; use model settings schema",
+                        model.name()
+                    )
+                })?;
+            crate::settings::validate_input(spec, value)?;
+        }
+        SettingsCommand::Restore { file, parsed, .. } => {
+            let parsed_owned;
+            let parsed_ref = match parsed {
+                Some(p) => p,
+                None => {
+                    parsed_owned = crate::settings::parse_restore_file(file)?;
+                    &parsed_owned
+                }
+            };
+            parsed_ref.validate_for_model(model, expected_serial)?;
+        }
+        SettingsCommand::Batch { operations, .. } => {
+            for op in operations {
+                match op {
+                    crate::settings::batch::Operation::Set { name, value } => {
+                        let spec = specs
+                            .iter()
+                            .find(|s| s.name.eq_ignore_ascii_case(name))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "setting {name} is unsupported for {}; use model settings schema",
+                                    model.name()
+                                )
+                            })?;
+                        crate::settings::validate_input(spec, value)?;
+                    }
+                    crate::settings::batch::Operation::Restore { file, parsed } => {
+                        let parsed_owned;
+                        let parsed_ref = match parsed {
+                            Some(p) => p,
+                            None => {
+                                parsed_owned =
+                                    crate::settings::parse_restore_file(Path::new(file))?;
+                                &parsed_owned
+                            }
+                        };
+                        parsed_ref.validate_for_model(model, expected_serial)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn execute_settings(
@@ -1841,6 +2129,7 @@ fn execute_settings(
                     .iter()
                     .find(|s| s.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| anyhow::anyhow!("unknown setting: {name}"))?;
+                crate::settings::validate_input(spec, value)?;
                 let current = crate::settings::read_for_model(session, id.slot, name, model)?;
                 return Ok(serde_json::json!({
                     "dry_run": true,
@@ -1860,14 +2149,17 @@ fn execute_settings(
                     crate::platform::now_ms()
                 ))
             });
-            let receipt = crate::settings::set_for_model(
-                session, id.slot, name, value, &backup_path, model,
-            )?;
+            let receipt =
+                crate::settings::set_for_model(session, id.slot, name, value, &backup_path, model)?;
             let mut v = serde_json::to_value(receipt)?;
             v["backup_file"] = serde_json::json!(backup_path);
             Ok(v)
         }
-        SettingsCommand::Restore { file, backup } => {
+        SettingsCommand::Restore {
+            file,
+            backup,
+            parsed,
+        } => {
             let backup_path = backup.clone().unwrap_or_else(|| {
                 PathBuf::from(format!(
                     "backup-restore-{}-{}.json",
@@ -1875,9 +2167,17 @@ fn execute_settings(
                     crate::platform::now_ms()
                 ))
             });
-            let receipt = crate::settings::restore_for_model(
-                session, id.slot, file, &backup_path, model,
-            )?;
+            let receipt = if let Some(parsed) = parsed {
+                crate::settings::restore_parsed_for_model(
+                    session,
+                    id.slot,
+                    parsed,
+                    &backup_path,
+                    model,
+                )?
+            } else {
+                crate::settings::restore_for_model(session, id.slot, file, &backup_path, model)?
+            };
             let mut v = serde_json::to_value(receipt)?;
             v["current_backup_file"] = serde_json::json!(backup_path);
             Ok(v)
@@ -1887,9 +2187,9 @@ fn execute_settings(
             backup_prefix,
             ..
         } => {
-            let prefix = backup_prefix.clone().unwrap_or_else(|| {
-                PathBuf::from(format!("batch-{}", crate::platform::now_ms()))
-            });
+            let prefix = backup_prefix
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(format!("batch-{}", crate::platform::now_ms())));
             crate::settings::batch::run(session, id.slot, operations, &prefix, model)
         }
         SettingsCommand::Schema { .. } => unreachable!(),
@@ -1986,12 +2286,7 @@ fn print_probe_card(
         cargo_bytes.push(0);
     }
     let model_candidates = crate::unit_models::candidates(model_series, model_unit, None, None);
-    let resolved = crate::unit_models::identify(
-        model_series,
-        model_unit,
-        None,
-        Some(&cargo_bytes),
-    );
+    let resolved = crate::unit_models::identify(model_series, model_unit, None, Some(&cargo_bytes));
     let model_name = if let Some(m) = resolved {
         m.to_string()
     } else if !model_candidates.is_empty() {
@@ -2078,11 +2373,20 @@ fn format_setting_value(
         if let Some(s) = val.as_str() {
             return s.to_string();
         }
-        let is_clean_unit = match spec.unit.as_str() {
-            "Nm" | "mm" | "km/h" | "rpm" | "W" | "km" | "teeth" | "gears" | "minutes" | "degrees" | "s" => true,
-            "%" => true,
-            _ => false,
-        };
+        let is_clean_unit = matches!(
+            spec.unit.as_str(),
+            "Nm" | "mm"
+                | "km/h"
+                | "rpm"
+                | "W"
+                | "km"
+                | "teeth"
+                | "gears"
+                | "minutes"
+                | "degrees"
+                | "s"
+                | "%"
+        );
         if is_clean_unit {
             return format!("{val} {}", spec.unit);
         }
@@ -2206,8 +2510,12 @@ fn print_settings_result(
         }
         SettingsCommand::Set { name, dry_run, .. } => {
             if *dry_run {
-                let curr = value.get("current_value").unwrap_or(&serde_json::Value::Null);
-                let planned = value.get("planned_value").unwrap_or(&serde_json::Value::Null);
+                let curr = value
+                    .get("current_value")
+                    .unwrap_or(&serde_json::Value::Null);
+                let planned = value
+                    .get("planned_value")
+                    .unwrap_or(&serde_json::Value::Null);
                 let curr_fmt = format_setting_value(name, curr, &specs);
                 let planned_fmt = format_setting_value(name, planned, &specs);
                 out_println!("[DRY RUN - VALIDATION ONLY]");
@@ -2217,7 +2525,10 @@ fn print_settings_result(
                 out_println!("  State:    UNMODIFIED (No bytes written)");
                 out_println!(">> To write this change, re-run without the --dry-run flag.");
             } else {
-                let setting = value.get("setting").and_then(|s| s.as_str()).unwrap_or(name);
+                let setting = value
+                    .get("setting")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or(name);
                 let before = value.get("before").unwrap_or(&serde_json::Value::Null);
                 let after = value.get("after").unwrap_or(&serde_json::Value::Null);
                 let backup = value
@@ -2265,7 +2576,10 @@ fn print_firmware_metadata(
         FirmwareKind::Renesas => "Renesas",
     };
     let board_str = match meta.board {
-        Some(b) => format!("Board {} (Series 0x{:02X}, Unit 0x{:02X})", b, meta.series, meta.unit),
+        Some(b) => format!(
+            "Board {} (Series 0x{:02X}, Unit 0x{:02X})",
+            b, meta.series, meta.unit
+        ),
         None => format!("Series 0x{:02X}, Unit 0x{:02X}", meta.series, meta.unit),
     };
     out_println!("Firmware Image Metadata:");
@@ -2333,10 +2647,7 @@ mod cli_tests {
 
     #[test]
     fn serial_sanitization_accepts_clean_and_formatted_serials() {
-        assert_eq!(
-            sanitize_serial("010203040506").unwrap(),
-            "010203040506"
-        );
+        assert_eq!(sanitize_serial("010203040506").unwrap(), "010203040506");
         assert_eq!(
             sanitize_serial("01-02-03-04-05-06").unwrap(),
             "010203040506"
@@ -2345,10 +2656,7 @@ mod cli_tests {
             sanitize_serial("01:02:03:04:05:06").unwrap(),
             "010203040506"
         );
-        assert_eq!(
-            sanitize_serial("A1B2C3D4E5F6").unwrap(),
-            "a1b2c3d4e5f6"
-        );
+        assert_eq!(sanitize_serial("A1B2C3D4E5F6").unwrap(), "a1b2c3d4e5f6");
         assert!(sanitize_serial("short").is_err());
         assert!(sanitize_serial("01020304050G").is_err());
     }
@@ -2358,13 +2666,23 @@ mod cli_tests {
         for args in [
             vec!["settings", "set", "lamp", "1"],
             vec!["settings", "restore", "backup.json"],
-            vec!["firmware", "flash", "dcas", "fw.dat", "--companion", "comp.dat"],
+            vec![
+                "firmware",
+                "flash",
+                "dcas",
+                "fw.dat",
+                "--companion",
+                "comp.dat",
+            ],
             vec!["adapter", "power-cycle"],
         ] {
             let mut command = vec!["cranklink", "--read-only"];
             command.extend(args);
             let error = execute(command.into_iter().map(String::from).collect()).unwrap_err();
-            assert!(error.to_string().contains("--read-only rejects"), "{error:#}");
+            assert!(
+                error.to_string().contains("--read-only rejects"),
+                "{error:#}"
+            );
         }
 
         // Read-only allows discovery and reads
@@ -2546,5 +2864,377 @@ mod cli_tests {
             format_setting_value("profile1.name", &serde_json::json!("Profile1"), &specs),
             "Profile1"
         );
+    }
+
+    #[test]
+    fn ble_routing_and_auth_planning_separates_master_ownership_and_oem_auth() {
+        let model = crate::settings::SettingsModel::Ep800Crg;
+        let make_parsed = |setting: &str, before: serde_json::Value, raw_hex: &str| {
+            crate::settings::ParsedRestore {
+                serial: "010203040506".into(),
+                setting: setting.into(),
+                before: before.clone(),
+                original_parameters: hex::decode(raw_hex).unwrap(),
+                raw_backup: serde_json::json!({
+                    "format": "cranklink-setting-backup-v1",
+                    "serial": "010203040506",
+                    "slot": 13,
+                    "setting": setting,
+                    "before": before,
+                    "original_parameters": raw_hex
+                }),
+            }
+        };
+
+        // 1. destination and tire-circumference require BOTH master routing and drive-unit authentication.
+        for (setting, val, raw_hex) in [
+            ("destination", serde_json::json!(1), "0101ffff"),
+            ("tire-circumference", serde_json::json!(2200), "98080000"),
+        ] {
+            let set_cmd = SettingsCommand::Set {
+                name: setting.into(),
+                value: val.to_string(),
+                backup: None,
+                dry_run: false,
+            };
+            let decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: set_cmd.clone(),
+                },
+            );
+            assert_eq!(decision.route, "master");
+            assert_eq!(decision.policy, BleRoutingPolicy::Auto);
+            assert!(decision.reason.contains(setting));
+            assert!(command_requires_unit_auth(&set_cmd, model, false));
+
+            let restore_cmd = SettingsCommand::Restore {
+                file: PathBuf::from("backup.json"),
+                backup: None,
+                parsed: Some(make_parsed(setting, val.clone(), raw_hex)),
+            };
+            let restore_decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: restore_cmd.clone(),
+                },
+            );
+            assert_eq!(restore_decision.route, "master");
+            assert!(restore_decision.reason.contains(setting));
+            assert!(command_requires_unit_auth(&restore_cmd, model, false));
+        }
+
+        // 2. lamp and lighting-time require master routing WITHOUT drive-unit authentication.
+        for (setting, val, raw_hex) in [
+            ("lamp", serde_json::json!(1), "01"),
+            ("lighting-time", serde_json::json!(30), "1e00ffff"),
+        ] {
+            let set_cmd = SettingsCommand::Set {
+                name: setting.into(),
+                value: val.to_string(),
+                backup: None,
+                dry_run: false,
+            };
+            let decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: set_cmd.clone(),
+                },
+            );
+            assert_eq!(decision.route, "master");
+            assert!(!command_requires_unit_auth(&set_cmd, model, false));
+
+            let restore_cmd = SettingsCommand::Restore {
+                file: PathBuf::from("backup.json"),
+                backup: None,
+                parsed: Some(make_parsed(setting, val.clone(), raw_hex)),
+            };
+            let restore_decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: restore_cmd.clone(),
+                },
+            );
+            assert_eq!(restore_decision.route, "master");
+            assert!(!command_requires_unit_auth(&restore_cmd, model, false));
+        }
+
+        // 3. walk-assist and light-output require drive-unit authentication WITHOUT master routing.
+        for (setting, val, raw_hex) in [
+            ("walk-assist", serde_json::json!(2), "02"),
+            ("light-output", serde_json::json!(200), "c800ffff"),
+        ] {
+            let set_cmd = SettingsCommand::Set {
+                name: setting.into(),
+                value: val.to_string(),
+                backup: None,
+                dry_run: false,
+            };
+            let decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: set_cmd.clone(),
+                },
+            );
+            assert_eq!(decision.route, "normal");
+            assert!(command_requires_unit_auth(&set_cmd, model, false));
+
+            let restore_cmd = SettingsCommand::Restore {
+                file: PathBuf::from("backup.json"),
+                backup: None,
+                parsed: Some(make_parsed(setting, val.clone(), raw_hex)),
+            };
+            let restore_decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: restore_cmd.clone(),
+                },
+            );
+            assert_eq!(restore_decision.route, "normal");
+            assert!(command_requires_unit_auth(&restore_cmd, model, false));
+        }
+
+        // 4. speed-limit and assist-pattern use normal routing and do not require drive-unit authentication.
+        for (setting, val, raw_hex) in [
+            ("speed-limit", serde_json::json!(25), "c409ffff"),
+            ("assist-pattern", serde_json::json!(5), "05000000"),
+        ] {
+            let set_cmd = SettingsCommand::Set {
+                name: setting.into(),
+                value: val.to_string(),
+                backup: None,
+                dry_run: false,
+            };
+            let decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: set_cmd.clone(),
+                },
+            );
+            assert_eq!(decision.route, "normal");
+            assert!(!command_requires_unit_auth(&set_cmd, model, false));
+
+            let restore_cmd = SettingsCommand::Restore {
+                file: PathBuf::from("backup.json"),
+                backup: None,
+                parsed: Some(make_parsed(setting, val.clone(), raw_hex)),
+            };
+            let restore_decision = plan_ble_routing(
+                None,
+                &Command::Settings {
+                    command: restore_cmd.clone(),
+                },
+            );
+            assert_eq!(restore_decision.route, "normal");
+            assert!(!command_requires_unit_auth(&restore_cmd, model, false));
+        }
+
+        // 5. Mixed destination + speed-limit batch uses one master-routed, authenticated session.
+        let batch_cmd = SettingsCommand::Batch {
+            plan: PathBuf::from("batch.json"),
+            backup_prefix: None,
+            operations: vec![
+                crate::settings::batch::Operation::Set {
+                    name: "speed-limit".into(),
+                    value: "25".into(),
+                },
+                crate::settings::batch::Operation::Restore {
+                    file: "dest.json".into(),
+                    parsed: Some(make_parsed("destination", serde_json::json!(1), "0101ffff")),
+                },
+            ],
+        };
+        let batch_decision = plan_ble_routing(
+            None,
+            &Command::Settings {
+                command: batch_cmd.clone(),
+            },
+        );
+        assert_eq!(batch_decision.route, "master");
+        assert!(batch_decision.reason.contains("destination"));
+        assert!(command_requires_unit_auth(&batch_cmd, model, false));
+
+        // 6. Reads, probe, units, and dry runs use normal routing and suppress auto-auth.
+        let dry_run_cmd = SettingsCommand::Set {
+            name: "destination".into(),
+            value: "3".into(),
+            backup: None,
+            dry_run: true,
+        };
+        let dry_decision = plan_ble_routing(
+            None,
+            &Command::Settings {
+                command: dry_run_cmd.clone(),
+            },
+        );
+        assert_eq!(dry_decision.route, "normal");
+        assert!(dry_decision.reason.contains("dry-run"));
+        assert!(!command_requires_unit_auth(&dry_run_cmd, model, true));
+        assert_eq!(plan_ble_routing(None, &Command::Probe).route, "normal");
+        assert_eq!(plan_ble_routing(None, &Command::Units).route, "normal");
+    }
+
+    #[test]
+    fn ble_master_flag_parsing_overrides_and_conflicts() {
+        let default_cli = Cli::try_parse_from(["cranklink", "probe"]).unwrap();
+        assert_eq!(default_cli.ble_master, None);
+
+        for args in [
+            vec!["cranklink", "--ble-master", "probe"],
+            vec!["cranklink", "--ble-master=master", "probe"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.ble_master, Some(BleRoutingPolicy::Master));
+            let decision = plan_ble_routing(cli.ble_master, &cli.command);
+            assert_eq!(decision.route, "master");
+            assert_eq!(decision.reason, "explicit --ble-master override");
+        }
+
+        for args in [vec![
+            "cranklink",
+            "--ble-master=normal",
+            "settings",
+            "set",
+            "destination",
+            "3",
+        ]] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.ble_master, Some(BleRoutingPolicy::Normal));
+            let decision = plan_ble_routing(cli.ble_master, &cli.command);
+            assert_eq!(decision.route, "normal");
+            assert_eq!(decision.reason, "explicit --ble-master=normal override");
+        }
+
+        for args in [vec!["cranklink", "--ble-master=auto", "probe"]] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.ble_master, Some(BleRoutingPolicy::Auto));
+        }
+
+        // Conflict: --unit-auth and --no-auth
+        let conflict = execute(
+            ["cranklink", "--unit-auth", "--no-auth", "probe"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        )
+        .unwrap_err();
+        assert!(
+            conflict
+                .to_string()
+                .contains("--unit-auth and --no-auth cannot be used together"),
+            "{conflict:#}"
+        );
+
+        // Conflict: --ble-master on non-BLE port
+        let non_ble = execute(
+            [
+                "cranklink",
+                "--port",
+                "/dev/cu.usbserial",
+                "--ble-master",
+                "probe",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        )
+        .unwrap_err();
+        assert!(
+            non_ble
+                .to_string()
+                .contains("--ble-master requires a Bluetooth port"),
+            "{non_ble:#}"
+        );
+
+        // Conflict: --ble-master=normal on firmware flash ble-pair
+        let flash_normal = execute(
+            [
+                "cranklink",
+                "--port",
+                "ble:any",
+                "--ble-master=normal",
+                "-s",
+                "010203040506",
+                "firmware",
+                "flash",
+                "ble-pair",
+                "--dcas",
+                "d.dat",
+                "--rx",
+                "m.dat",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        )
+        .unwrap_err();
+        assert!(
+            flash_normal
+                .to_string()
+                .contains("--ble-master=normal is not supported for firmware flashing"),
+            "{flash_normal:#}"
+        );
+    }
+
+    #[test]
+    fn preloaded_restore_retains_snapshot_and_validates_preflight_before_writes() {
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-preload-restore-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let backup_file = dir.join("dest-backup.json");
+        std::fs::write(
+            &backup_file,
+            serde_json::to_vec(&serde_json::json!({
+                "format": "cranklink-setting-backup-v1",
+                "serial": "010203040506",
+                "slot": 13,
+                "setting": "destination",
+                "before": 1,
+                "original_parameters": "0101ffff"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let parsed = crate::settings::parse_restore_file(&backup_file).unwrap();
+        // Remove the file on disk to prove subsequent planning/validation uses the retained snapshot.
+        std::fs::remove_file(&backup_file).unwrap();
+
+        let restore_cmd = SettingsCommand::Restore {
+            file: backup_file.clone(),
+            backup: None,
+            parsed: Some(parsed),
+        };
+        let decision = plan_ble_routing(
+            None,
+            &Command::Settings {
+                command: restore_cmd.clone(),
+            },
+        );
+        assert_eq!(decision.route, "master");
+        assert!(command_requires_unit_auth(
+            &restore_cmd,
+            crate::settings::SettingsModel::Ep800Crg,
+            false
+        ));
+        validate_settings_preflight(
+            &restore_cmd,
+            crate::settings::SettingsModel::Ep800Crg,
+            "010203040506",
+        )
+        .unwrap();
+        assert!(validate_settings_preflight(
+            &restore_cmd,
+            crate::settings::SettingsModel::Ep800Crg,
+            "ffffff000000"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("backup belongs to another motor"));
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

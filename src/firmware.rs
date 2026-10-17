@@ -509,7 +509,11 @@ impl Firmware {
         Ok(())
     }
 
-    pub fn validate_companion_version_for_pair(&self, companion: &Self, actual: Version) -> Result<()> {
+    pub fn validate_companion_version_for_pair(
+        &self,
+        companion: &Self,
+        actual: Version,
+    ) -> Result<()> {
         self.validate_companion(companion)?;
         ensure!(
             self.metadata.kind.is_dcas(),
@@ -660,7 +664,12 @@ mod tests {
                 b[0xc0] = 0x05;
                 b[0xc1..0xc4].copy_from_slice(&[0x4a, 0, 0]);
                 b[0xc6..0xca].copy_from_slice(&256u32.to_le_bytes());
-                b[0xca..0xce].copy_from_slice(&[0x12, 0, if kind == FirmwareKind::Dcas2i { 3 } else { 2 }, 1]);
+                b[0xca..0xce].copy_from_slice(&[
+                    0x12,
+                    0,
+                    if kind == FirmwareKind::Dcas2i { 3 } else { 2 },
+                    1,
+                ]);
                 b[0xd3..0xd6].copy_from_slice(&[0x49, 0, 0]);
                 b
             }
@@ -950,8 +959,12 @@ mod tests {
     fn companion_pair_and_version_checks() {
         let d = Firmware::from_bytes(&image(FirmwareKind::DcasX)).unwrap();
         let m = Firmware::from_bytes(&image(FirmwareKind::Renesas)).unwrap();
-        assert!(d.validate_companion_version_for_pair(&m, Version([4, 1, 11, 0])).is_ok());
-        assert!(d.validate_companion_version_for_pair(&m, Version([4, 0, 0, 0])).is_err());
+        assert!(d
+            .validate_companion_version_for_pair(&m, Version([4, 1, 11, 0]))
+            .is_ok());
+        assert!(d
+            .validate_companion_version_for_pair(&m, Version([4, 0, 0, 0]))
+            .is_err());
     }
 
     #[test]

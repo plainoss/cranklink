@@ -20,6 +20,8 @@ pub enum Operation {
     },
     Restore {
         file: PathBuf,
+        #[serde(skip)]
+        parsed: Option<ParsedRestore>,
     },
 }
 
@@ -45,13 +47,31 @@ pub fn load(path: &Path) -> Result<Vec<Operation>> {
         "batch requires 1..=128 operations"
     );
     for op in &mut operations {
-        if let Operation::Restore { file } = op {
+        if let Operation::Restore { file, .. } = op {
             if file.is_relative() {
                 *file = path.parent().unwrap_or(Path::new(".")).join(&*file);
             }
         }
     }
     Ok(operations)
+}
+
+/// Parse and cache all restore files in a batch plan before opening a transport.
+pub fn preload_restores(operations: &mut [Operation]) -> Result<()> {
+    for (index, op) in operations.iter_mut().enumerate() {
+        if let Operation::Restore { file, parsed } = op {
+            if parsed.is_none() {
+                let p = parse_restore_file(file).with_context(|| {
+                    format!(
+                        "batch operation {} preflight failed; no batch writes sent",
+                        index + 1
+                    )
+                })?;
+                *parsed = Some(p);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn suffixed(prefix: &Path, suffix: &str) -> PathBuf {
@@ -92,64 +112,36 @@ pub fn run(
         &[0],
         0x3e,
     )?)?);
+    let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
-        let valid = (|| -> Result<()> {
+        let valid = (|| -> Result<Option<ParsedRestore>> {
             match op {
                 Operation::Read { name: Some(name) } => {
                     spec_for_model(name, model)?;
+                    Ok(None)
                 }
-                Operation::Read { name: None } => {}
+                Operation::Read { name: None } => Ok(None),
                 Operation::Set { name, value } => {
-                    validate_input(&spec_for_model(name, model)?, value)?
+                    validate_input(&spec_for_model(name, model)?, value)?;
+                    Ok(None)
                 }
-                Operation::Restore { file } => {
-                    let backup: Value =
-                        serde_json::from_slice(&crate::storage::read_bounded(file, 64 * 1024)?)?;
-                    ensure!(
-                        backup["format"] == "cranklink-setting-backup-v1"
-                            || backup["format"] == "esteps-setting-backup-v1",
-                        "unsupported backup format"
-                    );
-                    let captured_serial = hex::decode(
-                        backup["serial"]
-                            .as_str()
-                            .context("backup has no serial identity")?,
-                    )?;
-                    ensure!(
-                        hex::encode(crate::device::serial_bytes(&captured_serial)?) == serial,
-                        "backup belongs to another motor"
-                    );
-                    let s = spec_for_model(
-                        backup["setting"]
-                            .as_str()
-                            .context("backup missing setting")?,
-                        model,
-                    )?;
-                    let raw = hex::decode(
-                        backup["original_parameters"]
-                            .as_str()
-                            .context("backup lacks original parameters")?,
-                    )?;
-                    ensure!(
-                        s.decode(&raw)? == backup["before"],
-                        "backup value does not match captured original parameters"
-                    );
-                    let value = match &backup["before"] {
-                        Value::Null => "unset".to_owned(),
-                        Value::String(s) => s.clone(),
-                        value => value.to_string(),
+                Operation::Restore { file, parsed } => {
+                    let parsed = match parsed {
+                        Some(p) => p.clone(),
+                        None => parse_restore_file(file)?,
                     };
-                    validate_input(&s, &value)?;
+                    parsed.validate_for_model(model, &serial)?;
+                    Ok(Some(parsed))
                 }
             }
-            Ok(())
         })();
-        valid.with_context(|| {
+        let parsed = valid.with_context(|| {
             format!(
                 "batch operation {} preflight failed; no batch writes sent",
                 index + 1
             )
         })?;
+        resolved_restores.push(parsed);
     }
     let journal_path = suffixed(prefix, ".journal.jsonl");
     let mut journal = OpenOptions::new()
@@ -187,9 +179,14 @@ pub fn run(
                 Operation::Set { name, value } => Ok(serde_json::to_value(set_for_model(
                     session, slot, name, value, &backup, model,
                 )?)?),
-                Operation::Restore { file } => Ok(serde_json::to_value(restore_for_model(
-                    session, slot, file, &backup, model,
-                )?)?),
+                Operation::Restore { .. } => {
+                    let parsed = resolved_restores[index]
+                        .as_ref()
+                        .expect("restore preflight verified");
+                    Ok(serde_json::to_value(restore_parsed_for_model(
+                        session, slot, parsed, &backup, model,
+                    )?)?)
+                }
             }
         })();
         match result {

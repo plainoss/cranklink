@@ -122,6 +122,7 @@ cranklink --port usb -s <SERIAL> settings read --output settings.json
 ```
 
 Replace `<SERIAL>` with the motor's 12-digit wire-order hex serial (e.g. `010203040506`, returned by `cranklink probe`).
+Over Bluetooth (`--port 'ble:DEVICE_ID'`), `cranklink` automatically selects BLE master routing (`--ble-master[=auto|normal|master]`, default `auto`) when writing or restoring settings that require PC-link owner zero (`destination`, `tire-circumference`, `lamp`, `lighting-time`), while preserving ordinary routing for reads, `--dry-run`, and other writes. Modifying or restoring `oem`-protected settings automatically performs drive-unit authentication on supported firmware (override with `--unit-auth` or `--no-auth`).
 See [settings and batch plans](docs/settings-protocol.md), [Bluetooth setup and commands](docs/bluetooth.md), and [component selection](docs/unit-identification.md).
 
 ### 3. Recover an interrupted firmware update

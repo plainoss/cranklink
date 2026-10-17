@@ -247,7 +247,10 @@ fn restore_uses_existing_serial_bound_backup_and_saves_current_value() {
     let report = run(
         &mut motor,
         13,
-        &[Operation::Restore { file: original }],
+        &[Operation::Restore {
+            file: original,
+            parsed: None,
+        }],
         &files.prefix(),
         SettingsModel::Ep800Crg,
     )
@@ -271,7 +274,7 @@ fn loader_rejects_unknown_fields_and_empty_plan_and_resolves_restore_paths() {
     }
     std::fs::write(&plan, r#"[{"op":"restore","file":"before.json"}]"#).unwrap();
     assert!(
-        matches!(&load(&plan).unwrap()[0], Operation::Restore { file } if file == &files.0.join("before.json"))
+        matches!(&load(&plan).unwrap()[0], Operation::Restore { file, .. } if file == &files.0.join("before.json"))
     );
 }
 

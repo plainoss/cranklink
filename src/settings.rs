@@ -1159,6 +1159,92 @@ fn validate_combination(s: &SettingSpec, p: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+/// Whether a setting requires BLE master routing (PC owner distinct from the cycle computer).
+/// This is distinct from `oem` regulation authentication: `destination` and `tire-circumference`
+/// require both drive-unit authentication and master routing, `lamp` and `lighting-time` require
+/// master routing without drive-unit authentication, and other `oem` settings require drive-unit
+/// authentication without master routing.
+pub fn requires_ble_master_routing(setting_name: &str) -> bool {
+    matches!(
+        setting_name.to_ascii_lowercase().as_str(),
+        "destination" | "tire-circumference" | "lamp" | "lighting-time"
+    )
+}
+
+/// Validated restore input parsed before opening a session so routing/authentication
+/// planning and execution use the exact same snapshot without re-reading disk.
+#[derive(Debug, Clone)]
+pub struct ParsedRestore {
+    pub serial: String,
+    pub setting: String,
+    pub before: Value,
+    pub original_parameters: Vec<u8>,
+    pub raw_backup: Value,
+}
+
+impl ParsedRestore {
+    pub fn planned_value(&self) -> String {
+        match &self.before {
+            Value::Null => "unset".into(),
+            Value::String(s) => s.clone(),
+            value => value.to_string(),
+        }
+    }
+
+    pub fn validate_for_model(
+        &self,
+        model: SettingsModel,
+        expected_serial: &str,
+    ) -> Result<SettingSpec> {
+        ensure!(
+            self.serial.eq_ignore_ascii_case(expected_serial),
+            "backup belongs to another motor or has no serial identity"
+        );
+        let spec = spec_for_model(&self.setting, model)?;
+        ensure!(
+            spec.decode(&self.original_parameters)? == self.before,
+            "backup value does not match captured original parameters"
+        );
+        if !(spec.group == 0x48 && spec.set == 0x50) {
+            validate_input(&spec, &self.planned_value())?;
+        }
+        Ok(spec)
+    }
+}
+
+pub fn parse_restore_file(backup_path: &Path) -> Result<ParsedRestore> {
+    let backup: Value =
+        serde_json::from_slice(&crate::storage::read_bounded(backup_path, 64 * 1024)?)?;
+    ensure!(
+        backup["format"] == "cranklink-setting-backup-v1"
+            || backup["format"] == "esteps-setting-backup-v1",
+        "unsupported backup format"
+    );
+    let serial = backup["serial"]
+        .as_str()
+        .and_then(|s| hex::decode(s).ok())
+        .and_then(|bytes| crate::device::serial_bytes(&bytes).ok())
+        .map(hex::encode)
+        .context("backup belongs to another motor or has no serial identity")?;
+    let setting = backup["setting"]
+        .as_str()
+        .context("backup missing setting")?
+        .to_string();
+    let original_parameters = hex::decode(
+        backup["original_parameters"]
+            .as_str()
+            .context("backup lacks original parameters")?,
+    )?;
+    let before = backup["before"].clone();
+    Ok(ParsedRestore {
+        serial,
+        setting,
+        before,
+        original_parameters,
+        raw_backup: backup,
+    })
+}
+
 /// Restore only the named field, retaining any independent settings changed since the backup.
 pub fn restore(
     session: &mut dyn UnitCommands,
@@ -1181,12 +1267,16 @@ pub fn restore_for_model(
     new_backup_path: &Path,
     model: SettingsModel,
 ) -> Result<ChangeReceipt> {
-    let backup: Value = serde_json::from_reader(crate::storage::File::open(backup_path)?)?;
-    ensure!(
-        backup["format"] == "cranklink-setting-backup-v1"
-            || backup["format"] == "esteps-setting-backup-v1",
-        "unsupported backup format"
-    );
+    let parsed = parse_restore_file(backup_path)?;
+    restore_parsed_for_model(session, slot, &parsed, new_backup_path, model)
+}
+pub fn restore_parsed_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    parsed: &ParsedRestore,
+    new_backup_path: &Path,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
     let serial = hex::encode(crate::device::serial_bytes(&session.command(
         slot,
         1,
@@ -1194,40 +1284,19 @@ pub fn restore_for_model(
         &[0],
         0x3e,
     )?)?);
-    ensure!(
-        backup["serial"]
-            .as_str()
-            .and_then(|s| hex::decode(s).ok())
-            .and_then(|bytes| crate::device::serial_bytes(&bytes).ok())
-            .map(hex::encode)
-            .as_deref()
-            == Some(serial.as_str()),
-        "backup belongs to another motor or has no serial identity"
-    );
-    let name = backup["setting"]
-        .as_str()
-        .context("backup missing setting")?;
-    let setting = spec_for_model(name, model)?;
-    let captured = hex::decode(
-        backup["original_parameters"]
-            .as_str()
-            .context("backup lacks original parameters")?,
-    )?;
-    ensure!(
-        setting.decode(&captured)? == backup["before"],
-        "backup value does not match captured original parameters"
-    );
+    let setting = parsed.validate_for_model(model, &serial)?;
     if setting.group == 0x48 && setting.set == 0x50 {
-        return restore_date(session, slot, &setting, &backup, new_backup_path);
+        return restore_date(session, slot, &setting, &parsed.raw_backup, new_backup_path);
     }
-    let value = if backup["before"].is_null() {
-        "unset".into()
-    } else if let Some(s) = backup["before"].as_str() {
-        s.to_string()
-    } else {
-        backup["before"].to_string()
-    };
-    set_for_model(session, slot, name, &value, new_backup_path, model)
+    let value = parsed.planned_value();
+    set_for_model(
+        session,
+        slot,
+        &parsed.setting,
+        &value,
+        new_backup_path,
+        model,
+    )
 }
 
 fn parse_date(value: &str) -> Result<[u8; 4]> {
@@ -1332,7 +1401,7 @@ fn restore_date(
     })
 }
 
-fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
+pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
     if s.value_type == "date" {
         parse_date(value)?;
     } else if s.width == 0 {
