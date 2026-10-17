@@ -1,11 +1,15 @@
 let control,
   buffer,
   sequence = 0,
-  poisoned = false;
+  poisoned = false,
+  simulatorFlag = null;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 export function configure(shared) {
   control = new Int32Array(shared.control);
   buffer = new Uint8Array(shared.buffer);
+  if (shared.simulator) {
+    simulatorFlag = new Int32Array(shared.simulator);
+  }
 }
 export function host_call(op, payload, timeout) {
   if (poisoned)
@@ -45,5 +49,8 @@ export function host_now_ms() {
   return performance.timeOrigin + performance.now();
 }
 export function host_sleep(ms) {
+  if (simulatorFlag && Atomics.load(simulatorFlag, 0) === 1) {
+    return;
+  }
   Atomics.wait(sleeper, 0, 0, ms);
 }

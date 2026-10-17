@@ -44,7 +44,10 @@ impl UnitIdentity {
     pub fn is_motor(&self) -> bool {
         matches!(
             (self.model_series, self.model_unit),
-            (0x23 | 0x30 | 0x35 | 0x37, 0)
+            (
+                0x08 | 0x12 | 0x20 | 0x21 | 0x23 | 0x30 | 0x35 | 0x37 | 0x38,
+                0
+            )
         )
     }
     pub fn resolve_name(&mut self, commands: &mut impl UnitCommands) -> Result<()> {
@@ -469,7 +472,8 @@ impl Session {
             }
         };
         self.target(slot)?;
-        UnitIdentity::from_reply(slot, self.model_identity(slot)?)?.require_motor()?;
+        let motor = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
+        motor.require_motor()?;
         let p = self.adapter(4, &[], 0x24)?;
         self.pc_slot = p.first().copied().context("short protocol reply")? & 0x1f;
         self.normal_slot = Some(slot);
@@ -500,9 +504,9 @@ impl Session {
         })?;
         self.normal_slot = Some(slot);
         sleep(Duration::from_millis(30));
-        let cargo = self.command(slot, 0x16, 0x7c, &[0], 0x7e)?;
+        let cargo = crate::motor_support::read_params(self, slot, motor.model_series)?;
         ensure!(
-            cargo.len() >= 7,
+            motor.model_series == 0x08 || cargo.len() >= 7,
             "truncated cargo attribute reply: {}",
             hex::encode(&cargo)
         );
@@ -525,8 +529,8 @@ impl Session {
             rx_version,
         })
     }
-    /// One legacy regulation-auth attempt in the existing PC-link session.
-    /// The serial and exact stock firmware are checked before sending any key.
+    /// One regulation-auth attempt in the existing PC-link session.
+    /// The serial, live model and firmware capabilities are checked before any key.
     pub fn authenticate_unit_settings(
         &mut self,
         expected_serial: &str,
@@ -545,14 +549,36 @@ impl Session {
             "drive-unit authentication motor serial mismatch"
         );
         let model = self.model_identity(slot)?;
-        let cargo = self.command(slot, 0x16, 0x7c, &[0], 0x7e)?;
+        ensure!(model.len() >= 3, "invalid motor stock identity");
+        let cargo = crate::motor_support::read_params(self, slot, model[1])?;
         let firmware = version(&self.command(slot, 1, 0x2c, &[0], 0x2e)?)?;
-        ensure!(
-            model.get(1..3) == Some(&[0x23, 0][..])
-                && cargo == b"00-CRG\0"
-                && matches!(firmware.as_str(), "4.1.10.0" | "4.2.0.0"),
-            "wired drive-unit authentication is verified only for EP800-CRG D4.1.10.0/D4.2.0.0"
-        );
+        ensure!(model.len() >= 3, "invalid motor stock identity");
+        let protocol =
+            crate::motor_support::authorization_for_motor(model[1], model[2], &cargo, &firmware)?;
+        if protocol == crate::motor_support::AuthProtocol::NotRequired {
+            self.unit_auth_attempted = true;
+            return Ok(
+                serde_json::json!({"unit_authentication_required":false,"firmware":firmware,
+                "scope":"this motor firmware does not require regulation-setting authentication"}),
+            );
+        }
+        let modern = protocol == crate::motor_support::AuthProtocol::Modern;
+        let product = if modern {
+            let first = self.command(slot, 1, 0xa4, &[0], 0xa6)?;
+            let last = self.command(slot, 1, 0xac, &[0], 0xae)?;
+            ensure!(
+                first.len() >= 6 && last.len() >= 6,
+                "invalid product serial reply"
+            );
+            let bytes = [&first[1..6], &last[..6]].concat();
+            ensure!(
+                bytes.iter().all(u8::is_ascii_graphic),
+                "invalid product serial characters"
+            );
+            Some(String::from_utf8(bytes)?)
+        } else {
+            None
+        };
         self.unit_auth_attempted = true;
         // Disable physical TX/RX tracing for the entire exchange. On failure,
         // keep it disabled during cleanup: delayed fragments can contain keys.
@@ -560,6 +586,9 @@ impl Session {
         let trace = self.trace.take();
         let result = (|| -> Result<()> {
             self.incoming.clear();
+            if let Some(product) = product.as_deref() {
+                return self.authenticate_modern_settings(slot, &serial, product);
+            }
             let keys = unit_auth::derive(&serial);
             let mut request = zeroize::Zeroizing::new(vec![slot, 0x16, 0xd8]);
             request.extend_from_slice(&keys.auth_key);
@@ -595,8 +624,53 @@ impl Session {
         result?;
         Ok(
             serde_json::json!({"unit_authentication_receipt":true,"firmware":firmware,
-            "scope":"legacy EP800-CRG regulation-setting authentication; per-setting validation still required"}),
+            "protocol":if modern {"modern"} else {"legacy"},
+            "scope":"regulation-setting authentication; per-setting validation still required"}),
         )
+    }
+    fn authenticate_modern_settings(
+        &mut self,
+        slot: u8,
+        serial: &[u8; 6],
+        product: &str,
+    ) -> Result<()> {
+        use crate::ble::unit_auth;
+        let keys = unit_auth::derive_modern(serial, product)?;
+        let ciphertext = zeroize::Zeroizing::new(keys.auth_ciphertext());
+        self.send_modern_auth_fragments(slot, 0x68, &ciphertext)?;
+        let pc = self.pc_slot;
+        let mut challenge = zeroize::Zeroizing::new([0u8; 16]);
+        for (selector, offset, length) in [(0x16, 0, 6), (0x26, 6, 6), (0x34, 12, 4)] {
+            let reply = self.wait(Duration::from_secs(3), |f| {
+                normal_response_matches(f, pc, 0x33, 0x6a)
+            })?;
+            ensure!(
+                reply.payload.len() == 10 && reply.payload[2..4] == [0x6a, selector],
+                "modern drive-unit authentication challenge rejected, malformed or out of order; no retry"
+            );
+            challenge[offset..offset + length].copy_from_slice(&reply.payload[4..4 + length]);
+        }
+        let proof = zeroize::Zeroizing::new(keys.challenge_proof(&challenge));
+        self.send_modern_auth_fragments(slot, 0x70, &proof)?;
+        let reply = self.wait(Duration::from_secs(3), |f| {
+            normal_response_matches(f, pc, 0x33, 0x72)
+        })?;
+        unit_auth::validate_receipt(&reply.payload, pc, 0x33, 0x72)
+    }
+    fn send_modern_auth_fragments(
+        &mut self,
+        slot: u8,
+        command: u8,
+        block: &[u8; 16],
+    ) -> Result<()> {
+        for (selector, offset, length) in [(0x16, 0, 6), (0x26, 6, 6), (0x34, 12, 4)] {
+            let mut request = zeroize::Zeroizing::new([0xff; 10]);
+            request[..4].copy_from_slice(&[slot, 0x33, command, selector]);
+            request[4..4 + length].copy_from_slice(&block[offset..offset + length]);
+            self.send(0x48, request.as_ref())?;
+            sleep(Duration::from_millis(100));
+        }
+        Ok(())
     }
     pub fn normal_stop(&mut self) -> Result<()> {
         if let Some(slot) = self.normal_slot {

@@ -11,6 +11,7 @@ import {
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { detectPlatform } from "../../core/platform.ts";
+import { userFacingError } from "../../domain/errors.ts";
 import { Button } from "../ui/Button.tsx";
 
 interface ConnectViewProps {
@@ -66,7 +67,7 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" />
             <div className="text-sm min-w-0">
               <p className="font-semibold">Couldn’t connect</p>
-              <p className="text-red-700 mt-1 break-words">{state.errorBanner}</p>
+              <p className="text-red-700 mt-1 break-words">{userFacingError(state.errorBanner)}</p>
             </div>
           </div>
         )}
@@ -102,6 +103,12 @@ export function ConnectView({ state, controller }: ConnectViewProps) {
             {primaryTransport === "ble" ? <Bluetooth size={18} className="text-blue-300" /> : <Usb size={18} />}
             <span>{primaryLabel}</span>
           </Button>
+
+          {canUseBluetooth && (
+            <p className="mt-3 text-xs text-stone-500 leading-relaxed" data-testid="bluetooth-discovery-hint">
+              For Bluetooth, turn the bike on just before connecting. If it isn’t listed, turn it off and on again, then enable its Bluetooth connection mode if needed.
+            </p>
+          )}
 
           {hasOptions && (
             <div className="mt-3">

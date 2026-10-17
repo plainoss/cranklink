@@ -24,12 +24,13 @@
     </div>
 
     <!-- Native Bluetooth 6-digit Passkey Dialog -->
-    <dialog id="ble-passkey-dialog" aria-labelledby="ble-passkey-label">
+    <dialog id="ble-passkey-dialog" aria-labelledby="ble-passkey-title" aria-describedby="ble-passkey-help">
       <form method="dialog">
-        <label id="ble-passkey-label" for="ble-passkey" style="display: block; margin-bottom: 10px; font-weight: 600;">Bluetooth Passkey</label>
-        <p style="font-size: 12px; color: #52525b; margin-bottom: 12px;">
+        <h2 id="ble-passkey-title">Bluetooth passkey</h2>
+        <p id="ble-passkey-help">
           Enter the 6-digit passkey for the Shimano E-TUBE Bluetooth gateway.
         </p>
+        <label for="ble-passkey">Passkey</label>
         <input
           id="ble-passkey"
           type="password"
@@ -39,11 +40,10 @@
           maxlength="6"
           autocomplete="off"
           required
-          style="width: 100%; padding: 8px; font-family: monospace; font-size: 16px; margin-bottom: 12px; border: 1px solid #b8b5ab; border-radius: 3px;"
         />
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button id="ble-passkey-cancel" type="button" class="btn btn-sm" style="min-height: 44px; min-width: 44px; padding: 10px 16px; border-radius: 8px; border: 1px solid #d6d3d1; background: white; cursor: pointer;">Cancel</button>
-          <button type="submit" value="authenticate" class="btn btn-primary btn-sm" style="min-height: 44px; min-width: 44px; padding: 10px 16px; border-radius: 8px; background: #1c1917; color: white; border: none; cursor: pointer;">Authenticate</button>
+        <div class="ble-passkey-actions">
+          <button id="ble-passkey-cancel" type="button">Cancel</button>
+          <button type="submit" value="authenticate">Authenticate</button>
         </div>
       </form>
     </dialog>

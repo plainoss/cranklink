@@ -366,11 +366,7 @@ pub fn run_session(
                     .get("model")
                     .and_then(Value::as_str)
                     .unwrap_or("ep800-crg");
-                let model = match model_str {
-                    "ep600" => crate::settings::SettingsModel::Ep600,
-                    "ep801" => crate::settings::SettingsModel::Ep801,
-                    _ => crate::settings::SettingsModel::Ep800Crg,
-                };
+                let model = super::settings_model_name(model_str);
                 let specs = crate::settings::schema_for_model(model);
                 if let Some(target) = req.params.get("name").and_then(Value::as_str) {
                     if let Some(spec) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(target)) {

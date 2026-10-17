@@ -25,7 +25,8 @@ for (const name of [
   "worker.js", "host.js", "coi-serviceworker.js",
   "licenses/coi-serviceworker-LICENSE.txt",
   "pkg/cranklink.js", "pkg/cranklink_bg.wasm",
-  "schemas/ep800-crg.json", "schemas/ep600.json", "schemas/ep801.json",
+  "schemas/ep800-crg.json", "schemas/ep600.json", "schemas/ep801.json", "schemas/ep500.json",
+  "schemas/e5100.json", "schemas/e8000.json", "schemas/e7000.json", "schemas/e6100.json", "schemas/e6000.json",
 ]) copy(name);
 fs.writeFileSync(path.join(dist, ".nojekyll"), "");
 console.log("Copied required runtime assets and service-worker license.");

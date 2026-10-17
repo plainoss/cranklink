@@ -20,9 +20,10 @@ export class WebBleGatt {
       optionalServices: [ETUBE_SERVICE],
     });
   }
-  constructor(device, requestPasskey) {
+  constructor(device, requestPasskey, onAuthenticationFailure = () => {}) {
     this.device = device;
     this.requestPasskey = requestPasskey;
+    this.onAuthenticationFailure = onAuthenticationFailure;
     this.chars = new Map();
     this.handlers = new Map();
     this.queue = [];
@@ -244,6 +245,11 @@ export class WebBleGatt {
     if (op === "ble.open") return enc.encode(JSON.stringify(await this.open()));
     if (op === "ble.close") {
       await this.close();
+      return new Uint8Array();
+    }
+    if (op === "ble.reset-passkey") {
+      this.credential = null;
+      this.onAuthenticationFailure();
       return new Uint8Array();
     }
     if (op === "ble.passkey") {

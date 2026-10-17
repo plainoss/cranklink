@@ -7,8 +7,8 @@ export default defineConfig({
   expect: {
     timeout: 15_000,
   },
-  fullyParallel: false,
-  workers: 1,
+  fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   use: {
     baseURL: "http://127.0.0.1:8030",
     trace: "on-first-retry",

@@ -65,6 +65,12 @@ impl Gatt for BrowserGatt {
         let bytes = self.request("ble.passkey", serde_json::json!({}), 120000)?;
         Ok(String::from_utf8(bytes)?)
     }
+    fn clear_passkey(&mut self) {
+        if let Some(mut credential) = self.credential.take() {
+            credential.zeroize();
+        }
+        let _ = crate::wasm::rpc("ble.reset-passkey", &[], 10000);
+    }
     fn close(&mut self) -> Result<()> {
         if self.closed {
             return Ok(());
