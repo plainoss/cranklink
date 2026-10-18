@@ -1,5 +1,6 @@
 /**
- * schema.ts - Pure domain classification and human-readable metadata for SettingSpec.
+ * schema.ts - Classification, operator-facing labels, and device rules for settings.
+ * Value formatting lives in settingFormat.ts.
  * Priority order:
  * 1. Geometry & Hardware (Tire Circumference, Destination, Speed Limit, Lighting, Walk Assist, Mounting Angle)
  * 2. Assist Profiles (Profile 1 & Profile 2 Eco/Trail/Boost Torque, Character, Start)
@@ -16,40 +17,6 @@ import type {
   MotorModel,
 } from "../types.ts";
 import { isModernModel } from "./motorIdentity.ts";
-
-export interface ParameterGroupInfo {
-  id: SettingSectionId;
-  title: string;
-  subtitle: string;
-}
-
-export const PARAMETER_GROUPS: ParameterGroupInfo[] = [
-  {
-    id: "geometry",
-    title: "Bike Hardware & Geometry",
-    subtitle: "Wheel circumference, regional speed standard, mounting angle, and lighting",
-  },
-  {
-    id: "profiles",
-    title: "Assist Profiles & Motor Tuning",
-    subtitle: "Eco, Trail, and Boost torque limits, assist character, and start sensitivity",
-  },
-  {
-    id: "drivetrain",
-    title: "Drivetrain & Electronic Shifting",
-    subtitle: "Sprocket tooth counts, Di2 automatic shifting cadence, and multi-shift limits",
-  },
-  {
-    id: "maintenance",
-    title: "Service & Maintenance",
-    subtitle: "Service interval alerts, distance reminders, and scheduled inspection dates",
-  },
-  {
-    id: "oem",
-    title: "OEM Factory Bounds",
-    subtitle: "Manufacturer baseline profile envelopes and maximum power caps",
-  },
-];
 
 export const TIRE_PRESETS: SettingPreset[] = [
   // Chart values are estimates; the loaded wheel's measured rollout is most accurate.
@@ -72,14 +39,14 @@ export function clampSettingValue(setting: EnrichedSetting, value: number): numb
   return Math.min(setting.userMax, Math.max(setting.userMin, snapped));
 }
 
-export const LEGACY_DESTINATION_LABELS: Record<number, string> = {
+const LEGACY_DESTINATION_LABELS: Record<number, string> = {
   0: "Region 0 (25 km/h)",
   1: "Region 1 / US Class 1 (32 km/h)",
   3: "Europe / Restricted (25 km/h)",
   4: "Australia / 25 km/h",
 };
 
-export const MODERN_DESTINATION_LABELS: Record<number, string> = {
+const MODERN_DESTINATION_LABELS: Record<number, string> = {
   0: "Standard (25 km/h)",
   1: "US Class 1 (32 km/h)",
   2: "Japan (24 km/h)",
@@ -97,10 +64,6 @@ export function destinationSpeedRange(model: string | undefined, destination: nu
   if (modern && destination === 2) return { min: 14, max: 24 };
   if (modern && destination === 5) return { min: 19, max: 45 };
   return undefined;
-}
-
-export function modelSpeedRange(model: string | undefined): { min: number; max: number } {
-  return model === "ep600" || model === "ep801" || model === "ep500" ? { min: 14, max: 45 } : { min: 15, max: 32 };
 }
 
 // Keep aligned with modern_torque_levels and validate_modern_torque in src/settings.rs.
@@ -426,7 +389,7 @@ function formatProfileSetting(name: string): {
   return null;
 }
 
-export function enrichSetting(
+function enrichSetting(
   spec: SettingSpec,
   modelSlug: MotorModel = "ep800-crg",
 ): EnrichedSetting {
@@ -502,18 +465,4 @@ export function enrichSchema(
     }
     return 0;
   });
-}
-
-export function formatSettingValue(
-  setting: EnrichedSetting,
-  value: number | string | null | undefined,
-): string {
-  if (value === null || value === undefined) return "unset";
-  if (setting.choiceLabels && typeof value === "number" && setting.choiceLabels[value] !== undefined) {
-    return `${setting.choiceLabels[value]} (${value})`;
-  }
-  if (setting.displayUnit && setting.value_type === "number") {
-    return `${value} ${setting.displayUnit}`;
-  }
-  return String(value);
 }

@@ -64,9 +64,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             ? "Open in Chrome or Edge to connect"
             : "Connection unavailable";
 
-  const failure = state.errorBanner
-    ? describeFailure(state.errorBanner, state.failure, state.transport, state.schema)
-    : null;
+  const failure = state.failure ? describeFailure(state.failure, state.transport, state.schema) : null;
 
   return (
     <main className="min-h-dvh flex flex-col items-center justify-center px-4 py-8 sm:px-6 bg-[#f4f3ef] text-stone-900">

@@ -15,8 +15,8 @@ interface FailureBannerProps {
 }
 
 export function FailureBanner({ state, controller, onShowDiagnostics }: FailureBannerProps) {
-  if (!state.errorBanner) return null;
-  const failure = describeFailure(state.errorBanner, state.failure, state.transport, state.schema);
+  if (!state.failure) return null;
+  const failure = describeFailure(state.failure, state.transport, state.schema);
   const connected = Boolean(state.identity);
   const busy = state.phase !== "ready";
 
@@ -43,7 +43,7 @@ export function FailureBanner({ state, controller, onShowDiagnostics }: FailureB
               >
                 Reconnect
               </Button>
-            ) : state.failure?.kind !== "connect" ? (
+            ) : !["connect", "stage"].includes(state.failure.kind) ? (
               <Button
                 variant="primary"
                 size="sm"

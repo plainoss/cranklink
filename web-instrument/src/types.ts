@@ -136,11 +136,13 @@ export interface LogEntry {
   text: string;
 }
 
-export type OperationKind = "connect" | "read" | "save" | "restore" | "capture" | "firmware" | "disconnect";
+export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect";
 
-/** Context for the latest failure so the UI can say what happened to the bike. */
+/** The latest failure with enough context to say what happened to the bike. */
 export interface OperationFailure {
   kind: OperationKind;
+  /** Complete error text; the UI summarizes it and Diagnostics keeps it whole. */
+  error: string;
   /** Settings in write order for a failed save. */
   settings?: string[];
 }
@@ -164,7 +166,6 @@ export type SessionPhase =
 export interface InstrumentState {
   phase: SessionPhase;
   statusMessage: string;
-  errorBanner: string | null;
   failure: OperationFailure | null;
   /** The transport link closed after a failure; reconnect before more commands. */
   linkLost: boolean;

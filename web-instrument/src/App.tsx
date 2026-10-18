@@ -22,7 +22,7 @@ import { TuneView } from "./components/views/TuneView.tsx";
 import { FirmwareView } from "./components/views/FirmwareView.tsx";
 import { BackupView } from "./components/views/BackupView.tsx";
 import { DiagnosticsView } from "./components/views/DiagnosticsView.tsx";
-import { ChangesReview } from "./components/ChangesReview.tsx";
+import { ChangesRail, ReviewDialog } from "./components/ChangesReview.tsx";
 import { FailureBanner } from "./components/FailureBanner.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { Button } from "./components/ui/Button.tsx";
@@ -163,7 +163,7 @@ export function App({ controller }: AppProps) {
   );
 
   const deviceCard = (
-    <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1.5" data-testid="device-summary">
+    <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1.5" data-testid="identity-strip">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Connected unit</span>
         <LinkStatus state={state} />
@@ -171,7 +171,7 @@ export function App({ controller }: AppProps) {
       <div className="font-bold text-sm text-stone-900 truncate" title={friendlyMotorName(state.identity)}>
         {friendlyMotorName(state.identity)}
       </div>
-      <p className="pt-1 border-t border-stone-200/60 text-[11px] font-mono text-stone-600 grid grid-cols-2 gap-x-2 gap-y-0.5" data-testid="identity-strip">
+      <p className="pt-1 border-t border-stone-200/60 text-[11px] font-mono text-stone-600 grid grid-cols-2 gap-x-2 gap-y-0.5">
         <span className="col-span-2">SN: {state.identity?.serial}</span>
         <span>DCAS: {state.identity?.dcasVersion}</span>
         <span>RX: {state.identity?.rxVersion}</span>
@@ -332,7 +332,7 @@ export function App({ controller }: AppProps) {
           )}
         </header>
 
-        <main className={`flex-1 max-w-4xl mx-auto w-full px-4 sm:px-8 py-6 flex flex-col gap-6 ${stagedCount > 0 && isDesktop ? "pb-36" : "pb-10"}`}>
+        <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-8 pt-6 pb-10 flex flex-col gap-6">
           <FailureBanner state={state} controller={controller} onShowDiagnostics={() => go({ goal: "diagnostics" })} />
 
           {destination.goal === "overview" && <OverviewView state={state} onNavigate={go} />}
@@ -344,16 +344,11 @@ export function App({ controller }: AppProps) {
           )}
           {destination.goal === "backup" && <BackupView state={state} controller={controller} />}
           {destination.goal === "diagnostics" && <DiagnosticsView state={state} controller={controller} />}
+          {isDesktop && <ChangesRail state={state} controller={controller} onReview={() => setReviewOpen(true)} />}
         </main>
       </div>
 
-      <ChangesReview
-        state={state}
-        controller={controller}
-        open={reviewOpen}
-        onOpenChange={setReviewOpen}
-        showRail={isDesktop}
-      />
+      <ReviewDialog state={state} controller={controller} open={reviewOpen} onOpenChange={setReviewOpen} />
 
       <Modal
         open={disconnectConfirmOpen}

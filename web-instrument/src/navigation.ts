@@ -4,7 +4,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { Compass, Cog, Disc3, Gauge, Layers, ShieldCheck, Sliders, Terminal, Wrench, Archive } from "lucide-react";
-import type { TuneCategory } from "./components/views/TuneView.tsx";
+export type TuneCategory = "all" | "geometry" | "profiles" | "drivetrain" | "maintenance" | "oem";
 
 export type Destination =
   | { goal: "overview" }

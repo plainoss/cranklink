@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { enrichSchema, formatSettingValue, TIRE_PRESETS, settingAcceptsValue, clampSettingValue } from "./src/domain/schema.ts";
+import { enrichSchema, TIRE_PRESETS, settingAcceptsValue, clampSettingValue } from "./src/domain/schema.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
 } from "./src/domain/firmwarePackage.ts";
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
-import { formatSetting } from "./src/domain/settingFormat.ts";
+import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { DeviceSimulator } from "./simulator.js";
@@ -57,7 +57,7 @@ describe("Domain Schema Enrichment & Ordering", () => {
       const speedSpec = geometryItems[2];
       assert.equal(speedSpec.userStep, 1);
       assert.equal(speedSpec.userMin, model === "ep800-crg" ? 15 : 14);
-      assert.equal(formatSettingValue(speedSpec, 25), "25 km/h");
+      assert.equal(formatValue(speedSpec, 25), "25 km/h");
     }
   });
 });
@@ -414,7 +414,7 @@ describe("Speed and destination staging", () => {
     const controller = connected("ep800-crg", 0, 25);
     controller.stageParameter("speed-limit", 45);
     assert.deepEqual(controller.getState().stagedValues, {});
-    assert.match(controller.getState().errorBanner!, /No supported destination/);
+    assert.match(controller.getState().failure!.error, /No supported destination/);
   });
 
   it("rejects another save while a transaction is committing", async () => {
@@ -455,7 +455,7 @@ describe("Speed and destination staging", () => {
     fail = true;
     await assert.rejects(controller.commitStagedBatch(), /write rejected/);
     assert.equal(controller.getState().phase, "ready");
-    assert.equal(controller.getState().errorBanner, "write rejected");
+    assert.equal(controller.getState().failure?.error, "write rejected");
     assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 31 });
   });
 });
@@ -622,7 +622,7 @@ describe("Disconnect cleanup reporting", () => {
     const controller = connected(async () => { throw new Error("Bluetooth cleanup failed; check the bike."); });
     await assert.rejects(controller.disconnect(), /cleanup failed/);
     assertCleared(controller);
-    assert.match(controller.getState().errorBanner!, /cleanup failed/);
+    assert.match(controller.getState().failure!.error, /cleanup failed/);
     assert.match(controller.getState().statusMessage, /cleanup was not confirmed/);
   });
 
@@ -633,15 +633,15 @@ describe("Disconnect cleanup reporting", () => {
     });
     await assert.rejects(controller.disconnect(), /stop was not confirmed/);
     assertCleared(controller);
-    assert.match(controller.getState().errorBanner!, /stop was not confirmed/);
+    assert.match(controller.getState().failure!.error, /stop was not confirmed/);
   });
 
   it("reports a confirmed disconnect without a stale error", async () => {
     const controller = connected(async () => ({ code: 0 }));
-    (controller as any).update({ errorBanner: "old failure" });
+    (controller as any).update({ failure: { kind: "read", error: "old failure" } });
     await controller.disconnect();
     assertCleared(controller);
-    assert.equal(controller.getState().errorBanner, null);
+    assert.equal(controller.getState().failure, null);
     assert.equal(controller.getState().statusMessage, "Disconnected.");
   });
 });
@@ -651,14 +651,14 @@ describe("Failure outcomes", () => {
   const batchError = "error: cleanup also failed: BLE PC-link stop was not confirmed: BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device\n[exit 1]";
 
   it("leads a failed save with what reached the bike", () => {
-    const failure = describeFailure(batchError, { kind: "save", settings: ["destination", "speed-limit"] }, "ble", schema);
+    const failure = describeFailure({ kind: "save", error: batchError, settings: ["destination", "speed-limit"] }, "ble", schema);
     assert.equal(failure.title, "Save stopped");
     assert.equal(failure.outcome, "1 of 2 changes were applied before the error. Assist Speed Limit may or may not have been written.");
     assert.equal(failure.linkLost, true);
   });
 
   it("names the simulated link in simulator sessions", () => {
-    const single = describeFailure(batchError.replace("operation 2; 1 completed", "operation 1; 0 completed"), { kind: "save", settings: ["lamp"] }, "sim", schema);
+    const single = describeFailure({ kind: "save", error: batchError.replace("operation 2; 1 completed", "operation 1; 0 completed"), settings: ["lamp"] }, "sim", schema);
     assert.match(single.message, /simulated Bluetooth link/);
     assert.equal(single.outcome, "Wired Light Port may or may not have been written.");
   });

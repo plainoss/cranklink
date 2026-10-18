@@ -1,5 +1,5 @@
 /**
- * ChangesReview.tsx - Staged-change rail and the single save path.
+ * ChangesReview.tsx - Staged-change rail and the review dialog that every save uses.
  *
  * Every save goes through the review dialog: it lists each change in plain
  * words, lets the operator undo single rows, and asks for an explicit
@@ -14,17 +14,16 @@ import { formatSetting, isRegulatedSetting, settingLabel } from "../domain/setti
 import { Button } from "./ui/Button.tsx";
 import { Modal } from "./ui/Dialog.tsx";
 
-interface ChangesReviewProps {
-  state: InstrumentState;
-  controller: SessionController;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Desktop shows a persistent rail; phones open the review from the header. */
-  showRail: boolean;
+interface StagedChange {
+  name: string;
+  label: string;
+  before: string;
+  after: string;
+  regulated: boolean;
 }
 
-export function ChangesReview({ state, controller, open, onOpenChange, showRail }: ChangesReviewProps) {
-  const changes = Object.entries(state.stagedValues).map(([name, value]) => {
+function stagedChanges(state: InstrumentState): StagedChange[] {
+  return Object.entries(state.stagedValues).map(([name, value]) => {
     const spec = state.schema.find((setting) => setting.name === name);
     return {
       name,
@@ -34,6 +33,72 @@ export function ChangesReview({ state, controller, open, onOpenChange, showRail 
       regulated: isRegulatedSetting(spec, name),
     };
   });
+}
+
+interface ChangesRailProps {
+  state: InstrumentState;
+  controller: SessionController;
+  onReview: () => void;
+}
+
+/** Sticky summary at the bottom of the content column while changes are staged. */
+export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
+  const changes = stagedChanges(state);
+  const count = changes.length;
+  if (count === 0) return null;
+  return (
+    <aside
+      className="sticky bottom-6 z-40 mt-auto flex items-center justify-between gap-4 rounded-2xl border border-stone-700 bg-stone-900 p-4 text-white shadow-2xl"
+      data-testid="transaction-rail"
+      aria-label="Changes to save"
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-amber-300">
+          {count} change{count === 1 ? "" : "s"} to save
+        </p>
+        <ul className="mt-1 text-xs text-stone-300">
+          {changes.slice(0, 2).map((change) => (
+            <li key={change.name} data-testid={`tx-item-${change.name}`} className="truncate">
+              {change.label}: {change.before} → {change.after}
+            </li>
+          ))}
+          {count > 2 && <li>and {count - 2} more</li>}
+        </ul>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          variant="custom"
+          size="sm"
+          onClick={() => controller.discardAllStaged()}
+          data-testid="btn-discard-staged"
+          className="bg-transparent text-stone-300 hover:bg-white/10 hover:text-white text-xs min-h-[44px]"
+        >
+          Discard all
+        </Button>
+        <Button
+          variant="custom"
+          size="sm"
+          onClick={onReview}
+          data-testid="btn-review-save"
+          className="bg-amber-400 text-stone-950 hover:bg-amber-300 text-xs font-bold min-h-[44px]"
+        >
+          Review & save
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+interface ReviewDialogProps {
+  state: InstrumentState;
+  controller: SessionController;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+/** The single save path: every write is reviewed here first. */
+export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDialogProps) {
+  const changes = stagedChanges(state);
   const count = changes.length;
   const regulated = changes.filter((change) => change.regulated);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -54,49 +119,6 @@ export function ChangesReview({ state, controller, open, onOpenChange, showRail 
   };
 
   return (
-    <>
-      {showRail && count > 0 && (
-        <aside
-          className="fixed z-40 bottom-6 left-[calc(50%+9rem)] -translate-x-1/2 flex w-[min(40rem,calc(100%-20rem))] items-center justify-between gap-4 rounded-2xl border border-stone-700 bg-stone-900 p-4 text-white shadow-2xl"
-          data-testid="transaction-rail"
-          aria-label="Changes to save"
-        >
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-amber-300">
-              {count} change{count === 1 ? "" : "s"} to save
-            </p>
-            <ul className="mt-1 text-xs text-stone-300 truncate">
-              {changes.slice(0, 2).map((change) => (
-                <li key={change.name} data-testid={`tx-item-${change.name}`} className="truncate">
-                  {change.label}: {change.before} → {change.after}
-                </li>
-              ))}
-              {count > 2 && <li>and {count - 2} more</li>}
-            </ul>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="custom"
-              size="sm"
-              onClick={() => controller.discardAllStaged()}
-              data-testid="btn-discard-staged"
-              className="bg-transparent text-stone-300 hover:bg-white/10 hover:text-white text-xs min-h-[44px]"
-            >
-              Discard all
-            </Button>
-            <Button
-              variant="custom"
-              size="sm"
-              onClick={() => onOpenChange(true)}
-              data-testid="btn-review-save"
-              className="bg-amber-400 text-stone-950 hover:bg-amber-300 text-xs font-bold min-h-[44px]"
-            >
-              Review & save
-            </Button>
-          </div>
-        </aside>
-      )}
-
       <Modal
         open={open && count > 0}
         onOpenChange={onOpenChange}
@@ -180,6 +202,5 @@ export function ChangesReview({ state, controller, open, onOpenChange, showRail 
           Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
         </p>
       </Modal>
-    </>
   );
 }

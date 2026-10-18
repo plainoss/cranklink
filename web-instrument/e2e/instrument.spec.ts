@@ -124,7 +124,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
     // Stage three profile torques and save them in one authenticated batch
     await page.evaluate(() => {
-      const controller = (window as any).estepsInstrumentController;
+      const controller = (window as any).cranklinkInstrumentController;
       // EP801 accepts only its basic-mode torque levels.
       controller.stageParameter("profile1.boost.torque", 78);
       controller.stageParameter("profile1.trail.torque", 70);
@@ -243,8 +243,6 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
       },
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
-    // Re-render so the connect screen re-evaluates supported browser transports.
-    (window as any).estepsInstrumentController.setSimulatorConfig({});
     return { hasSimulator: Boolean(device) };
   }, rejectAuthentication);
   expect(setup).toEqual({ hasSimulator: true });
@@ -255,15 +253,15 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
 test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
   test.setTimeout(60_000);
   await selectSimulatedBluetoothDevice(page);
-  await expect.poll(() => page.evaluate(() => (window as any).estepsInstrumentController.getState().statusMessage))
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().statusMessage))
     .toContain("74 parameters read");
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   const state = await page.evaluate(() => {
-    const state = (window as any).estepsInstrumentController.getState();
+    const state = (window as any).cranklinkInstrumentController.getState();
     return {
       phase: state.phase,
       transport: state.transport,
-      errorBanner: state.errorBanner,
+      failure: state.failure,
       settings: Object.keys(state.liveValues),
       logs: state.logs as { stream: string; text: string }[],
       chooserCalls: (window as any).testBluetoothChooserCalls(),
@@ -271,7 +269,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   });
   expect(state.phase).toBe("ready");
   expect(state.transport).toBe("ble");
-  expect(state.errorBanner).toBeNull();
+  expect(state.failure).toBeNull();
   expect(state.settings).toHaveLength(74);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
@@ -285,7 +283,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   await expect(page.locator(".console-log-line.stderr")).toHaveCount(0);
   await expect(page.locator(".console-log-line.notice").first()).toBeVisible();
   const saved = await page.evaluate(async () => {
-    const controller = (window as any).estepsInstrumentController;
+    const controller = (window as any).cranklinkInstrumentController;
     const motorStarts = () => (window as any).testBluetoothDevice.writes.filter((w: any) => w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 1).length;
     const initialMotorStarts = motorStarts();
     controller.stageParameter("tire-circumference", 2150);
@@ -310,16 +308,16 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
     return event.defaultPrevented;
   });
   expect(await unloadIsGuarded(), "An idle retained Bluetooth session requires explicit disconnect before leaving").toBe(true);
-  await page.evaluate(() => (window as any).estepsInstrumentController.disconnect());
+  await page.evaluate(() => (window as any).cranklinkInstrumentController.disconnect());
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
   expect(await unloadIsGuarded(), "Confirmed disconnect releases the unload guard").toBe(false);
 });
 
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {
   await selectSimulatedBluetoothDevice(page, true);
-  await expect.poll(() => page.evaluate(() => (window as any).estepsInstrumentController.getState().phase)).toBe("ready");
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
   await page.evaluate(async () => {
-    const controller = (window as any).estepsInstrumentController;
+    const controller = (window as any).cranklinkInstrumentController;
     controller.stageParameter("walk-assist", 0);
     await controller.commitStagedBatch().catch(() => {});
   });
@@ -327,7 +325,7 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   await expect(page.getByTestId("error-banner")).toContainText("closed before the bike confirmed");
   await expect(page.getByTestId("link-status")).toHaveText("Link closed");
   const state = await page.evaluate(() => {
-    const state = (window as any).estepsInstrumentController.getState();
+    const state = (window as any).cranklinkInstrumentController.getState();
     return {
       phase: state.phase,
       settings: Object.keys(state.liveValues),
@@ -344,7 +342,7 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   expect(commands[2]).toContain("settings batch");
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
-  const authLogs = await page.evaluate(() => (window as any).estepsInstrumentController.getState().logs);
+  const authLogs = await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs);
   expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
 });

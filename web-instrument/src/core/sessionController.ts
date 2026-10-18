@@ -18,8 +18,8 @@ import type {
   OperationFailure,
   OperationKind,
 } from "../types.ts";
-import { enrichSchema, formatSettingValue, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
-import { formatSetting } from "../domain/settingFormat.ts";
+import { enrichSchema, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
+import { formatValue, formatSetting, settingLabel } from "../domain/settingFormat.ts";
 import { isLinkLost } from "../domain/errors.ts";
 import { detectMotorIdentity, isModernModel } from "../domain/motorIdentity.ts";
 import {
@@ -66,7 +66,6 @@ export class SessionController {
     this.state = {
       phase: "disconnected",
       statusMessage: "Select a physical adapter or start the simulator.",
-      errorBanner: null,
       failure: null,
       linkLost: false,
       toast: null,
@@ -118,16 +117,28 @@ export class SessionController {
     }
   }
 
-  /** Record a failure with enough context for the UI to explain the bike's state. */
-  private fail(kind: OperationKind, err: any, patch: Partial<InstrumentState> = {}, settings?: string[]): string {
-    const msg = err?.message || String(err);
-    const failure: OperationFailure = settings ? { kind, settings } : { kind };
-    this.update({ errorBanner: msg, failure, linkLost: isLinkLost(msg), ...patch });
-    return msg;
+  /**
+   * Record a failure with enough context for the UI to explain the bike's
+   * state. `status` builds the status line from the error text.
+   */
+  private fail(
+    kind: OperationKind,
+    err: unknown,
+    patch: Partial<InstrumentState> & { status?: (error: string) => string; settings?: string[] } = {},
+  ): void {
+    const error = err instanceof Error ? err.message : String(err);
+    const { status, settings, ...rest } = patch;
+    const failure: OperationFailure = settings ? { kind, error, settings } : { kind, error };
+    this.update({
+      failure,
+      linkLost: isLinkLost(error),
+      statusMessage: status ? status(error) : error,
+      ...rest,
+    });
   }
 
   private startOperation(patch: Partial<InstrumentState>): void {
-    this.update({ errorBanner: null, failure: null, toast: null, ...patch });
+    this.update({ failure: null, toast: null, ...patch });
   }
 
   private notify(message: string, action?: "backup"): void {
@@ -139,7 +150,7 @@ export class SessionController {
   }
 
   public dismissError(): void {
-    this.update({ errorBanner: null, failure: null });
+    this.update({ failure: null });
   }
 
   public attachTerminal(term: TerminalHost): void {
@@ -330,8 +341,7 @@ export class SessionController {
 
       return identity;
     } catch (err: any) {
-      const msg = this.fail("connect", err, { phase: "error" });
-      this.update({ statusMessage: `Handshake failed: ${msg}` });
+      this.fail("connect", err, { phase: "error", status: (error) => `Handshake failed: ${error}` });
       throw err;
     }
   }
@@ -427,8 +437,7 @@ export class SessionController {
       this.update({ linkLost: false });
       return values;
     } catch (err: any) {
-      const msg = this.fail("read", err, { phase: wasReady ? "ready" : "error" });
-      this.update({ statusMessage: `Read error: ${msg}` });
+      this.fail("read", err, { phase: wasReady ? "ready" : "error", status: (error) => `Read error: ${error}` });
       throw err;
     }
   }
@@ -489,8 +498,7 @@ export class SessionController {
         liveValues: {},
         unavailableValues: {},
         stagedValues: {},
-        errorBanner: cleanupError,
-        failure: cleanupError ? { kind: "disconnect" } : null,
+        failure: cleanupError ? { kind: "disconnect", error: cleanupError } : null,
         linkLost: false,
         toast: null,
         statusMessage: cleanupError ? "Disconnected, but bike cleanup was not confirmed." : "Disconnected.",
@@ -525,7 +533,7 @@ export class SessionController {
       const compatible = destinationForSpeed(model, Number(value), current, choices);
       if (compatible === undefined) {
         this.speedDestinationBeforeAuto = priorAuto;
-        this.update({ errorBanner: `No supported destination permits ${value} km/h.` });
+        this.fail("stage", `No supported destination permits ${value} km/h.`);
         return;
       }
       if (compatible !== current) {
@@ -541,7 +549,7 @@ export class SessionController {
       }
     }
     stage(name, value);
-    this.update({ stagedValues: nextStaged, errorBanner: null });
+    this.update({ stagedValues: nextStaged, failure: this.state.failure?.kind === "stage" ? null : this.state.failure });
   }
 
   public revertParameter(name: string): void {
@@ -557,7 +565,7 @@ export class SessionController {
 
   public discardAllStaged(): void {
     this.speedDestinationBeforeAuto = null;
-    this.update({ stagedValues: {}, errorBanner: null });
+    this.update({ stagedValues: {}, failure: this.state.failure?.kind === "stage" ? null : this.state.failure });
   }
 
   /**
@@ -649,8 +657,11 @@ export class SessionController {
       return resultJson;
     } catch (err: any) {
       this.refreshSnapshots();
-      const msg = this.fail("save", err, { phase: "ready" }, sortedEntries.map(([name]) => name));
-      this.update({ statusMessage: `Transaction halted: ${msg}` });
+      this.fail("save", err, {
+        phase: "ready",
+        settings: sortedEntries.map(([name]) => name),
+        status: (error) => `Transaction halted: ${error}`,
+      });
       throw err;
     }
   }
@@ -682,8 +693,7 @@ export class SessionController {
       this.notify("Full backup saved in this browser.");
       return filename;
     } catch (err: any) {
-      const msg = this.fail("capture", err, { phase: "ready" });
-      this.update({ statusMessage: msg });
+      this.fail("capture", err, { phase: "ready" });
       throw err;
     }
   }
@@ -724,8 +734,7 @@ export class SessionController {
       this.notify("Restored the backup. The values it replaced were backed up first.", "backup");
     } catch (err: any) {
       this.refreshSnapshots();
-      const msg = this.fail("restore", err, { phase: "ready" });
-      this.update({ statusMessage: msg });
+      this.fail("restore", err, { phase: "ready" });
       throw err;
     }
   }
@@ -938,14 +947,10 @@ export class SessionController {
       });
     } catch (err: any) {
       this.refreshSnapshots();
-      const msg = this.fail("firmware", err, { phase: "ready" });
-      this.update({
-        statusMessage: `Firmware operation stopped: ${msg}`,
-        firmware: {
-          ...this.state.firmware,
-          dryRunPassed: false,
-          dryRunSerial: null,
-        },
+      this.fail("firmware", err, {
+        phase: "ready",
+        status: (error) => `Firmware operation stopped: ${error}`,
+        firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null },
       });
       throw err;
     }
@@ -953,14 +958,6 @@ export class SessionController {
 
   public downloadVirtualFile(filename: string): void {
     this.exec(`download '${filename}'`).catch(() => {});
-  }
-
-  public setSimulatorConfig(patch: Partial<SimulatorOptions>): void {
-    const next = { ...this.state.simulatorOptions, ...patch };
-    this.update({ simulatorOptions: next });
-    if (this.state.transport === "sim" && patch.fault && this.terminal?.simulator?.setFault) {
-      this.terminal.simulator.setFault(patch.fault);
-    }
   }
 
   public async runRawCommand(cmd: string): Promise<void> {
@@ -979,9 +976,9 @@ export class SessionController {
         const spec = this.state.schema.find((s) => s.name === d.name);
         return {
           name: d.name,
-          label: spec?.label || d.name,
-          before: spec ? formatSettingValue(spec, d.before) : d.before,
-          after: spec ? formatSettingValue(spec, d.after) : d.after,
+          label: settingLabel(this.state.schema, d.name),
+          before: formatValue(spec, d.before),
+          after: formatValue(spec, d.after),
         };
       });
       this.update({

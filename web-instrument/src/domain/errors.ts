@@ -58,6 +58,7 @@ export interface FailureDescription {
 const TITLES: Record<OperationFailure["kind"], string> = {
   connect: "Couldn’t connect",
   read: "Couldn’t read settings",
+  stage: "Can’t stage that value",
   save: "Save stopped",
   restore: "Restore stopped",
   capture: "Backup failed",
@@ -67,19 +68,18 @@ const TITLES: Record<OperationFailure["kind"], string> = {
 
 /** Lead with the state of the bike, then the cause, so the next step is clear. */
 export function describeFailure(
-  error: string,
-  failure: OperationFailure | null,
+  failure: OperationFailure,
   transport: TransportType | null,
   schema: EnrichedSetting[],
 ): FailureDescription {
-  const kind = failure?.kind ?? "read";
+  const { kind, error } = failure;
   let outcome: string | null = null;
 
   const batch = error.match(/batch stopped at operation (\d+); (\d+) completed operations? remain applied/i);
   if (kind === "save" && batch) {
     const failedIndex = Number(batch[1]) - 1;
     const applied = Number(batch[2]);
-    const settings = failure?.settings ?? [];
+    const settings = failure.settings ?? [];
     const total = Math.max(settings.length, failedIndex + 1);
     const failedName = settings[failedIndex];
     const failedLabel = failedName ? settingLabel(schema, failedName) : `Change ${failedIndex + 1}`;

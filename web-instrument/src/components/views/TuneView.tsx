@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 import { Cog, Compass, ShieldCheck, Sliders, Wrench, Minus, Plus } from "lucide-react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
+import type { TuneCategory } from "../../navigation.ts";
 import { TIRE_PRESETS, clampSettingValue, modernTorqueLevels, settingAcceptsValue } from "../../domain/schema.ts";
 import { Button } from "../ui/Button.tsx";
 import { Tabs } from "../ui/Tabs.tsx";
@@ -24,7 +25,6 @@ import {
 } from "../settings/SettingRow.tsx";
 import { AllSettingsList, allSettingNames } from "../settings/AllSettingsList.tsx";
 
-export type TuneCategory = "all" | "geometry" | "profiles" | "drivetrain" | "maintenance" | "oem";
 
 /** Settings with a curated control; search lists the rest separately. */
 const CURATED = new Set([
