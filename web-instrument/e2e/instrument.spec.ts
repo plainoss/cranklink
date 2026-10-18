@@ -48,8 +48,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.locator("main").getByRole("button").first()).toBeVisible();
     await expect(page.getByTestId("empty-state-start-sim")).toBeVisible();
 
-    // 1. Connect to DU-EP800-CRG simulator via "..." menu — executes connect + probe + schema load + settings read
-    await page.getByTestId("btn-more-menu").click();
+    // 1. Connect to the DU-EP800-CRG simulator — executes connect + probe + schema load + settings read
     await page.getByTestId("btn-connect-sim").click();
 
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
@@ -69,16 +68,19 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Transaction rail appears automatically with staged changes
     const txRail = page.getByTestId("transaction-rail");
     await expect(txRail).toBeVisible();
-    await expect(txRail).toContainText("Changes to save (1)");
-    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2280 mm → 2300 mm");
+    await expect(txRail).toContainText("1 change to save");
+    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("Tire Circumference: 2280 mm → 2300 mm");
 
-    // 4. Commit batch via real Rust WASM `settings batch` into GATT simulator
-    await page.getByTestId("btn-commit-batch").click();
+    // 4. Every save goes through the review dialog, then the real Rust WASM `settings batch`
+    await page.getByTestId("btn-review-save").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2300 mm");
+    await review.getByTestId("btn-commit-batch").click();
 
-    // Transaction rail clears and live value updates to 2300 mm
+    // Transaction rail clears, live value updates, and a confirmation names the backup
     await expect(txRail).toBeHidden();
     await expect(tireRow).toContainText("Live: 2300 mm");
-    await expect(page.getByTestId("status-message")).toContainText("Committed 1 change");
+    await expect(page.getByTestId("toast")).toContainText("Saved 1 setting");
 
     // 5. Verify pre-write backup was automatically persisted in Snapshots & Rollback journal
     await page.getByTestId("nav-section-journal").click();
@@ -87,9 +89,10 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     const restoreBtn = page.locator('[data-action="restore-snapshot"]').first();
     await expect(restoreBtn).toBeVisible();
 
-    // Restore pre-write backup value (2280 mm)
+    // Restore pre-write backup value (2280 mm) after confirming what it restores
     await restoreBtn.click();
-    await expect(page.getByTestId("status-message")).toContainText("Restored ");
+    await page.getByTestId("btn-confirm-restore").click();
+    await expect(page.getByTestId("toast")).toContainText("Restored the backup");
 
     // Navigate back to parameters and confirm live value returned to 2280 mm
     await page.getByTestId("nav-group-geometry").click();
@@ -98,23 +101,20 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
   test("reloads under existing service worker and reconnects cleanly", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
     // Reload under the existing service worker and reconnect to persisted storage
     await page.reload();
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
   });
 
-  test("modern DU-EP600 / DU-EP801 session authentication and preset macros", async ({ page }) => {
+  test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
     await openInstrument(page);
 
     // Select DU-EP801 flagship simulator (requires --ble-unit-auth and serial binding)
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("sim-model-select").selectOption("ep801");
     await page.getByTestId("btn-connect-sim").click();
 
@@ -122,19 +122,24 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.6.0.1");
 
-    // Apply "Trail Climbing (85 Nm Boost)" preset macro
-    await page.getByTestId("macro-trail-85nm").click();
-    await expect(page.getByTestId("transaction-rail")).toBeVisible();
+    // Stage three profile torques and save them in one authenticated batch
+    await page.evaluate(() => {
+      const controller = (window as any).estepsInstrumentController;
+      // EP801 accepts only its basic-mode torque levels.
+      controller.stageParameter("profile1.boost.torque", 78);
+      controller.stageParameter("profile1.trail.torque", 70);
+      controller.stageParameter("profile1.eco.torque", 42);
+    });
+    await expect(page.getByTestId("transaction-rail")).toContainText("3 changes to save");
 
-    // Commit macro batch to EP801
+    await page.getByTestId("btn-review-save").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
-    await expect(page.getByTestId("status-message")).toContainText("Committed");
+    await expect(page.getByTestId("toast")).toContainText("Saved 3 settings");
   });
 
   test("synchronized Dual-MCU firmware workflow (DCAS + RX pair by default)", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
@@ -166,7 +171,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
   test("WebMCP external agent authorization flow", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
@@ -239,8 +243,8 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
       },
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
-    // Re-evaluate supported browser transports after installing the chooser.
-    (window as any).estepsInstrumentController.setSection("parameters");
+    // Re-render so the connect screen re-evaluates supported browser transports.
+    (window as any).estepsInstrumentController.setSimulatorConfig({});
     return { hasSimulator: Boolean(device) };
   }, rejectAuthentication);
   expect(setup).toEqual({ hasSimulator: true });
@@ -251,7 +255,8 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
 test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
   test.setTimeout(60_000);
   await selectSimulatedBluetoothDevice(page);
-  await expect(page.getByTestId("status-message")).toContainText("74 parameters read");
+  await expect.poll(() => page.evaluate(() => (window as any).estepsInstrumentController.getState().statusMessage))
+    .toContain("74 parameters read");
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   const state = await page.evaluate(() => {
     const state = (window as any).estepsInstrumentController.getState();
@@ -319,7 +324,8 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
     await controller.commitStagedBatch().catch(() => {});
   });
   await expect(page.getByTestId("error-banner")).toBeVisible();
-  await expect(page.getByTestId("status-message")).toContainText("cleanup wasn’t confirmed");
+  await expect(page.getByTestId("error-banner")).toContainText("closed before the bike confirmed");
+  await expect(page.getByTestId("link-status")).toHaveText("Link closed");
   const state = await page.evaluate(() => {
     const state = (window as any).estepsInstrumentController.getState();
     return {

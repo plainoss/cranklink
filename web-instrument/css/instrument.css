@@ -8,19 +8,26 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
-/* Legacy purple variant retained for Button API compatibility. */
-.button--purple {
-  background-color: #6d28d9;
-  color: white;
+/* One accent for primary actions across the app: stone on the warm canvas. */
+.button--primary {
+  background-color: #1c1917;
+  color: #fff;
   border-color: transparent;
 }
 
-.button--purple:hover {
-  background-color: #5b21b6;
+.button--primary:hover:not(:disabled) {
+  background-color: #000;
 }
 
-.button--purple:active {
-  background-color: #4c1d95;
+/* Touch-sized default for dialogs and forms. */
+.button--md,
+.button--lg {
+  min-height: 44px;
+}
+
+.button:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
 }
 
 html,

@@ -19,7 +19,7 @@ export function RiskWarningModal({
       onOpenChange={onOpenChange}
       title="Unofficial Software & Hardware Risk Notice"
       maxWidth="lg"
-      dataTestId="risk-warning-modal"
+      data-testid="risk-warning-modal"
       footer={
         <Button
           variant="primary"

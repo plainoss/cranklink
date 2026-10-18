@@ -1,334 +1,138 @@
-import { friendlyMotorName } from "../../domain/motorIdentity.ts";
-import { useState } from "react";
-import {
-  Zap,
-  Disc3,
-  ShieldCheck,
-  Eye,
-  EyeOff,
-  Cpu,
-  Globe,
-  Gauge,
-  Sliders,
-  CheckCircle2,
-  HardDrive,
-  Lightbulb,
-  Layers,
-} from "lucide-react";
+/**
+ * OverviewView.tsx - Read-only summary; every tile links to where it is edited.
+ */
+
+import type { ReactNode } from "react";
+import { ChevronRight, Zap } from "lucide-react";
 import type { InstrumentState } from "../../types.ts";
-import type { SessionController } from "../../core/sessionController.ts";
-import { Card } from "../ui/Card.tsx";
-import { Badge } from "../ui/Badge.tsx";
-import {
-  LEGACY_DESTINATION_LABELS,
-  MODERN_DESTINATION_LABELS,
-} from "../../domain/schema.ts";
+import type { Destination } from "../../navigation.ts";
+import { formatSetting } from "../../domain/settingFormat.ts";
+import { friendlyMotorName } from "../../domain/motorIdentity.ts";
 
 interface OverviewViewProps {
   state: InstrumentState;
-  controller: SessionController;
+  onNavigate: (destination: Destination) => void;
 }
 
-export function OverviewView({ state, controller }: OverviewViewProps) {
-  const [showFullSerial, setShowFullSerial] = useState(false);
+const TRANSPORT_LABELS = { ble: "Bluetooth", usb: "USB", serial: "Serial", sim: "Simulator" } as const;
+
+export function OverviewView({ state, onNavigate }: OverviewViewProps) {
   const identity = state.identity;
-  const hasSetting = (name: string) => state.schema.some((setting) => setting.name === name);
-
-  const getFriendlyModel = () => friendlyMotorName(identity);
-
-  const getFirmwareStatusText = () => {
-    const installed = identity?.dcasVersion || "4.2.0.0";
-    const inspected = state.firmware.dcasFile?.metadata;
-    if (!inspected) {
-      return `Installed: v${installed}`;
-    }
-    const inspectedVer = inspected.version;
-    if (inspectedVer === installed) {
-      return `Installed: v${installed} (Matches selected file)`;
-    }
-    if (inspectedVer > installed) {
-      return `Installed: v${installed} → File: v${inspectedVer} (Update available)`;
-    }
-    return `Installed: v${installed} → File: v${inspectedVer} (Rollback)`;
+  const show = (name: string) => {
+    const value = state.stagedValues[name] ?? state.liveValues[name]?.value;
+    return formatSetting(state.schema, name, value);
   };
-
-  const getRegionLabel = () => {
-    const rawDest = state.stagedValues["destination"] ?? state.liveValues["destination"]?.value;
-    const destNum = Number(rawDest);
-    const labels =
-      ["ep600", "ep801", "ep500"].includes(identity?.modelSlug || "")
-        ? MODERN_DESTINATION_LABELS
-        : LEGACY_DESTINATION_LABELS;
-    return labels[destNum] || (rawDest !== undefined ? `Region ${rawDest}` : "—");
-  };
-
-  const tireCircumference = state.stagedValues["tire-circumference"] ?? state.liveValues["tire-circumference"]?.value ?? "—";
-  const speedLimit = state.stagedValues["speed-limit"] ?? state.liveValues["speed-limit"]?.value ?? "—";
-  const lampState = state.stagedValues["lamp"] ?? state.liveValues["lamp"]?.value;
-
-  const p1Boost = state.stagedValues["profile1.boost.torque"] ?? state.liveValues["profile1.boost.torque"]?.value ?? 85;
-  const p1Trail = state.stagedValues["profile1.trail.torque"] ?? state.liveValues["profile1.trail.torque"]?.value ?? 85;
-  const p1Eco = state.stagedValues["profile1.eco.torque"] ?? state.liveValues["profile1.eco.torque"]?.value ?? 27;
-
-  const p2Boost = state.stagedValues["profile2.boost.torque"] ?? state.liveValues["profile2.boost.torque"]?.value ?? 85;
-  const p2Trail = state.stagedValues["profile2.trail.torque"] ?? state.liveValues["profile2.trail.torque"]?.value ?? 85;
-  const p2Eco = state.stagedValues["profile2.eco.torque"] ?? state.liveValues["profile2.eco.torque"]?.value ?? 27;
+  const isStaged = (...names: string[]) => names.some((name) => state.stagedValues[name] !== undefined);
+  // Older drive units lack some settings; show only what this unit reports.
+  const has = (...names: string[]) => names.every((name) => state.schema.some((setting) => setting.name === name));
+  const hasProfiles = state.schema.some((setting) => setting.section === "profiles");
+  const stagedCount = Object.keys(state.stagedValues).length;
+  const restorePoints = new Set(state.snapshots.filter((s) => s.kind !== "firmware").map((s) => s.group)).size;
 
   return (
-    <div className="w-full flex flex-col gap-6 py-2">
-      {/* 1. Hardware Identity & Connection Status Card */}
-      <Card className="flex flex-col gap-5 border-stone-200">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-stone-900 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <span className="font-bold text-xl font-mono">EP</span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-xl font-bold tracking-tight text-stone-900 font-sans">
-                  {getFriendlyModel()}
-                </h2>
-                {state.transport === "sim" ? (
-                  <Badge variant="sim">
-                    SIM: {identity?.model || "SIMULATOR"}
-                  </Badge>
-                ) : (
-                  <Badge variant="success">
-                    Connected & Ready
-                  </Badge>
-                )}
-              </div>
-
-              {/* Exact Identity Strip with SN, DCAS, RX */}
-              <div
-                className="flex items-center gap-2 text-xs text-stone-600 flex-wrap pt-0.5 font-mono"
-              >
-                <button
-                  type="button"
-                  onClick={() => setShowFullSerial(!showFullSerial)}
-                  className="inline-flex items-center gap-1 hover:text-stone-900 cursor-pointer font-mono"
-                  title="Toggle serial number display"
-                >
-                  <span>SN: {identity?.serial || "010203040506"}</span>
-                  {showFullSerial ? <EyeOff size={12} /> : <Eye size={12} />}
-                </button>
-                <span>•</span>
-                <span>
-                  DCAS: <strong className="text-stone-900 font-mono">{identity?.dcasVersion || "4.2.0.0"}</strong>
-                </span>
-                <span>•</span>
-                <span>
-                  RX: <strong className="text-stone-900 font-mono">{identity?.rxVersion || "4.1.11"}</strong>
-                </span>
-                <span>•</span>
-                <span className="font-sans text-stone-600 font-medium">
-                  {getFirmwareStatusText()}
-                </span>
-              </div>
-            </div>
-          </div>
+    <div className="w-full flex flex-col gap-6">
+      <section aria-labelledby="unit-heading" className="bg-white border border-stone-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
+        <div>
+          <h2 id="unit-heading" className="text-xl font-bold tracking-tight text-stone-900">{friendlyMotorName(identity)}</h2>
+          <p className="mt-1 text-xs font-mono text-stone-600 flex flex-wrap gap-x-3 gap-y-1">
+            <span>SN {identity?.serial}</span>
+            <span>DCAS {identity?.dcasVersion}</span>
+            <span>RX {identity?.rxVersion}</span>
+            <span>via {state.transport ? TRANSPORT_LABELS[state.transport] : "—"}</span>
+          </p>
         </div>
-
-        {/* Technical Sub-specs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-stone-100">
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Transport Link
-            </span>
-            <span className="text-sm font-mono font-bold text-stone-900 uppercase">
-              {state.transport || "None"}
-            </span>
-          </div>
-
-          {hasSetting("destination") && (
-<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Market Standard
-            </span>
-            <span className="text-sm font-sans font-bold text-stone-900 truncate" title={getRegionLabel()}>
-              {getRegionLabel()}
-            </span>
-          </div>
-          )}
-
-          {hasSetting("speed-limit") && (
-<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Speed Assist Cutoff
-            </span>
-            <span className="text-sm font-mono font-bold text-stone-900">
-              {speedLimit} km/h
-            </span>
-          </div>
-          )}
-
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Wheel Roll-Out
-            </span>
-            <span className="text-sm font-mono font-bold text-stone-900">
-              {tireCircumference} mm
-            </span>
-          </div>
-        </div>
-      </Card>
-
-      {/* 2. Active Drive Configuration & Live Operating State */}
-      {state.schema.some((setting) => setting.section === "profiles") && (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Assist Profile 1 Summary */}
-        <Card className="flex flex-col gap-4 border-stone-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap size={18} className="text-amber-600" />
-              <h3 className="text-sm font-bold text-stone-900">Profile 1 (Everyday / Trail)</h3>
-            </div>
-            <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-700">
-              Active
-            </span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5 text-center">
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Boost</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p1Boost} Nm</span>
-            </div>
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Trail</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p1Trail} Nm</span>
-            </div>
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Eco</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p1Eco} Nm</span>
-            </div>
-          </div>
-        </Card>
-
-        {/* Assist Profile 2 Summary */}
-        <Card className="flex flex-col gap-4 border-stone-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap size={18} className="text-amber-600" />
-              <h3 className="text-sm font-bold text-stone-900">Profile 2 (Custom / Power)</h3>
-            </div>
-            <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-700">
-              Preset
-            </span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5 text-center">
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Boost</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p2Boost} Nm</span>
-            </div>
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Trail</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p2Trail} Nm</span>
-            </div>
-            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-              <span className="text-[10px] font-semibold text-stone-500 block uppercase">Eco</span>
-              <span className="text-base font-mono font-bold text-stone-900">{p2Eco} Nm</span>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      )}
-
-      {/* 3. Drivetrain & Installation Specs */}
-      <Card className="flex flex-col gap-4 border-stone-200">
-        <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-          <HardDrive size={18} className="text-indigo-600" />
-          <span>Drivetrain & Installation Specs</span>
-        </h3>
-
+        {stagedCount > 0 && (
+          <p className="text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+            Values marked “unsaved” include {stagedCount} staged change{stagedCount === 1 ? "" : "s"} not yet written to the bike.
+          </p>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {hasSetting("shifting-system") && (
-<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Shifting System
-            </span>
-            <span className="text-xs font-semibold text-stone-900 truncate">
-              {Number(state.stagedValues["shifting-system"] ?? state.liveValues["shifting-system"]?.value ?? 0) === 1
-                ? "Di2 IGH"
-                : Number(state.stagedValues["shifting-system"] ?? state.liveValues["shifting-system"]?.value ?? 0) === 2
-                ? "Di2 Derailleur"
-                : Number(state.stagedValues["shifting-system"] ?? state.liveValues["shifting-system"]?.value ?? 0) >= 3
-                ? "Di2 Auto"
-                : "Mechanical"}
-            </span>
-          </div>
-          )}
-
-          {hasSetting("front-teeth") && hasSetting("rear-teeth") && (
-<div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Chainring / Cog
-            </span>
-            <span className="text-xs font-mono font-bold text-stone-900">
-              {state.stagedValues["front-teeth"] ?? state.liveValues["front-teeth"]?.value ?? 34}T /{" "}
-              {state.stagedValues["rear-teeth"] ?? state.liveValues["rear-teeth"]?.value ?? 11}T
-            </span>
-          </div>
-          )}
-
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Mounting Pitch
-            </span>
-            <span className="text-xs font-mono font-bold text-stone-900">
-              {state.stagedValues["mounting-angle"] ?? state.liveValues["mounting-angle"]?.value ?? 0}°
-            </span>
-          </div>
-
-          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
-              Wired Light Port
-            </span>
-            <span className="text-xs font-semibold text-stone-900">
-              {Number(lampState) === 1 ? "Always On" : Number(lampState) === 2 ? "Auto" : "Off"}
-            </span>
-          </div>
+          {has("destination") && <Tile label="Region" value={show("destination")} staged={isStaged("destination")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
+          {has("speed-limit") && <Tile label="Assist speed limit" value={show("speed-limit")} staged={isStaged("speed-limit")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
+          {has("tire-circumference") && <Tile label="Tire circumference" value={show("tire-circumference")} staged={isStaged("tire-circumference")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
+          {has("lamp") && <Tile label="Light port" value={show("lamp")} staged={isStaged("lamp")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
         </div>
-      </Card>
+      </section>
 
-      {/* 4. System Integrity & Safety Journal State */}
-      <Card className="flex flex-col gap-4 border-stone-200">
-        <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-          <ShieldCheck size={18} className="text-emerald-700" />
-          <span>System Integrity & Backup Status</span>
-        </h3>
+      {hasProfiles && <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {(["profile1", "profile2"] as const).map((profile, index) => {
+          const names = ["boost", "trail", "eco"].map((mode) => `${profile}.${mode}.torque`);
+          return (
+            <button
+              key={profile}
+              type="button"
+              onClick={() => onNavigate({ goal: "tune", category: "profiles" })}
+              className="text-left bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4 hover:border-stone-300 hover:shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            >
+              <span className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm font-bold text-stone-900">
+                  <Zap size={16} className="text-amber-600" aria-hidden="true" />
+                  Profile {index + 1} peak torque
+                  {isStaged(...names) && <UnsavedMark />}
+                </span>
+                <ChevronRight size={16} className="text-stone-400" aria-hidden="true" />
+              </span>
+              <span className="grid grid-cols-3 gap-2.5 text-center">
+                {["Boost", "Trail", "Eco"].map((mode, i) => (
+                  <span key={mode} className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
+                    <span className="text-[10px] font-semibold text-stone-500 block uppercase">{mode}</span>
+                    <span className="text-base font-mono font-bold text-stone-900">{show(names[i])}</span>
+                  </span>
+                ))}
+              </span>
+            </button>
+          );
+        })}
+      </div>}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase">
-              Microcontroller Pair
-            </span>
-            <span className="text-xs font-semibold text-stone-900 flex items-center gap-1.5">
-              <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>Drive-unit identity verified</span>
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase">
-              Stored Restore Points
-            </span>
-            <span className="text-xs font-mono font-semibold text-stone-900">
-              {state.snapshots.length} snapshot{state.snapshots.length !== 1 ? "s" : ""} in storage
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-stone-500 uppercase">
-              Pending Changes
-            </span>
-            <span className="text-xs font-mono font-semibold text-stone-900">
-              {Object.keys(state.stagedValues).length} staged
-            </span>
-          </div>
+      <section aria-labelledby="drivetrain-heading" className="[&:not(:has(button))]:hidden bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4">
+        <h2 id="drivetrain-heading" className="text-sm font-bold text-stone-900">Drivetrain & installation</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {has("shifting-system") && <Tile label="Shifting" value={show("shifting-system")} staged={isStaged("shifting-system")} onClick={() => onNavigate({ goal: "tune", category: "drivetrain" })} />}
+          {has("front-teeth", "rear-teeth") && <Tile label="Chainring / cog" value={`${show("front-teeth")} / ${show("rear-teeth")}`} staged={isStaged("front-teeth", "rear-teeth")} onClick={() => onNavigate({ goal: "tune", category: "drivetrain" })} />}
+          {has("mounting-angle") && <Tile label="Mounting angle" value={show("mounting-angle")} staged={isStaged("mounting-angle")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
+          {has("walk-assist") && <Tile label="Walk assist" value={show("walk-assist")} staged={isStaged("walk-assist")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
         </div>
-      </Card>
+      </section>
+
+      <section aria-labelledby="backup-heading" className="bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4">
+        <h2 id="backup-heading" className="text-sm font-bold text-stone-900">Backups</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Tile
+            label="Restore points in this browser"
+            value={restorePoints === 0 ? "None yet" : String(restorePoints)}
+            onClick={() => onNavigate({ goal: "backup" })}
+          />
+          <Tile
+            label="Unsaved changes"
+            value={stagedCount === 0 ? "None" : String(stagedCount)}
+            onClick={() => onNavigate({ goal: "tune", category: "all" })}
+          />
+        </div>
+      </section>
     </div>
+  );
+}
+
+function UnsavedMark() {
+  return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">unsaved</span>;
+}
+
+function Tile({ label, value, staged = false, onClick }: { label: string; value: ReactNode; staged?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group text-left p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5 hover:border-stone-300 hover:bg-white transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 min-w-0"
+    >
+      <span className="flex items-center justify-between gap-1 text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
+        <span className="truncate">{label}</span>
+        <ChevronRight size={12} className="shrink-0 text-stone-300 group-hover:text-stone-500" aria-hidden="true" />
+      </span>
+      <span className="text-sm font-semibold text-stone-900 truncate flex items-center gap-1.5">
+        <span className="truncate">{value}</span>
+        {staged && <UnsavedMark />}
+      </span>
+    </button>
   );
 }

@@ -15,11 +15,13 @@ import type {
   SettingEntry,
   JournalSnapshot,
   InspectedFirmwareFile,
-  WorkspaceSection,
-  SettingSectionId,
+  OperationFailure,
+  OperationKind,
 } from "../types.ts";
-import { detectMotorIdentity } from "../domain/motorIdentity.ts";
 import { enrichSchema, formatSettingValue, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
+import { formatSetting } from "../domain/settingFormat.ts";
+import { isLinkLost } from "../domain/errors.ts";
+import { detectMotorIdentity, isModernModel } from "../domain/motorIdentity.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
@@ -54,7 +56,8 @@ export class SessionController {
   private listeners: Set<(state: InstrumentState) => void> = new Set();
   private terminal: TerminalHost | null = null;
   private logCounter = 0;
-  private activeCapture: { stdout: string; stderr: string } | null = null;
+  private toastCounter = 0;
+  private activeCapture: { stdout: string; stderr: string; echo: string } | null = null;
   private execQueue: Promise<any> = Promise.resolve();
   private syncInProgress: Promise<DeviceIdentity> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
@@ -64,6 +67,9 @@ export class SessionController {
       phase: "disconnected",
       statusMessage: "Select a physical adapter or start the simulator.",
       errorBanner: null,
+      failure: null,
+      linkLost: false,
+      toast: null,
       transport: null,
       simulatorOptions: {
         model: "ep800-crg",
@@ -75,10 +81,6 @@ export class SessionController {
       liveValues: {},
       unavailableValues: {},
       stagedValues: {},
-      activeSection: "parameters",
-      activeParameterGroup: "geometry",
-      activeProfileTab: 1,
-      searchFilter: "",
       firmware: {
         dcasFile: null,
         rxFile: null,
@@ -90,7 +92,6 @@ export class SessionController {
       },
       snapshots: [],
       logs: [],
-      consoleExpanded: false,
       mcpApproval: null,
     };
   }
@@ -117,6 +118,30 @@ export class SessionController {
     }
   }
 
+  /** Record a failure with enough context for the UI to explain the bike's state. */
+  private fail(kind: OperationKind, err: any, patch: Partial<InstrumentState> = {}, settings?: string[]): string {
+    const msg = err?.message || String(err);
+    const failure: OperationFailure = settings ? { kind, settings } : { kind };
+    this.update({ errorBanner: msg, failure, linkLost: isLinkLost(msg), ...patch });
+    return msg;
+  }
+
+  private startOperation(patch: Partial<InstrumentState>): void {
+    this.update({ errorBanner: null, failure: null, toast: null, ...patch });
+  }
+
+  private notify(message: string, action?: "backup"): void {
+    this.update({ toast: { id: ++this.toastCounter, message, ...(action ? { action } : {}) } });
+  }
+
+  public dismissToast(): void {
+    if (this.state.toast) this.update({ toast: null });
+  }
+
+  public dismissError(): void {
+    this.update({ errorBanner: null, failure: null });
+  }
+
   public attachTerminal(term: TerminalHost): void {
     this.terminal = term;
     if (typeof window !== "undefined") {
@@ -125,6 +150,8 @@ export class SessionController {
         if (prevPrint) prevPrint(text, stream);
         if (this.activeCapture && stream !== "notice") {
           this.activeCapture[stream] += text;
+          // exec() already logged this command; the host echoes it to stdout.
+          if (stream === "stdout" && text.trim() === this.activeCapture.echo) return;
         }
         this.appendLog(stream, text);
       };
@@ -142,9 +169,11 @@ export class SessionController {
       text: trimmed,
     };
     const nextLogs = [...this.state.logs.slice(-299), entry];
+    // Progress notices update the connection status; standing disclaimers do not.
+    const isProgress = stream === "notice" && !/^Experimental /.test(trimmed);
     this.update({
       logs: nextLogs,
-      ...(stream === "notice" && ["connecting", "probing"].includes(this.state.phase)
+      ...(isProgress && ["connecting", "probing"].includes(this.state.phase)
         ? { statusMessage: trimmed }
         : {}),
     });
@@ -157,8 +186,9 @@ export class SessionController {
       throw new Error("WASM host is not initialized.");
     }
     const runTask = async () => {
-      this.appendLog("cmd", `cranklink> ${commandLine}`);
-      const capture = { stdout: "", stderr: "" };
+      const echo = `cranklink> ${commandLine}`;
+      this.appendLog("cmd", echo);
+      const capture = { stdout: "", stderr: "", echo };
       this.activeCapture = capture;
       try {
         const res = await this.terminal!.run(commandLine);
@@ -185,7 +215,7 @@ export class SessionController {
    * Consolidated Zero-Click Handshake:
    * 1. Opens physical link or simulator
    * 2. Runs `probe` and parses actual JSON identity
-   * 3. Loads the verified model schema (`ep800-crg`, `ep600`, `ep801`, or `ep500`)
+   * 3. Loads the verified model schema (`ep800-crg`, `ep600`, or `ep801`)
    * 4. Runs `settings read` (with automatic unit auth on modern BLE/Sim models)
    *    and populates all live parameter values
    */
@@ -213,14 +243,17 @@ export class SessionController {
       ...simOpts,
     };
 
-    this.update({
+    this.startOperation({
       phase: "connecting",
-      errorBanner: null,
+      transport,
+      linkLost: false,
       simulatorOptions: mergedSim,
       statusMessage:
         transport === "sim"
-          ? `Starting simulator (${mergedSim.model.toUpperCase()})...`
-          : `Opening ${transport.toUpperCase()} adapter...`,
+          ? `Starting simulated ${mergedSim.model.toUpperCase()}…`
+          : transport === "ble"
+            ? "Choose your bike in the browser’s Bluetooth list…"
+            : `Opening ${transport.toUpperCase()} adapter…`,
     });
 
     try {
@@ -248,9 +281,8 @@ export class SessionController {
       }
 
       this.update({
-        transport,
         phase: "probing",
-        statusMessage: "Identifying drive unit and firmware versions...",
+        statusMessage: "Identifying drive unit and firmware versions…",
       });
 
       let initialSnapshot: any = null;
@@ -258,7 +290,7 @@ export class SessionController {
       if (transport === "ble") {
         this.update({
           phase: "reading",
-          statusMessage: "Identifying drive unit and reading parameters over Bluetooth...",
+          statusMessage: "Identifying drive unit and reading settings…",
         });
         const result = await this.exec("--ble-master=master settings read");
         if (result.code !== 0) {
@@ -268,15 +300,15 @@ export class SessionController {
         if (!initialSnapshot?.identity || !initialSnapshot?.values) {
           throw new Error("Settings response lacks drive-unit identity or parameters. Reload the updated application before reconnecting.");
         }
-        identity = this.parseIdentity(initialSnapshot.identity, transport);
+        identity = this.parseIdentity(initialSnapshot.identity);
       } else {
-        identity = await this.probeIdentity(transport);
+        identity = await this.probeIdentity();
       }
 
       this.update({
         identity,
         phase: "reading",
-        statusMessage: `Loading ${identity.model} schema & reading parameters...`,
+        statusMessage: `Reading ${identity.model} settings…`,
       });
 
       const schema = await this.loadSchema(identity.modelSlug);
@@ -298,22 +330,28 @@ export class SessionController {
 
       return identity;
     } catch (err: any) {
-      let msg = err?.message || String(err);
-      if (/globally disabled/i.test(msg)) {
-        msg =
-          "Web Bluetooth is disabled globally in this browser. Use Google Chrome or Microsoft Edge to connect wirelessly, or check your browser's Bluetooth settings.";
-      }
-      this.update({
-        phase: "error",
-        errorBanner: msg,
-        statusMessage: `Handshake failed: ${msg}`,
-      });
+      const msg = this.fail("connect", err, { phase: "error" });
+      this.update({ statusMessage: `Handshake failed: ${msg}` });
       throw err;
     }
   }
 
+  /**
+   * Reopen the session after the link closed, keeping staged edits when the
+   * same drive unit answers.
+   */
+  public async reconnect(): Promise<void> {
+    const { transport, identity, stagedValues, simulatorOptions } = this.state;
+    if (!transport) throw new Error("No previous connection to reopen.");
+    await this.disconnect().catch(() => {});
+    const next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+    if (identity && next.serial === identity.serial && Object.keys(stagedValues).length > 0) {
+      for (const [name, value] of Object.entries(stagedValues)) this.stageParameter(name, value);
+    }
+  }
 
-  private async probeIdentity(transport: TransportType): Promise<DeviceIdentity> {
+
+  private async probeIdentity(): Promise<DeviceIdentity> {
     const probeRes = await this.exec("probe");
     if (probeRes.code !== 0) {
       throw new Error(probeRes.stderr || `Probe failed (${probeRes.code})`);
@@ -324,23 +362,20 @@ export class SessionController {
       throw new Error("Could not parse JSON identity from probe output.");
     }
 
-    return this.parseIdentity(parsed, transport);
+    return this.parseIdentity(parsed);
   }
 
-  private parseIdentity(parsed: any, transport: TransportType): DeviceIdentity {
+  private parseIdentity(parsed: any): DeviceIdentity {
     if (!/^[0-9a-f]{12}$/i.test(String(parsed.serial || ""))) {
       throw new Error("Drive-unit response lacks a verified serial identity.");
     }
-    const series: number | undefined = parsed.model_series;
-    const detected = detectMotorIdentity(parsed);
-
     return {
       slot: parsed.slot ?? 13,
-      ...detected,
+      ...detectMotorIdentity(parsed),
       serial: String(parsed.serial).toUpperCase(),
       dcasVersion: String(parsed.dcas_version || "—"),
       rxVersion: String(parsed.rx_version || "—"),
-      modelSeries: series,
+      modelSeries: parsed.model_series,
     };
   }
 
@@ -374,10 +409,9 @@ export class SessionController {
 
     const wasReady = this.state.phase === "ready";
     if (wasReady) {
-      this.update({
+      this.startOperation({
         phase: "reading",
-        errorBanner: null,
-        statusMessage: "Reading motor parameters...",
+        statusMessage: "Reading settings from the drive unit…",
       });
     }
 
@@ -389,14 +423,12 @@ export class SessionController {
       }
 
       const snapshot = this.extractLastJsonObject(readRes.stdout);
-      return this.applyParameterSnapshot(snapshot, identity);
+      const values = this.applyParameterSnapshot(snapshot, identity);
+      this.update({ linkLost: false });
+      return values;
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      this.update({
-        phase: "error",
-        errorBanner: msg,
-        statusMessage: `Read error: ${msg}`,
-      });
+      const msg = this.fail("read", err, { phase: wasReady ? "ready" : "error" });
+      this.update({ statusMessage: `Read error: ${msg}` });
       throw err;
     }
   }
@@ -430,8 +462,7 @@ export class SessionController {
     requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    const isModern = identity.modelSlug === "ep600" || identity.modelSlug === "ep801" || identity.modelSlug === "ep500";
-    if (isModern && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
+    if (isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `--expect-serial ${cleanSerial} --ble-unit-auth `;
     }
     return `--expect-serial ${cleanSerial} `;
@@ -459,6 +490,9 @@ export class SessionController {
         unavailableValues: {},
         stagedValues: {},
         errorBanner: cleanupError,
+        failure: cleanupError ? { kind: "disconnect" } : null,
+        linkLost: false,
+        toast: null,
         statusMessage: cleanupError ? "Disconnected, but bike cleanup was not confirmed." : "Disconnected.",
       });
     }
@@ -526,40 +560,6 @@ export class SessionController {
     this.update({ stagedValues: {}, errorBanner: null });
   }
 
-  public applyPresetMacro(preset: "eu_commute" | "trail_85nm" | "cargo_utility"): void {
-    const nextStaged = { ...this.state.stagedValues };
-    const stageIfPresent = (name: string, val: number | string) => {
-      if (this.state.schema.length === 0 || this.state.schema.some((s) => s.name === name)) {
-        const live = this.state.liveValues[name]?.value;
-        if (String(live) === String(val)) {
-          delete nextStaged[name];
-        } else {
-          nextStaged[name] = val;
-        }
-      }
-    };
-
-    if (preset === "eu_commute") {
-      this.speedDestinationBeforeAuto = null;
-      stageIfPresent("destination", this.state.identity?.modelSlug === "ep800-crg" ? 3 : 3);
-      stageIfPresent("speed-limit", 25);
-      stageIfPresent("tire-circumference", 2280);
-      stageIfPresent("lamp", 1);
-      stageIfPresent("walk-assist", 2);
-    } else if (preset === "trail_85nm") {
-      stageIfPresent("profile1.boost.torque", 85);
-      stageIfPresent("profile1.trail.torque", 63);
-      stageIfPresent("profile1.eco.torque", 34);
-    } else if (preset === "cargo_utility") {
-      stageIfPresent("tire-circumference", 2150);
-      stageIfPresent("lamp", 1);
-      stageIfPresent("walk-assist", 2);
-      stageIfPresent("profile1.trail.torque", 70);
-    }
-
-    this.update({ stagedValues: nextStaged });
-  }
-
   /**
    * Executes all staged parameter changes in a single atomic WASM `settings batch` session.
    * Automatically creates pre-state backup snapshots and journals every operation.
@@ -578,27 +578,27 @@ export class SessionController {
     const entries = Object.entries(stagedValues);
     if (entries.length === 0) return null;
 
-    this.update({
+    // Destination is written before speed-limit so ceiling checks use the updated destination.
+    const sortedEntries = [...entries].sort(([a], [b]) => {
+      if (a === "destination") return -1;
+      if (b === "destination") return 1;
+      return 0;
+    });
+    const plural = entries.length > 1 ? "s" : "";
+
+    this.startOperation({
       phase: "committing",
-      errorBanner: null,
-      statusMessage: `Writing ${entries.length} parameter${entries.length > 1 ? "s" : ""} with automatic backup...`,
+      statusMessage: `Backing up and writing ${entries.length} setting${plural}…`,
     });
 
     try {
-      // Ensure destination is ordered before speed-limit so ceiling checks use the updated destination
-      const sortedEntries = [...entries].sort(([a], [b]) => {
-        if (a === "destination") return -1;
-        if (b === "destination") return 1;
-        return 0;
-      });
-
       const operations = sortedEntries.map(([name, value]) => ({
         op: "set" as const,
         name,
         value: String(value),
       }));
 
-      const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14) + "-" + Math.random().toString(36).slice(2, 6);
+      const stamp = `${fileStamp()}-${Math.random().toString(36).slice(2, 6)}`;
       const planFile = `tx_${stamp}.plan.json`;
       const backupPrefix = `tx_${stamp}`;
 
@@ -641,18 +641,16 @@ export class SessionController {
         phase: "ready",
         liveValues: nextLive,
         stagedValues: {},
-        statusMessage: `Committed ${entries.length} change${entries.length > 1 ? "s" : ""} (${backupPrefix}).`,
+        linkLost: false,
+        statusMessage: `Committed ${entries.length} change${plural} (${backupPrefix}).`,
       });
+      this.notify(`Saved ${entries.length} setting${plural} to the bike. A backup of the previous values was created.`, "backup");
 
       return resultJson;
     } catch (err: any) {
-      const msg = err?.message || String(err);
       this.refreshSnapshots();
-      this.update({
-        phase: "ready",
-        errorBanner: msg,
-        statusMessage: `Transaction halted: ${msg}`,
-      });
+      const msg = this.fail("save", err, { phase: "ready" }, sortedEntries.map(([name]) => name));
+      this.update({ statusMessage: `Transaction halted: ${msg}` });
       throw err;
     }
   }
@@ -665,14 +663,12 @@ export class SessionController {
     if (!transport || !identity) {
       throw new Error("Connect to a drive unit to capture a snapshot.");
     }
-    this.update({
+    this.startOperation({
       phase: "reading",
-      errorBanner: null,
-      statusMessage: "Capturing full configuration snapshot...",
+      statusMessage: "Reading every setting into a backup…",
     });
     try {
-      const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
-      const filename = `snapshot_${identity.serial}_${stamp}.json`;
+      const filename = `snapshot_${identity.serial}_${fileStamp()}.json`;
       const flags = this.buildSessionFlags(transport, identity, false);
       const res = await this.exec(`${flags}settings read --output '${filename}'`);
       if (res.code !== 0) {
@@ -683,19 +679,20 @@ export class SessionController {
         phase: "ready",
         statusMessage: `Saved full snapshot ${filename}.`,
       });
+      this.notify("Full backup saved in this browser.");
       return filename;
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      this.update({
-        phase: "error",
-        errorBanner: msg,
-        statusMessage: msg,
-      });
+      const msg = this.fail("capture", err, { phase: "ready" });
+      this.update({ statusMessage: msg });
       throw err;
     }
   }
 
-  public async restoreBackupFile(filename: string): Promise<void> {
+  /**
+   * Restore one save's backups in a single pass. Each file creates its own
+   * rollback backup first, then settings are read once to show the result.
+   */
+  public async restoreBackupFiles(filenames: string[]): Promise<void> {
     if (this.syncInProgress) {
       await this.syncInProgress.catch(() => {});
     }
@@ -703,34 +700,32 @@ export class SessionController {
     if (!transport || !identity) {
       throw new Error("Connect to the target drive unit before restoring a backup.");
     }
-    this.update({
+    if (filenames.length === 0) return;
+    this.startOperation({
       phase: "committing",
-      errorBanner: null,
-      statusMessage: `Restoring ${filename}...`,
+      statusMessage: `Restoring ${filenames.length} backup file${filenames.length > 1 ? "s" : ""}…`,
     });
     try {
-      const stamp = Date.now();
-      const rollbackFile = `pre_restore_${stamp}.backup.json`;
+      const stamp = fileStamp();
       const flags = this.buildSessionFlags(transport, identity, true);
-      const res = await this.exec(
-        `${flags}settings restore '${filename}' --backup '${rollbackFile}'`,
-      );
-      if (res.code !== 0) {
-        throw new Error(res.stderr || `Restore failed (${res.code})`);
+      for (const [index, filename] of filenames.entries()) {
+        const rollbackFile = `pre_restore_${stamp}.${String(index + 1).padStart(3, "0")}.backup.json`;
+        const res = await this.exec(`${flags}settings restore '${filename}' --backup '${rollbackFile}'`);
+        if (res.code !== 0) {
+          throw new Error(res.stderr || `Restore failed (${res.code})`);
+        }
       }
       await this.readAllParameters(transport, identity);
       this.refreshSnapshots();
       this.update({
         phase: "ready",
-        statusMessage: `Restored ${filename} (previous value backed up to ${rollbackFile}).`,
+        statusMessage: `Restored ${filenames.join(", ")}.`,
       });
+      this.notify("Restored the backup. The values it replaced were backed up first.", "backup");
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      this.update({
-        phase: "error",
-        errorBanner: msg,
-        statusMessage: msg,
-      });
+      this.refreshSnapshots();
+      const msg = this.fail("restore", err, { phase: "ready" });
+      this.update({ statusMessage: msg });
       throw err;
     }
   }
@@ -754,6 +749,8 @@ export class SessionController {
 
       let kind: JournalSnapshot["kind"] = "journal";
       let serial: string | undefined;
+      let setting: string | undefined;
+      let before: number | string | null = null;
       let summary = `${(bytes.length / 1024).toFixed(1)} KiB`;
 
       if (path.endsWith(".dat") || path.endsWith(".bin")) {
@@ -765,7 +762,9 @@ export class SessionController {
           if (parsed.format === "cranklink-setting-backup-v1" || parsed.format === "esteps-setting-backup-v1") {
             kind = "setting-backup";
             serial = parsed.serial;
-            summary = `${parsed.setting}: ${JSON.stringify(parsed.before)}`;
+            setting = String(parsed.setting);
+            before = parsed.before ?? null;
+            summary = `${formatSetting(this.state.schema, setting, before)} before the change`;
           } else if (parsed.values) {
             kind = "full-snapshot";
             serial = parsed.serial;
@@ -777,20 +776,23 @@ export class SessionController {
       } else if (path.endsWith(".jsonl")) {
         kind = "journal";
         const lines = decoder.decode(bytes).trim().split("\n").filter(Boolean);
-        summary = `Transaction journal (${lines.length} events)`;
+        summary = `Operation log (${lines.length} events)`;
       }
 
       snapshots.push({
         filename: path,
         kind,
-        timestamp: path.match(/\d{8,14}/)?.[0] || "stored",
+        group: snapshotGroup(path),
+        createdAt: parseFileStamp(path),
         serial,
         summary,
+        ...(setting !== undefined ? { setting, before } : {}),
         sizeBytes: bytes.length,
       });
     }
 
-    this.update({ snapshots: snapshots.reverse() });
+    snapshots.sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+    this.update({ snapshots });
   }
 
   /**
@@ -906,9 +908,8 @@ export class SessionController {
       overrideSingleTarget,
     });
 
-    this.update({
+    this.startOperation({
       phase: "flashing",
-      errorBanner: null,
       statusMessage: plan.description,
     });
 
@@ -936,11 +937,9 @@ export class SessionController {
         },
       });
     } catch (err: any) {
-      const msg = err?.message || String(err);
       this.refreshSnapshots();
+      const msg = this.fail("firmware", err, { phase: "ready" });
       this.update({
-        phase: "error",
-        errorBanner: msg,
         statusMessage: `Firmware operation stopped: ${msg}`,
         firmware: {
           ...this.state.firmware,
@@ -954,28 +953,6 @@ export class SessionController {
 
   public downloadVirtualFile(filename: string): void {
     this.exec(`download '${filename}'`).catch(() => {});
-  }
-
-  public setSection(section: WorkspaceSection): void {
-    this.update({ activeSection: section });
-  }
-
-  public setParameterGroup(group: SettingSectionId | "all"): void {
-    this.update({ activeParameterGroup: group });
-  }
-
-  public setProfileTab(tab: 1 | 2): void {
-    this.update({ activeProfileTab: tab });
-  }
-
-  public setSearchFilter(query: string): void {
-    this.update({ searchFilter: query });
-  }
-
-  public toggleConsole(expanded?: boolean): void {
-    this.update({
-      consoleExpanded: expanded !== undefined ? expanded : !this.state.consoleExpanded,
-    });
   }
 
   public setSimulatorConfig(patch: Partial<SimulatorOptions>): void {
@@ -1051,4 +1028,22 @@ export class SessionController {
     }
     return null;
   }
+}
+
+/** UTC timestamp used in every file this session writes: YYYYMMDDHHMMSS. */
+function fileStamp(date = new Date()): string {
+  return date.toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
+}
+
+function parseFileStamp(path: string): Date | null {
+  const match = path.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, se] = match.map(Number);
+  const date = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Files from one operation share the prefix before their per-setting index. */
+function snapshotGroup(path: string): string {
+  return path.replace(/(?:\.\d{3})?\.(?:backup\.json|journal\.jsonl|plan\.json)$/, "");
 }

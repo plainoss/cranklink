@@ -1,27 +1,38 @@
 import { useState, useRef, type DragEvent } from "react";
-import {
-  Disc3,
-  UploadCloud,
-  FileCheck2,
-  AlertTriangle,
-  CheckCircle2,
-  Cpu,
-} from "lucide-react";
+import { AlertTriangle, UploadCloud, FileCheck2 } from "lucide-react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { Card } from "../ui/Card.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Badge } from "../ui/Badge.tsx";
+import { Modal } from "../ui/Dialog.tsx";
 
+type ProgramTarget = "pair" | "dcas" | "rx";
+
+const PROGRAM_COPY: Record<ProgramTarget, { title: string; body: string }> = {
+  pair: {
+    title: "Program both microcontrollers?",
+    body: "This erases and rewrites DCAS and RX firmware. Keep the bike powered and connected until it finishes.",
+  },
+  dcas: {
+    title: "Force-program DCAS only?",
+    body: "Recovery only: use this when DCAS is stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
+  },
+  rx: {
+    title: "Force-program RX only?",
+    body: "Recovery only: use this when RX is stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
+  },
+};
 interface FirmwareViewProps {
   state: InstrumentState;
   controller: SessionController;
-  onOpenWarningModal?: () => void;
+  onOpenWarning: () => void;
 }
 
-export function FirmwareView({ state, controller, onOpenWarningModal }: FirmwareViewProps) {
+export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [confirming, setConfirming] = useState<ProgramTarget | null>(null);
 
   const { firmware } = state;
   const isFlashing = state.phase === "flashing";
@@ -40,53 +51,46 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
     }
   };
 
+  const program = () => {
+    const target = confirming;
+    setConfirming(null);
+    if (!target) return;
+    controller.executeFirmwareSync(true, target === "pair" ? null : target).catch(() => {});
+  };
+
   return (
-    <div
-      className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-4"
-      data-testid="firmware-section"
-    >
-      <div className="flex items-center justify-end">
-        <Badge variant={firmware.companionValid ? "success" : "neutral"}>
-          {firmware.companionValid ? "Companion Verified" : "Waiting for Files"}
+    <div className="w-full flex flex-col gap-6" data-testid="firmware-section">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <p className="text-sm text-stone-600 leading-relaxed max-w-prose">
+          These drive units run two microcontrollers, DCAS (-D) and RX (-M). Load a matched pair of firmware files, run the
+          non-erasing check, then program both together.
+        </p>
+        <Badge variant={firmware.companionValid ? "success" : "neutral"} className="shrink-0 self-start">
+          {firmware.companionValid ? "Pair verified" : "Waiting for files"}
         </Badge>
       </div>
 
-      {/* Header */}
-      <div>
-        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900 font-sans flex items-center gap-2.5">
-          <Disc3 className="text-blue-600" size={24} />
-          <span>Synchronized Dual-MCU Firmware Update</span>
-        </h2>
-        <p className="text-xs sm:text-sm text-stone-600 mt-1 leading-relaxed">
-          Shimano EP8 drive units run two synchronized microcontrollers: DCAS (D) and Renesas RX (M).
-          Firmware must be validated as a matched companion pair before programming.
-        </p>
-      </div>
-
-      {/* Firmware Risk Notice Banner */}
       <div
-        className="p-3.5 sm:p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs shadow-xs"
+        className="p-3.5 sm:p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs"
         data-testid="fw-risk-notice"
       >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <AlertTriangle size={18} className="text-amber-700 shrink-0" />
-          <span className="leading-relaxed">
-            <strong>Experimental Tooling:</strong> Tested on EP800-CRG only. Firmware compatibility is not verified.
+        <p className="flex items-center gap-2.5 leading-relaxed">
+          <AlertTriangle size={18} className="text-amber-700 shrink-0" aria-hidden="true" />
+          <span>
+            <strong>Experimental:</strong> firmware programming is tested on EP800-CRG only, and firmware compatibility is
+            not verified.
           </span>
-        </div>
-        {onOpenWarningModal && (
-          <button
-            type="button"
-            onClick={onOpenWarningModal}
-            data-testid="btn-review-fw-warning"
-            className="text-xs font-semibold text-amber-900 hover:text-amber-950 underline shrink-0 cursor-pointer text-left sm:text-right"
-          >
-            Review risk notice &amp; caveats
-          </button>
-        )}
+        </p>
+        <button
+          type="button"
+          onClick={onOpenWarning}
+          data-testid="btn-review-fw-warning"
+          className="shrink-0 self-start sm:self-auto font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950 min-h-[32px]"
+        >
+          Read the risk notice
+        </button>
       </div>
 
-      {/* Step 1: Dropzone Container */}
       <div
         data-dropzone="true"
         onDragOver={(e) => {
@@ -95,32 +99,28 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`border-2 border-dashed rounded-3xl p-8 flex flex-col items-center justify-center text-center transition-all cursor-pointer ${
-          dragOver
-            ? "border-blue-500 bg-blue-50/60 scale-[1.01]"
-            : "border-stone-300 bg-white hover:border-stone-400 hover:bg-stone-50/40"
+        className={`border-2 border-dashed rounded-3xl p-8 flex flex-col items-center justify-center text-center transition-colors ${
+          dragOver ? "border-amber-500 bg-amber-50/60" : "border-stone-300 bg-white"
         }`}
-        onClick={() => fileInputRef.current?.click()}
       >
         <input
           ref={fileInputRef}
+          id="firmware-files"
           type="file"
           multiple
           accept=".dat,.bin"
-          className="hidden"
+          className="sr-only"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center mb-3">
+        <div className="w-12 h-12 rounded-2xl bg-stone-100 text-stone-700 flex items-center justify-center mb-3" aria-hidden="true">
           <UploadCloud size={24} />
         </div>
-        <h3 className="text-sm sm:text-base font-semibold text-stone-900">
-          Drag & Drop Firmware Containers (.dat)
-        </h3>
+        <h2 className="text-sm sm:text-base font-semibold text-stone-900">Drop the -D and -M firmware files here</h2>
         <p className="text-xs text-stone-500 mt-1 max-w-md">
-          Drop both the DCAS (-D) and RX (-M) files here to verify pair compatibility and calculate SHA-256 digests.
+          Both files are checked for compatibility with each other and their SHA-256 digests are shown.
         </p>
-        <Button variant="outline" size="sm" className="mt-4 pointer-events-none text-xs">
-          Browse Files...
+        <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => fileInputRef.current?.click()}>
+          Choose files…
         </Button>
       </div>
 
@@ -129,7 +129,7 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-bold text-stone-900 flex items-center gap-2">
             <FileCheck2 size={18} className="text-stone-700" />
-            <span>Pair Inspection & Companion Check</span>
+            <span>Pair check</span>
           </h4>
         </div>
 
@@ -182,19 +182,19 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
             data-testid="btn-fw-dry-run-pair"
             className="w-full sm:w-auto text-xs"
           >
-            Run Non-Erasing Compatibility Check
+            Run non-erasing check
           </Button>
 
           <Button
             variant="primary"
             size="md"
             disabled={!firmware.companionValid || !firmware.dryRunPassed || isFlashing}
-            onClick={() => controller.executeFirmwareSync(true).catch(() => {})}
+            onClick={() => setConfirming("pair")}
             data-action="fw-flash-pair"
             data-testid="btn-fw-flash-pair"
-            className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700 text-white"
+            className="w-full sm:w-auto text-xs"
           >
-            Program Synchronized Pair to Bike
+            Program both to the bike
           </Button>
         </div>
       </Card>
@@ -205,7 +205,7 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
         data-testid="single-mcu-override"
       >
         <summary className="font-semibold text-stone-700 hover:text-stone-900 cursor-pointer select-none">
-          Advanced: Single-MCU Bootloader Recovery Override
+          Recovery: program one microcontroller only
         </summary>
         <div className="pt-3 text-stone-600 leading-relaxed border-t border-stone-100 mt-2 flex flex-col gap-3">
           <p>
@@ -217,7 +217,7 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
               variant="outline"
               size="sm"
               disabled={!firmware.dcasFile || isFlashing}
-              onClick={() => controller.executeFirmwareSync(true, "dcas").catch(() => {})}
+              onClick={() => setConfirming("dcas")}
               className="text-xs"
             >
               Force Program DCAS Only
@@ -226,7 +226,7 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
               variant="outline"
               size="sm"
               disabled={!firmware.rxFile || isFlashing}
-              onClick={() => controller.executeFirmwareSync(true, "rx").catch(() => {})}
+              onClick={() => setConfirming("rx")}
               className="text-xs"
             >
               Force Program RX Only
@@ -234,6 +234,23 @@ export function FirmwareView({ state, controller, onOpenWarningModal }: Firmware
           </div>
         </div>
       </details>
+      <Modal
+        open={confirming !== null}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title={confirming ? PROGRAM_COPY[confirming].title : ""}
+        footer={
+          <>
+            <Button variant="outline" size="md" onClick={() => setConfirming(null)}>
+              Cancel
+            </Button>
+            <Button variant={confirming === "pair" ? "primary" : "danger"} size="md" onClick={program} data-testid="btn-confirm-program">
+              Program
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-stone-700 leading-relaxed">{confirming && PROGRAM_COPY[confirming].body}</p>
+      </Modal>
     </div>
   );
 }

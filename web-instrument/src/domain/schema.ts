@@ -15,6 +15,7 @@ import type {
   SettingPreset,
   MotorModel,
 } from "../types.ts";
+import { isModernModel } from "./motorIdentity.ts";
 
 export interface ParameterGroupInfo {
   id: SettingSectionId;
@@ -88,7 +89,7 @@ export const MODERN_DESTINATION_LABELS: Record<number, string> = {
 
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
-  const modern = model === "ep600" || model === "ep801" || model === "ep500";
+  const modern = isModernModel(model);
   if (destination === 1) return { min: 19, max: 32 };
   if (destination === 0 || destination === 3 || (!modern && destination === 4)) {
     return { min: 15, max: 25 };
@@ -100,6 +101,24 @@ export function destinationSpeedRange(model: string | undefined, destination: nu
 
 export function modelSpeedRange(model: string | undefined): { min: number; max: number } {
   return model === "ep600" || model === "ep801" || model === "ep500" ? { min: 14, max: 45 } : { min: 15, max: 32 };
+}
+
+// Keep aligned with modern_torque_levels and validate_modern_torque in src/settings.rs.
+/** Peak-torque values an EP600/EP801 accepts for a mode; undefined where any Nm value is allowed. */
+export function modernTorqueLevels(
+  model: string | undefined,
+  mode: "eco" | "trail" | "boost",
+  minimum: number,
+  maximum: number,
+): number[] | undefined {
+  if (!isModernModel(model)) return undefined;
+  if (!(minimum >= 20 && minimum <= maximum && maximum <= 85)) return undefined;
+  const levels = minimum === 20 && maximum === 85
+    ? [20, 27, 34, 42, 49, 56, 63, 70, 78, 85]
+    : minimum === 20 && maximum === 50
+      ? [20, 24, 27, 30, 33, 36, 40, 43, 46, 50]
+      : Array.from({ length: 10 }, (_, i) => Math.round((i * maximum + (9 - i) * minimum) / 9));
+  return mode === "eco" ? levels.slice(0, 8) : mode === "boost" ? levels.slice(2) : levels;
 }
 
 export function destinationForSpeed(model: string | undefined, speed: number, preferred: number, choices?: number[]): number | undefined {
@@ -123,20 +142,20 @@ interface SettingAnnotation {
 const ANNOTATIONS: Record<string, SettingAnnotation> = {
   "tire-circumference": {
     label: "Tire Circumference",
-    description: "Rolling distance per wheel revolution used for speed and odometer calculation",
+    description: "Distance per wheel revolution, used for speed and odometer.",
     section: "geometry",
     displayUnit: "mm",
     presets: TIRE_PRESETS,
   },
   "destination": {
-    label: "Market Region & Speed Standard",
-    description: "Regulatory market jurisdiction governing assist speed ceiling",
+    label: "Market Region",
+    description: "Sets the legal assist-speed range for where the bike is ridden.",
     section: "geometry",
     displayUnit: "",
   },
   "speed-limit": {
-    label: "Maximum Assist Speed",
-    description: "Motor assist cutoff speed threshold (must fall within active region ceiling)",
+    label: "Assist Speed Limit",
+    description: "Motor assistance stops above this speed.",
     section: "geometry",
     displayUnit: "km/h",
     presets: [
@@ -146,20 +165,20 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     ],
   },
   "mounting-angle": {
-    label: "Drive Unit Mounting Angle",
-    description: "Physical installation pitch of the motor chassis in the frame",
+    label: "Motor Mounting Angle",
+    description: "Installation pitch of the drive unit in the frame.",
     section: "geometry",
     displayUnit: "deg",
   },
   "display-speed-adjustment": {
-    label: "Speedometer Calibration Offset",
-    description: "Fine offset applied to displayed speed readout",
+    label: "Speedometer Calibration",
+    description: "Fine offset applied to the displayed speed.",
     section: "geometry",
     displayUnit: "0.1%",
   },
   "lamp": {
     label: "Wired Light Port",
-    description: "12V auxiliary lighting terminal state",
+    description: "Power to lights wired into the drive unit.",
     section: "geometry",
     displayUnit: "",
     choiceLabels: { 0: "Off", 1: "On", 2: "Auto" },
@@ -171,40 +190,40 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     displayUnit: "0.01 W",
   },
   "lighting-time": {
-    label: "Lighting Reserve Duration",
-    description: "Minutes lights remain active after drive battery reaches assist cutoff",
+    label: "Lighting Reserve",
+    description: "Minutes the lights stay on after assist cuts out on low battery.",
     section: "geometry",
     displayUnit: "min",
   },
   "walk-assist": {
-    label: "Walk Assist Mode",
-    description: "Low-speed motor push assistance when walking beside the bike",
+    label: "Walk Assist",
+    description: "Low-speed push while walking beside the bike.",
     section: "geometry",
     displayUnit: "",
     choiceLabels: { 0: "Disabled", 2: "Enabled" },
   },
   "assist-pattern": {
-    label: "Active Assist Pattern",
-    description: "Base motor response curve index",
+    label: "Assist Pattern",
+    description: "Base motor response curve shared by both profiles.",
     section: "profiles",
     displayUnit: "",
-    choiceLabels: { 5: "Pattern 5 (Standard)", 6: "Pattern 6 (Sport)" },
+    choiceLabels: { 5: "Standard", 6: "Sport" },
   },
   "torque-minimum": {
-    label: "OEM Minimum Torque Bound",
-    description: "Lower bound for configurable profile torque",
+    label: "Minimum Profile Torque",
+    description: "Lowest peak torque any assist mode may be set to.",
     section: "oem",
     displayUnit: "Nm",
   },
   "torque-maximum": {
-    label: "OEM Maximum Torque Bound",
-    description: "Upper bound for configurable profile torque",
+    label: "Maximum Profile Torque",
+    description: "Highest peak torque any assist mode may be set to.",
     section: "oem",
     displayUnit: "Nm",
   },
   "shifting-system": {
-    label: "Drivetrain Shifting Type",
-    description: "Mechanical or electronic Di2 derailleur / internal gear hub",
+    label: "Shifting System",
+    description: "Mechanical, or the Di2 derailleur or hub fitted to the bike.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: {
@@ -217,20 +236,20 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     },
   },
   "rear-max-gear": {
-    label: "Rear Cassette Speeds",
-    description: "Number of sprockets on rear cassette or internal hub",
+    label: "Rear Gears",
+    description: "Number of sprockets on the cassette or gears in the hub.",
     section: "drivetrain",
     displayUnit: "gears",
   },
   "front-teeth": {
-    label: "Front Chainring Teeth",
-    description: "Tooth count on front drive sprocket",
+    label: "Front Chainring",
+    description: "Teeth on the front chainring.",
     section: "drivetrain",
     displayUnit: "T",
   },
   "rear-teeth": {
-    label: "Smallest Rear Cog Teeth",
-    description: "Tooth count on top-speed rear sprocket",
+    label: "Smallest Rear Cog",
+    description: "Teeth on the smallest rear sprocket.",
     section: "drivetrain",
     displayUnit: "T",
   },
@@ -249,7 +268,7 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   },
   "auto-gear-cadence": {
     label: "Auto-Shift Target Cadence",
-    description: "Preferred pedaling cadence for automatic gear transitions",
+    description: "Pedaling cadence Di2 automatic shifting aims for.",
     section: "drivetrain",
     displayUnit: "rpm",
   },
@@ -261,8 +280,8 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     choiceLabels: { 0: "Off", 1: "On" },
   },
   "start-mode": {
-    label: "Start Gear Downshift",
-    description: "Target gear automatically selected when coming to a stop (0 = Off)",
+    label: "Start Gear After Stopping",
+    description: "Di2 shifts to this gear when you stop. Off keeps the current gear.",
     section: "drivetrain",
     displayUnit: "gear",
   },
@@ -281,15 +300,15 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     choiceLabels: { 2: "2 Gears", 3: "3 Gears", 255: "No Limit" },
   },
   "maintenance-alert": {
-    label: "Service Reminder Alert",
-    description: "Show maintenance wrench notification on display when threshold is reached",
+    label: "Service Reminder",
+    description: "Shows a wrench on the display when service is due.",
     section: "maintenance",
     displayUnit: "",
     choiceLabels: { 0: "Disabled", 1: "Enabled" },
   },
   "maintenance-distance": {
     label: "Distance Until Service",
-    description: "Remaining riding distance before scheduled inspection",
+    description: "Riding distance before the service reminder appears.",
     section: "maintenance",
     displayUnit: "km",
   },
@@ -353,7 +372,7 @@ function formatProfileSetting(name: string): {
     const p = displayMatch[1];
     const isOem = !!displayMatch[2];
     return {
-      label: `Profile ${p} Mode Naming${isOem ? " (OEM)" : ""}`,
+      label: `Profile ${p} Mode Names${isOem ? " (OEM)" : ""}`,
       description: "Display mode nomenclature on cycle computer",
       section: isOem ? "oem" : "profiles",
       displayUnit: "",
@@ -368,7 +387,7 @@ function formatProfileSetting(name: string): {
     const modeTitle = mode.charAt(0).toUpperCase() + mode.slice(1);
     const fieldMap: Record<string, { title: string; desc: string; unit: string }> = {
       torque: {
-        title: "Max Torque",
+        title: "Peak Torque",
         desc: `Peak motor torque ceiling in ${modeTitle} mode`,
         unit: "Nm",
       },
@@ -378,14 +397,14 @@ function formatProfileSetting(name: string): {
         unit: "lvl",
       },
       start: {
-        title: "Assist Start",
+        title: "Start Response",
         desc: `Initial pedal engagement responsiveness in ${modeTitle} mode`,
         unit: "lvl",
       },
     };
     const f = fieldMap[field];
     return {
-      label: `Profile ${p} · ${modeTitle} ${f.title}${isOem ? " (OEM)" : ""}`,
+      label: `Profile ${p} ${modeTitle} ${f.title}${isOem ? " (OEM)" : ""}`,
       description: f.desc,
       section: isOem ? "oem" : "profiles",
       displayUnit: f.unit,
@@ -445,7 +464,7 @@ export function enrichSetting(
 
   if (spec.name === "destination") {
     choiceLabels =
-      modelSlug === "ep600" || modelSlug === "ep801" || modelSlug === "ep500"
+      isModernModel(modelSlug)
         ? MODERN_DESTINATION_LABELS
         : LEGACY_DESTINATION_LABELS;
   }

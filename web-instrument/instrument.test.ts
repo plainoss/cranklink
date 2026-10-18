@@ -9,7 +9,8 @@ import {
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
 } from "./src/domain/firmwarePackage.ts";
-import { userFacingError } from "./src/domain/errors.ts";
+import { describeFailure, userFacingError } from "./src/domain/errors.ts";
+import { formatSetting } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { DeviceSimulator } from "./simulator.js";
@@ -583,7 +584,7 @@ describe("Concise connection errors", () => {
     assert.match(userFacingError("error: BLE authentication failed: rejected\n[exit 1]"), /PIN was not accepted/);
     assert.match(userFacingError("error: drive-unit authentication is not verified for series 23 D4.1.9.0"), /isn’t supported/);
     const cleanup = userFacingError("error: cleanup also failed: BLE PC-link stop was not confirmed: BLE response timeout or notification overflow; reconnect before another command\n[exit 1]");
-    assert.equal(cleanup, "Bluetooth cleanup wasn’t confirmed. Check the bike’s state before reconnecting, then read settings to check the result.");
+    assert.equal(cleanup, "The Bluetooth link closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.");
     assert.doesNotMatch(cleanup, /overflow|PC-link|exit/);
     assert.equal(userFacingError("error: Invalid value\n    at host_call (host.js:1)\n[exit 1]"), "Invalid value");
   });
@@ -591,7 +592,7 @@ describe("Concise connection errors", () => {
   it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
     for (const original of ["BLE authentication failed: rejected", "drive-unit authentication challenge rejected"]) {
       const message = userFacingError(`error: ${original}\nThis cleanup also failed: BLE PC-link stop was not confirmed\n    at host_call (host.js:1)\n[exit 1]`);
-      assert.match(message, /cleanup wasn’t confirmed/);
+      assert.match(message, /closed before the bike confirmed/);
       assert.doesNotMatch(message, /PIN|authorization|host_call|exit/);
     }
   });
@@ -642,5 +643,36 @@ describe("Disconnect cleanup reporting", () => {
     assertCleared(controller);
     assert.equal(controller.getState().errorBanner, null);
     assert.equal(controller.getState().statusMessage, "Disconnected.");
+  });
+});
+
+describe("Failure outcomes", () => {
+  const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
+  const batchError = "error: cleanup also failed: BLE PC-link stop was not confirmed: BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device\n[exit 1]";
+
+  it("leads a failed save with what reached the bike", () => {
+    const failure = describeFailure(batchError, { kind: "save", settings: ["destination", "speed-limit"] }, "ble", schema);
+    assert.equal(failure.title, "Save stopped");
+    assert.equal(failure.outcome, "1 of 2 changes were applied before the error. Assist Speed Limit may or may not have been written.");
+    assert.equal(failure.linkLost, true);
+  });
+
+  it("names the simulated link in simulator sessions", () => {
+    const single = describeFailure(batchError.replace("operation 2; 1 completed", "operation 1; 0 completed"), { kind: "save", settings: ["lamp"] }, "sim", schema);
+    assert.match(single.message, /simulated Bluetooth link/);
+    assert.equal(single.outcome, "Wired Light Port may or may not have been written.");
+  });
+});
+
+describe("Setting value formatting", () => {
+  const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
+  it("uses labels and units instead of raw values", () => {
+    assert.equal(formatSetting(schema, "lamp", 0), "Off");
+    assert.equal(formatSetting(schema, "speed-limit", 25), "25 km/h");
+    assert.equal(formatSetting(schema, "display-speed-adjustment", 15), "1.5%");
+    assert.equal(formatSetting(schema, "mounting-angle", 12), "12°");
+    assert.equal(formatSetting(schema, "destination", 1), "Region 1 / US Class 1 (32 km/h)");
+    assert.equal(formatSetting(schema, "start-mode", 0), "Off");
+    assert.equal(formatSetting(schema, "speed-limit", null), "—");
   });
 });
