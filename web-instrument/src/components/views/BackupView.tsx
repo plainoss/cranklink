@@ -1,217 +1,174 @@
+/**
+ * BackupView.tsx - Restore points grouped by the operation that created them.
+ */
+
 import { useState } from "react";
-import {
-  ShieldCheck,
-  Download,
-  RotateCcw,
-  Plus,
-  FileText,
-  Clock,
-  HardDrive,
-  AlertTriangle,
-  Check,
-} from "lucide-react";
+import { Archive, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import type { InstrumentState, JournalSnapshot } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { Card } from "../ui/Card.tsx";
-import { Button } from "../ui/Button.tsx";
-import { Badge } from "../ui/Badge.tsx";
-import { Modal } from "../ui/Dialog.tsx";
+import { formatSetting, settingLabel } from "../../domain/settingFormat.ts";
+import { Button, Card, Disclosure } from "@heroui/react";
+import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 interface BackupViewProps {
   state: InstrumentState;
   controller: SessionController;
 }
 
+interface RestorePoint {
+  key: string;
+  title: string;
+  createdAt: Date | null;
+  /** One line per setting or snapshot the point would restore. */
+  lines: string[];
+  restorable: JournalSnapshot[];
+  files: JournalSnapshot[];
+}
+
+const GROUP_TITLES: Array<[RegExp, string]> = [
+  [/^tx_/, "Values before a save"],
+  [/^pre_restore_/, "Values before a restore"],
+  [/^snapshot_/, "Full backup"],
+  [/^fw_/, "Firmware operation log"],
+];
+
+function restorePoints(state: InstrumentState): RestorePoint[] {
+  const groups = new Map<string, JournalSnapshot[]>();
+  for (const snapshot of state.snapshots) {
+    const key = snapshot.kind === "firmware" ? `firmware:${snapshot.filename}` : snapshot.group;
+    groups.set(key, [...(groups.get(key) ?? []), snapshot]);
+  }
+  return [...groups.entries()].map(([key, files]) => {
+    const restorable = files.filter((file) => file.kind === "setting-backup" || file.kind === "full-snapshot");
+    const lines = restorable.map((file) =>
+      file.setting !== undefined
+        ? `${settingLabel(state.schema, file.setting)}: ${formatSetting(state.schema, file.setting, file.before)}`
+        : file.summary);
+    const title = files[0].kind === "firmware"
+      ? "Firmware image"
+      : restorable.length === 0
+        ? "Operation log (nothing to restore)"
+        : GROUP_TITLES.find(([pattern]) => pattern.test(key))?.[1] ?? "Stored file";
+    return {
+      key,
+      title,
+      createdAt: files.find((file) => file.createdAt)?.createdAt ?? null,
+      lines: lines.length ? lines : files.map((file) => file.summary),
+      restorable,
+      files,
+    };
+  });
+}
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
 export function BackupView({ state, controller }: BackupViewProps) {
-  const [selectedSnapshot, setSelectedSnapshot] = useState<JournalSnapshot | null>(null);
-  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
+  const [pending, setPending] = useState<RestorePoint | null>(null);
+  const points = restorePoints(state);
+  const busy = state.phase !== "ready";
 
-  const handleCapture = () => {
-    controller.captureManualSnapshot().catch(() => {});
-  };
-
-  const confirmRestore = (snapshot: JournalSnapshot) => {
-    setSelectedSnapshot(snapshot);
-    setRestoreModalOpen(true);
-  };
-
-  const executeRestore = async () => {
-    if (!selectedSnapshot) return;
-    setRestoreModalOpen(false);
-    try {
-      await controller.restoreBackupFile(selectedSnapshot.filename);
-    } catch {
-      // Error in state.errorBanner
-    }
+  const restore = async () => {
+    if (!pending) return;
+    const files = pending.restorable.map((file) => file.filename);
+    setPending(null);
+    await controller.restoreBackupFiles(files).catch(() => {});
   };
 
   return (
-    <div
-      className="w-full max-w-4xl mx-auto flex flex-col gap-6 py-4"
-      data-testid="journal-section"
-    >
-      <div className="flex items-center justify-end">
-        <Badge variant="neutral">
-          {state.snapshots.length} Backup{state.snapshots.length !== 1 ? "s" : ""} Stored
-        </Badge>
-      </div>
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-stone-900 font-sans flex items-center gap-2.5">
-            <ShieldCheck className="text-emerald-700" size={24} />
-            <span>Backup & Restore Hub</span>
-          </h2>
-          <p className="text-xs sm:text-sm text-stone-600 mt-1">
-            Browse automatic pre-write snapshots or take a complete snapshot of your bike's configuration.
-          </p>
-        </div>
-
-        <Button
-          variant="primary"
-          size="md"
-          onClick={handleCapture}
-          data-testid="btn-capture-snapshot"
-          className="flex items-center gap-2 shrink-0 bg-stone-900 text-white text-xs"
-        >
-          <Plus size={16} />
-          <span>Create Backup Now</span>
+    <div className="w-full flex flex-col gap-6" data-testid="journal-section">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <p className="text-sm text-muted max-w-prose">
+          cranklink saves the previous value of every setting before writing it. Restore points are kept in this browser;
+          download them to keep a copy elsewhere.
+        </p>
+        <Button isDisabled={busy} onPress={() => controller.captureManualSnapshot().catch(() => {})} data-testid="btn-capture-snapshot" className="shrink-0">
+          <Plus size={16} aria-hidden="true" />
+          Back up all settings now
         </Button>
       </div>
 
-      {/* Backups List Card */}
-      <Card className="flex flex-col gap-4 border-stone-200">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-            <HardDrive size={18} className="text-stone-700" />
-            <span>Saved Restore Points & Transaction Journals</span>
-          </h4>
-        </div>
-
-        {state.snapshots.length === 0 ? (
-          <div className="text-center py-12 px-4 border border-dashed border-stone-200 rounded-2xl bg-stone-50/50">
-            <ShieldCheck size={36} className="text-stone-400 mx-auto mb-2" />
-            <p className="text-sm font-semibold text-stone-700">No Backups Yet</p>
-            <p className="text-xs text-stone-500 mt-0.5 max-w-sm mx-auto">
-              Whenever you write settings or update firmware, cranklink will automatically create a restore point here.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-stone-200 border border-stone-200 rounded-2xl overflow-hidden bg-white">
-            {state.snapshots.map((item) => {
-              const isRestorable =
-                item.kind === "setting-backup" || item.kind === "full-snapshot";
-
-              return (
-                <div
-                  key={item.filename}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-stone-50/80 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-stone-100 text-stone-700 flex items-center justify-center shrink-0 mt-0.5">
-                      <FileText size={18} />
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-stone-900 font-mono">
-                          {item.filename}
-                        </span>
-                        <Badge
-                          variant={
-                            item.kind === "full-snapshot"
-                              ? "success"
-                              : item.kind === "setting-backup"
-                                ? "warning"
-                                : "neutral"
-                          }
-                        >
-                          {item.kind}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-stone-600 font-sans">
-                        {item.summary}
-                      </p>
-                      <span className="text-[11px] text-stone-400 font-mono flex items-center gap-1.5 mt-0.5">
-                        <Clock size={11} />
-                        <span>{item.timestamp}</span>
-                        <span>•</span>
-                        <span>{(item.sizeBytes / 1024).toFixed(1)} KiB</span>
-                      </span>
-                    </div>
+      {points.length === 0 ? (
+        <Card variant="transparent" className="items-center text-center py-12 border border-dashed border-separator">
+          <Archive size={32} className="text-muted" aria-hidden="true" />
+          <Card.Title className="text-sm font-semibold">No restore points yet</Card.Title>
+          <Card.Description className="text-xs max-w-sm">
+            They appear here automatically after you save settings, or when you back up all settings.
+          </Card.Description>
+        </Card>
+      ) : (
+        <ul className="flex flex-col gap-3" aria-label="Restore points">
+          {points.map((point) => (
+            <li key={point.key}>
+              <Card className="gap-3" data-testid="restore-point">
+                <Card.Header className="p-0 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Card.Title className="text-sm font-semibold">{point.title}</Card.Title>
+                    <Card.Description className="text-xs">
+                      {point.createdAt ? <time dateTime={point.createdAt.toISOString()}>{dateFormat.format(point.createdAt)}</time> : "Date unknown"}
+                    </Card.Description>
+                    <ul className="mt-2 text-xs flex flex-col gap-0.5">
+                      {point.lines.map((line) => (
+                        <li key={line} className="[overflow-wrap:anywhere]">{line}</li>
+                      ))}
+                    </ul>
                   </div>
-
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => controller.downloadVirtualFile(item.filename)}
-                      title="Download file to computer"
-                      className="text-xs flex items-center gap-1.5"
-                    >
-                      <Download size={14} />
-                      <span>Download</span>
+                  {point.restorable.length > 0 && (
+                    <Button variant="outline" isDisabled={busy} onPress={() => setPending(point)} data-action="restore-snapshot" className="shrink-0 self-start">
+                      <RotateCcw size={14} aria-hidden="true" />
+                      Restore these values
                     </Button>
+                  )}
+                </Card.Header>
+                <Disclosure>
+                  <Disclosure.Heading>
+                    <Disclosure.Trigger className="text-xs text-muted flex items-center gap-1 min-h-[32px]">
+                      {point.files.length} file{point.files.length === 1 ? "" : "s"}
+                      <Disclosure.Indicator />
+                    </Disclosure.Trigger>
+                  </Disclosure.Heading>
+                  <Disclosure.Content>
+                    <Disclosure.Body>
+                      <ul className="flex flex-col divide-y divide-separator border border-separator rounded-xl text-xs">
+                        {point.files.map((file) => (
+                          <li key={file.filename} className="flex items-center justify-between gap-3 px-3 py-2">
+                            <span className="flex items-center gap-2 min-w-0">
+                              <FileText size={14} className="shrink-0 text-muted" aria-hidden="true" />
+                              <span className="font-mono [overflow-wrap:anywhere]">{file.filename}</span>
+                              <span className="shrink-0 text-muted">{(file.sizeBytes / 1024).toFixed(1)} KiB</span>
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onPress={() => controller.downloadVirtualFile(file.filename)}
+                              aria-label={`Download ${file.filename}`}
+                              className="shrink-0"
+                            >
+                              <Download size={14} aria-hidden="true" />
+                              Download
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </Disclosure.Body>
+                  </Disclosure.Content>
+                </Disclosure>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
 
-                    {isRestorable && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => controller.restoreBackupFile(item.filename).catch(() => {})}
-                        data-action="restore-snapshot"
-                        className="text-xs flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-900 font-medium min-h-[44px]"
-                      >
-                        <RotateCcw size={14} />
-                        <span>Restore to Bike</span>
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      {/* Confirmation Modal for Restore */}
-      <Modal
-        open={restoreModalOpen}
-        onOpenChange={setRestoreModalOpen}
-        title="Restore Configuration to Bike"
-        description="Are you sure you want to restore this configuration into your drive unit?"
-        footer={
-          <>
-            <Button
-              variant="outline"
-              size="md"
-              onClick={() => setRestoreModalOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={executeRestore}
-              className="bg-stone-900 hover:bg-black text-white flex items-center gap-2"
-            >
-              <Check size={16} />
-              <span>Confirm & Restore</span>
-            </Button>
-          </>
-        }
+      <ConfirmDialog
+        isOpen={pending !== null}
+        onOpenChange={(open) => !open && setPending(null)}
+        title="Restore these values to the bike?"
+        actions={[{ label: "Restore", onPress: restore, "data-testid": "btn-confirm-restore" }]}
       >
-        <div className="flex flex-col gap-3 text-xs text-stone-700 leading-relaxed">
-          <p>
-            Target file: <strong className="font-mono text-stone-900">{selectedSnapshot?.filename}</strong>
-          </p>
-          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5">
-            <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
-            <div>
-              Before applying this restore, cranklink will automatically create a rollback snapshot of your currently active configuration.
-            </div>
-          </div>
-        </div>
-      </Modal>
+        <p className="text-sm text-muted mb-3">The current values are backed up first, so this can be undone.</p>
+        <ul className="text-sm flex flex-col gap-1 rounded-xl border border-separator p-3">
+          {pending?.lines.map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      </ConfirmDialog>
     </div>
   );
 }
