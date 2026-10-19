@@ -4,6 +4,7 @@
 
 import type { ReactNode } from "react";
 import { ChevronRight, Zap } from "lucide-react";
+import { Alert, Button, Card, Chip } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { Destination } from "../../navigation.ts";
 import { formatSetting } from "../../domain/settingFormat.ts";
@@ -29,110 +30,117 @@ export function OverviewView({ state, onNavigate }: OverviewViewProps) {
   const stagedCount = Object.keys(state.stagedValues).length;
   const restorePoints = new Set(state.snapshots.filter((s) => s.kind !== "firmware").map((s) => s.group)).size;
 
+  const go = (category: "geometry" | "profiles" | "drivetrain" | "all") => () => onNavigate({ goal: "tune", category });
+
   return (
     <div className="w-full flex flex-col gap-6">
-      <section aria-labelledby="unit-heading" className="bg-white border border-stone-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
-        <div>
-          <h2 id="unit-heading" className="text-xl font-bold tracking-tight text-stone-900">{friendlyMotorName(identity)}</h2>
-          <p className="mt-1 text-xs font-mono text-stone-600 flex flex-wrap gap-x-3 gap-y-1">
+      <Card aria-labelledby="unit-heading" className="gap-4">
+        <Card.Header className="p-0">
+          <Card.Title id="unit-heading" className="text-xl font-bold tracking-tight">{friendlyMotorName(identity)}</Card.Title>
+          <Card.Description className="mt-1 text-xs font-mono flex flex-wrap gap-x-3 gap-y-1">
             <span>SN {identity?.serial}</span>
             <span>DCAS {identity?.dcasVersion}</span>
             <span>RX {identity?.rxVersion}</span>
             <span>via {state.transport ? TRANSPORT_LABELS[state.transport] : "—"}</span>
-          </p>
-        </div>
+          </Card.Description>
+        </Card.Header>
         {stagedCount > 0 && (
-          <p className="text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            Values marked “unsaved” include {stagedCount} staged change{stagedCount === 1 ? "" : "s"} not yet written to the bike.
-          </p>
+          <Alert status="warning">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description className="text-xs">
+                Values marked “unsaved” include {stagedCount} staged change{stagedCount === 1 ? "" : "s"} not yet written to the bike.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
         )}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {has("destination") && <Tile label="Region" value={show("destination")} staged={isStaged("destination")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
-          {has("speed-limit") && <Tile label="Assist speed limit" value={show("speed-limit")} staged={isStaged("speed-limit")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
-          {has("tire-circumference") && <Tile label="Tire circumference" value={show("tire-circumference")} staged={isStaged("tire-circumference")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
-          {has("lamp") && <Tile label="Light port" value={show("lamp")} staged={isStaged("lamp")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
+        <Card.Content className="p-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {has("destination") && <Tile label="Region" value={show("destination")} staged={isStaged("destination")} onPress={go("geometry")} />}
+          {has("speed-limit") && <Tile label="Assist speed limit" value={show("speed-limit")} staged={isStaged("speed-limit")} onPress={go("geometry")} />}
+          {has("tire-circumference") && <Tile label="Tire circumference" value={show("tire-circumference")} staged={isStaged("tire-circumference")} onPress={go("geometry")} />}
+          {has("lamp") && <Tile label="Light port" value={show("lamp")} staged={isStaged("lamp")} onPress={go("geometry")} />}
+        </Card.Content>
+      </Card>
+
+      {hasProfiles && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {(["profile1", "profile2"] as const).map((profile, index) => {
+            const names = ["boost", "trail", "eco"].map((mode) => `${profile}.${mode}.torque`);
+            return (
+              <Card key={profile} className="gap-4">
+                <Card.Header className="p-0 flex flex-row items-center justify-between gap-2">
+                  <Card.Title className="flex items-center gap-2 text-sm font-bold">
+                    <Zap size={16} className="text-warning" aria-hidden="true" />
+                    Profile {index + 1} peak torque
+                    {isStaged(...names) && <UnsavedMark />}
+                  </Card.Title>
+                  <Button variant="ghost" size="sm" onPress={go("profiles")}>
+                    Edit
+                    <ChevronRight size={14} aria-hidden="true" />
+                  </Button>
+                </Card.Header>
+                <Card.Content className="p-0 grid grid-cols-3 gap-2.5 text-center">
+                  {["Boost", "Trail", "Eco"].map((mode, i) => (
+                    <div key={mode} className="p-3 rounded-xl bg-surface-secondary">
+                      <span className="text-[10px] font-semibold text-muted block uppercase">{mode}</span>
+                      <span className="text-base font-mono font-bold">{show(names[i])}</span>
+                    </div>
+                  ))}
+                </Card.Content>
+              </Card>
+            );
+          })}
         </div>
-      </section>
+      )}
 
-      {hasProfiles && <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {(["profile1", "profile2"] as const).map((profile, index) => {
-          const names = ["boost", "trail", "eco"].map((mode) => `${profile}.${mode}.torque`);
-          return (
-            <button
-              key={profile}
-              type="button"
-              onClick={() => onNavigate({ goal: "tune", category: "profiles" })}
-              className="text-left bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4 hover:border-stone-300 hover:shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-            >
-              <span className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm font-bold text-stone-900">
-                  <Zap size={16} className="text-amber-600" aria-hidden="true" />
-                  Profile {index + 1} peak torque
-                  {isStaged(...names) && <UnsavedMark />}
-                </span>
-                <ChevronRight size={16} className="text-stone-400" aria-hidden="true" />
-              </span>
-              <span className="grid grid-cols-3 gap-2.5 text-center">
-                {["Boost", "Trail", "Eco"].map((mode, i) => (
-                  <span key={mode} className="p-3 rounded-xl bg-stone-50 border border-stone-200/70">
-                    <span className="text-[10px] font-semibold text-stone-500 block uppercase">{mode}</span>
-                    <span className="text-base font-mono font-bold text-stone-900">{show(names[i])}</span>
-                  </span>
-                ))}
-              </span>
-            </button>
-          );
-        })}
-      </div>}
+      <Card aria-labelledby="drivetrain-heading" className="gap-4 [&:not(:has(button))]:hidden">
+        <Card.Title id="drivetrain-heading" className="text-sm font-bold">Drivetrain & installation</Card.Title>
+        <Card.Content className="p-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {has("shifting-system") && <Tile label="Shifting" value={show("shifting-system")} staged={isStaged("shifting-system")} onPress={go("drivetrain")} />}
+          {has("front-teeth", "rear-teeth") && <Tile label="Chainring / cog" value={`${show("front-teeth")} / ${show("rear-teeth")}`} staged={isStaged("front-teeth", "rear-teeth")} onPress={go("drivetrain")} />}
+          {has("mounting-angle") && <Tile label="Mounting angle" value={show("mounting-angle")} staged={isStaged("mounting-angle")} onPress={go("geometry")} />}
+          {has("walk-assist") && <Tile label="Walk assist" value={show("walk-assist")} staged={isStaged("walk-assist")} onPress={go("geometry")} />}
+        </Card.Content>
+      </Card>
 
-      <section aria-labelledby="drivetrain-heading" className="[&:not(:has(button))]:hidden bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4">
-        <h2 id="drivetrain-heading" className="text-sm font-bold text-stone-900">Drivetrain & installation</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {has("shifting-system") && <Tile label="Shifting" value={show("shifting-system")} staged={isStaged("shifting-system")} onClick={() => onNavigate({ goal: "tune", category: "drivetrain" })} />}
-          {has("front-teeth", "rear-teeth") && <Tile label="Chainring / cog" value={`${show("front-teeth")} / ${show("rear-teeth")}`} staged={isStaged("front-teeth", "rear-teeth")} onClick={() => onNavigate({ goal: "tune", category: "drivetrain" })} />}
-          {has("mounting-angle") && <Tile label="Mounting angle" value={show("mounting-angle")} staged={isStaged("mounting-angle")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
-          {has("walk-assist") && <Tile label="Walk assist" value={show("walk-assist")} staged={isStaged("walk-assist")} onClick={() => onNavigate({ goal: "tune", category: "geometry" })} />}
-        </div>
-      </section>
-
-      <section aria-labelledby="backup-heading" className="bg-white border border-stone-200 rounded-3xl p-5 shadow-xs flex flex-col gap-4">
-        <h2 id="backup-heading" className="text-sm font-bold text-stone-900">Backups</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Card aria-labelledby="backup-heading" className="gap-4">
+        <Card.Title id="backup-heading" className="text-sm font-bold">Backups</Card.Title>
+        <Card.Content className="p-0 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Tile
             label="Restore points in this browser"
             value={restorePoints === 0 ? "None yet" : String(restorePoints)}
-            onClick={() => onNavigate({ goal: "backup" })}
+            onPress={() => onNavigate({ goal: "backup" })}
           />
-          <Tile
-            label="Unsaved changes"
-            value={stagedCount === 0 ? "None" : String(stagedCount)}
-            onClick={() => onNavigate({ goal: "tune", category: "all" })}
-          />
-        </div>
-      </section>
+          <Tile label="Unsaved changes" value={stagedCount === 0 ? "None" : String(stagedCount)} onPress={go("all")} />
+        </Card.Content>
+      </Card>
     </div>
   );
 }
 
 function UnsavedMark() {
-  return <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">unsaved</span>;
+  return (
+    <Chip size="sm" color="warning" variant="soft">
+      unsaved
+    </Chip>
+  );
 }
 
-function Tile({ label, value, staged = false, onClick }: { label: string; value: ReactNode; staged?: boolean; onClick: () => void }) {
+function Tile({ label, value, staged = false, onPress }: { label: string; value: ReactNode; staged?: boolean; onPress: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group text-left p-3 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-0.5 hover:border-stone-300 hover:bg-white transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 min-w-0"
+    <Button
+      variant="tertiary"
+      onPress={onPress}
+      className="h-auto min-w-0 flex-col items-start gap-0.5 p-3 text-left whitespace-normal"
     >
-      <span className="flex items-center justify-between gap-1 text-[10px] font-semibold text-stone-500 uppercase tracking-wider">
+      <span className="flex w-full items-center justify-between gap-1 text-[10px] font-semibold text-muted uppercase tracking-wider">
         <span className="truncate">{label}</span>
-        <ChevronRight size={12} className="shrink-0 text-stone-300 group-hover:text-stone-500" aria-hidden="true" />
+        <ChevronRight size={12} className="shrink-0" aria-hidden="true" />
       </span>
-      <span className="text-sm font-semibold text-stone-900 truncate flex items-center gap-1.5">
+      <span className="flex w-full items-center gap-1.5 text-sm font-semibold">
         <span className="truncate">{value}</span>
         {staged && <UnsavedMark />}
       </span>
-    </button>
+    </Button>
   );
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Bluetooth, Cable, Check, ChevronDown, FlaskConical, Minus, Smartphone, Usb } from "lucide-react";
+import { Bluetooth, Cable, Check, FlaskConical, Minus, Smartphone, Usb } from "lucide-react";
+import { Alert, Button, Card, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { checkBluetoothAvailability, detectPlatform } from "../../core/platform.ts";
+import { checkBluetoothAvailability, detectPlatform, type PlatformInfo } from "../../core/platform.ts";
 import { describeFailure } from "../../domain/errors.ts";
-import { Button } from "../ui/Button.tsx";
+import { OptionSelect } from "../ui/OptionSelect.tsx";
 
 const DOCS_URL = "https://github.com/plainoss/cranklink/tree/main/web-instrument#browser-instrument";
 
@@ -67,73 +68,72 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
   const failure = state.failure ? describeFailure(state.failure, state.transport, state.schema) : null;
 
   return (
-    <main className="min-h-dvh flex flex-col items-center justify-center px-4 py-8 sm:px-6 bg-[#f4f3ef] text-stone-900">
+    <main className="min-h-dvh flex flex-col items-center justify-center px-4 py-8 sm:px-6 bg-background text-foreground">
       <div className="w-full max-w-md flex flex-col gap-4">
         <header className="flex flex-col gap-2 px-1">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-stone-900 text-white flex items-center justify-center" aria-hidden="true">
+            <div className="w-9 h-9 rounded-xl bg-accent text-accent-foreground flex items-center justify-center" aria-hidden="true">
               <span className="font-bold text-xs font-mono">CL</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight">cranklink</h1>
           </div>
-          <p className="text-sm text-stone-600 leading-relaxed">
+          <p className="text-sm text-muted leading-relaxed">
             Read and adjust settings, back up, and update firmware on Shimano STEPS drive units from your browser.
           </p>
         </header>
 
         {failure && (
-          <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-950 flex items-start gap-3" data-testid="error-banner" role="alert">
-            <AlertCircle size={20} className="text-red-600 shrink-0 mt-0.5" aria-hidden="true" />
-            <div className="text-sm min-w-0">
-              <p className="font-semibold">{failure.title}</p>
-              <p className="text-red-800 mt-1 [overflow-wrap:anywhere]">{failure.message}</p>
-            </div>
-          </div>
+          <Alert status="danger" data-testid="error-banner">
+            <Alert.Indicator />
+            <Alert.Content className="min-w-0">
+              <Alert.Title>{failure.title}</Alert.Title>
+              <Alert.Description className="[overflow-wrap:anywhere]">{failure.message}</Alert.Description>
+            </Alert.Content>
+          </Alert>
         )}
 
         {bluetoothBlocked && !platform.isIOS && (
-          <div
-            className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-sm leading-relaxed"
-            data-testid="bluetooth-unavailable-warning"
-            role="status"
-          >
-            <AlertCircle size={20} className="text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
-            <div>
-              <strong className="block font-semibold">Web Bluetooth is unavailable or turned off</strong>
-              <span>
+          <Alert status="warning" data-testid="bluetooth-unavailable-warning">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>Web Bluetooth is unavailable or turned off</Alert.Title>
+              <Alert.Description>
                 Use a browser with Web Bluetooth, such as Chrome or Edge, or check this browser’s Bluetooth settings.
                 {platform.supportsUsb && " You can also connect with an SM-PCE02 USB adapter."}
-              </span>
-            </div>
-          </div>
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
         )}
 
         {platform.isIOS && !platform.isBluefy && (
-          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 text-sm leading-relaxed">
-            <Smartphone size={20} className="text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
-            <div>
-              <strong className="block font-semibold">Use Bluefy on iPhone or iPad</strong>
-              <span>Safari does not support Web Bluetooth. Open this page in the Bluefy browser to connect wirelessly.</span>
-            </div>
-          </div>
+          <Alert status="warning">
+            <Alert.Indicator>
+              <Smartphone size={20} aria-hidden="true" />
+            </Alert.Indicator>
+            <Alert.Content>
+              <Alert.Title>Use Bluefy on iPhone or iPad</Alert.Title>
+              <Alert.Description>
+                Safari does not support Web Bluetooth. Open this page in the Bluefy browser to connect wirelessly.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
         )}
 
-        <section aria-label="Connect" className="bg-white border border-stone-200/90 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
+        <Card aria-label="Connect" className="gap-4">
           <Button
-            variant="primary"
             size="lg"
-            disabled={isBusy || !primaryTransport}
-            onClick={() => primaryTransport && connect(primaryTransport)}
+            fullWidth
+            isDisabled={isBusy || !primaryTransport}
+            onPress={() => primaryTransport && connect(primaryTransport)}
             data-action={primaryTransport ? `connect-${primaryTransport}` : "connect-unavailable"}
             data-testid={primaryTransport ? `btn-connect-${primaryTransport}` : "btn-connect-unavailable"}
-            className="w-full gap-2.5"
           >
             {primaryTransport === "ble" ? <Bluetooth size={18} aria-hidden="true" /> : <Usb size={18} aria-hidden="true" />}
-            <span>{primaryLabel}</span>
+            {primaryLabel}
           </Button>
 
           {canUseBluetooth && (
-            <p className="text-xs text-stone-500 leading-relaxed" data-testid="bluetooth-discovery-hint">
+            <p className="text-xs text-muted leading-relaxed" data-testid="bluetooth-discovery-hint">
               Turn the bike on just before connecting. If it isn’t listed, turn it off and on again, then enable its
               Bluetooth connection mode if needed.
             </p>
@@ -142,134 +142,119 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
           <TransportSupport platform={platform} bluetooth={canUseBluetooth} />
 
           {hasOtherOptions && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowOptions((open) => !open)}
-                aria-expanded={showOptions}
-                aria-controls="other-connections"
-                className="w-full min-h-[44px] flex items-center justify-between px-3 rounded-xl text-sm text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors"
-                data-testid="btn-more-menu"
-              >
-                <span>Other ways to connect</span>
-                <ChevronDown size={16} className={`text-stone-400 transition-transform ${showOptions ? "rotate-180" : ""}`} aria-hidden="true" />
-              </button>
-
-              {showOptions && (
-                <div id="other-connections" className="mt-2 pt-3 border-t border-stone-100 flex flex-col gap-2 menu-dropdown">
+            <Disclosure>
+              <Disclosure.Heading>
+                <Disclosure.Trigger className="w-full min-h-[44px] flex items-center justify-between text-sm text-muted" data-testid="btn-more-menu">
+                  Other ways to connect
+                  <Disclosure.Indicator />
+                </Disclosure.Trigger>
+              </Disclosure.Heading>
+              <Disclosure.Content>
+                <Disclosure.Body className="pt-2 flex flex-col gap-2 menu-dropdown">
                   {hasBleOption && (
-                    <Button variant="outline" size="md" disabled={isBusy} onClick={() => connect("ble")} data-action="connect-ble" data-testid="btn-connect-ble" className="w-full justify-start gap-2">
+                    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("ble")} data-action="connect-ble" data-testid="btn-connect-ble" className="justify-start">
                       <Bluetooth size={16} aria-hidden="true" />
-                      <span>Bluetooth gateway</span>
+                      Bluetooth gateway
                     </Button>
                   )}
                   {platform.supportsUsb && primaryTransport !== "usb" && (
-                    <Button variant="outline" size="md" disabled={isBusy} onClick={() => connect("usb")} data-action="connect-usb" data-testid="btn-connect-usb" className="w-full justify-start gap-2">
+                    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("usb")} data-action="connect-usb" data-testid="btn-connect-usb" className="justify-start">
                       <Usb size={16} aria-hidden="true" />
-                      <span>USB adapter (SM-PCE02)</span>
+                      USB adapter (SM-PCE02)
                     </Button>
                   )}
                   {platform.supportsSerial && primaryTransport !== "serial" && (
-                    <Button variant="outline" size="md" disabled={isBusy} onClick={() => connect("serial")} data-action="connect-serial" data-testid="btn-connect-serial" className="w-full justify-start gap-2">
+                    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("serial")} data-action="connect-serial" data-testid="btn-connect-serial" className="justify-start">
                       <Cable size={16} aria-hidden="true" />
-                      <span>Direct serial port</span>
+                      Direct serial port
                     </Button>
                   )}
-                </div>
-              )}
-            </div>
+                </Disclosure.Body>
+              </Disclosure.Content>
+            </Disclosure>
           )}
-        </section>
+        </Card>
 
         {import.meta.env.DEV && (
-          <section aria-labelledby="sim-title" className="bg-white/70 border border-dashed border-stone-300 rounded-3xl p-5 flex flex-col gap-3" data-testid="empty-state-start-sim">
-            <h2 id="sim-title" className="flex items-center gap-2 text-sm font-semibold text-stone-800">
-              <FlaskConical size={16} aria-hidden="true" />
-              Try without hardware (development build)
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="text-xs font-medium text-stone-600">
-                Drive unit
-                <select
-                  value={simModel}
-                  onChange={(event) => setSimModel(event.target.value as SimulatedModel)}
-                  className="mt-1 w-full text-sm p-2 rounded-xl border border-stone-200 bg-white text-stone-800 min-h-[44px]"
-                  data-testid="sim-model-select"
-                >
-                  <option value="ep800-crg">DU-EP800-CRG (Cargo)</option>
-                  <option value="ep600">DU-EP600</option>
-                  <option value="ep801">DU-EP801</option>
-                </select>
-              </label>
-              <label className="text-xs font-medium text-stone-600">
-                Simulated fault
-                <select
-                  value={simFault}
-                  onChange={(event) => setSimFault(event.target.value as FaultInjectionType)}
-                  className="mt-1 w-full text-sm p-2 rounded-xl border border-stone-200 bg-white text-stone-800 min-h-[44px]"
-                  data-testid="sim-fault-select"
-                >
-                  <option value="none">None</option>
-                  <option value="auth_reject">Motor rejects authorization</option>
-                  <option value="disconnect_on_connect">Gateway drops on connect</option>
-                  <option value="write_timeout">Gateway stops responding on write</option>
-                  <option value="readonly_rejection">Motor rejects writes</option>
-                </select>
-              </label>
-            </div>
-            <p className="text-xs text-stone-500">
+          <Card variant="secondary" className="gap-3 border border-dashed border-separator" data-testid="empty-state-start-sim">
+            <Card.Header className="p-0">
+              <Card.Title className="flex items-center gap-2 text-sm font-semibold">
+                <FlaskConical size={16} aria-hidden="true" />
+                Try without hardware (development build)
+              </Card.Title>
+            </Card.Header>
+            <Card.Content className="p-0 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <OptionSelect
+                label="Drive unit"
+                value={simModel}
+                onChange={(id) => setSimModel(id as SimulatedModel)}
+                options={[
+                  { id: "ep800-crg", label: "DU-EP800-CRG (Cargo)" },
+                  { id: "ep600", label: "DU-EP600" },
+                  { id: "ep801", label: "DU-EP801" },
+                ]}
+                data-testid="sim-model-select"
+              />
+              <OptionSelect
+                label="Simulated fault"
+                value={simFault}
+                onChange={(id) => setSimFault(id as FaultInjectionType)}
+                options={[
+                  { id: "none", label: "None" },
+                  { id: "auth_reject", label: "Motor rejects authorization" },
+                  { id: "disconnect_on_connect", label: "Gateway drops on connect" },
+                  { id: "write_timeout", label: "Gateway stops responding on write" },
+                  { id: "readonly_rejection", label: "Motor rejects writes" },
+                ]}
+                data-testid="sim-fault-select"
+              />
+            </Card.Content>
+            <p className="text-xs text-muted">
               The simulator emulates a Bluetooth gateway, so simulated faults surface as Bluetooth errors.
             </p>
             <Button
               variant="outline"
-              size="md"
-              disabled={isBusy}
-              onClick={() => controller.connectAndSync("sim", { model: simModel, fault: simFault }).catch(() => {})}
+              fullWidth
+              isDisabled={isBusy}
+              onPress={() => controller.connectAndSync("sim", { model: simModel, fault: simFault }).catch(() => {})}
               data-action="connect-sim"
               data-testid="btn-connect-sim"
-              className="w-full min-h-[44px]"
             >
               Start simulator
             </Button>
-          </section>
+          </Card>
         )}
 
-        <p className="px-1 text-xs text-stone-500 leading-relaxed">
+        <p className="px-1 text-xs text-muted leading-relaxed">
           Needs Chrome or Edge with Web Bluetooth, WebUSB, or Web Serial, and a compatible Bluetooth gateway or SM-PCE02 adapter.{" "}
-          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="font-medium text-stone-700 underline underline-offset-2">
+          <Link href={DOCS_URL} target="_blank" rel="noreferrer" className="text-xs">
             Requirements and limitations
-          </a>
+            <Link.Icon />
+          </Link>
         </p>
-        <button
-          type="button"
-          onClick={onOpenWarning}
-          data-testid="btn-open-warning-modal"
-          className="self-start px-1 text-xs text-stone-600 underline underline-offset-2 hover:text-stone-900 min-h-[32px]"
-        >
+        <Button variant="ghost" size="sm" onPress={onOpenWarning} data-testid="btn-open-warning-modal" className="self-start max-w-full h-auto whitespace-normal text-left">
           Unofficial software &amp; hardware safety notice
-        </button>
+        </Button>
       </div>
     </main>
   );
 }
 
-function TransportSupport({ platform, bluetooth }: { platform: ReturnType<typeof detectPlatform>; bluetooth: boolean }) {
+function TransportSupport({ platform, bluetooth }: { platform: PlatformInfo; bluetooth: boolean }) {
   const rows = [
     { label: "Bluetooth", ok: bluetooth },
     { label: "USB", ok: platform.supportsUsb },
     { label: "Serial", ok: platform.supportsSerial },
   ];
   return (
-    <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600" aria-label="Connections this browser supports">
+    <ul className="flex flex-wrap gap-2" aria-label="Connections this browser supports">
       {rows.map((row) => (
-        <li key={row.label} className="flex items-center gap-1">
-          {row.ok
-            ? <Check size={13} className="text-emerald-600" aria-hidden="true" />
-            : <Minus size={13} className="text-stone-400" aria-hidden="true" />}
-          <span className={row.ok ? "" : "text-stone-400"}>
+        <li key={row.label}>
+          <Chip size="sm" variant="soft" color={row.ok ? "success" : "default"}>
+            {row.ok ? <Check size={12} aria-hidden="true" /> : <Minus size={12} aria-hidden="true" />}
             {row.label}
             <span className="sr-only">{row.ok ? " supported" : " not supported in this browser"}</span>
-          </span>
+          </Chip>
         </li>
       ))}
     </ul>

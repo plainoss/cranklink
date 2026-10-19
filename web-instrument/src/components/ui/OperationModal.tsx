@@ -1,4 +1,4 @@
-import { RefreshCw, AlertTriangle, Info } from "lucide-react";
+import { Alert, Modal, Spinner } from "@heroui/react";
 import type { InstrumentState, SessionPhase, TransportType } from "../../types.ts";
 
 const TITLES: Partial<Record<SessionPhase, string>> = {
@@ -37,44 +37,33 @@ function guidance(phase: SessionPhase, transport: TransportType | null): { text:
 
 export function OperationModal({ state }: { state: InstrumentState }) {
   const busy = ["connecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
-  if (!busy) return null;
-
   const title = state.phase === "connecting" ? connectingTitle(state.transport) : TITLES[state.phase] ?? "Working…";
   const notice = guidance(state.phase, state.transport);
 
+  // Operations cannot be cancelled from here, so the dialog ignores outside clicks and Escape.
   return (
-    <div
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="operation-title"
-      aria-describedby="operation-status"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      data-testid="operation-modal"
-    >
-      <div className="fixed inset-0 bg-stone-950/60 backdrop-blur-xs animate-in fade-in duration-150" />
-      <div className="relative bg-white rounded-2xl shadow-2xl border border-stone-200 z-50 p-6 sm:p-8 w-[calc(100%-2rem)] max-w-md animate-in zoom-in-95 duration-150">
-        <div className="flex flex-col items-center text-center gap-5">
-          <div className="w-14 h-14 rounded-2xl bg-stone-900 text-white flex items-center justify-center" aria-hidden="true">
-            <RefreshCw size={26} className="animate-spin text-amber-400" />
-          </div>
-          <div className="flex flex-col gap-2">
-            <h2 id="operation-title" className="text-xl font-bold tracking-tight text-stone-900">{title}</h2>
-            <p id="operation-status" className="text-sm text-stone-600 [overflow-wrap:anywhere]" aria-live="polite">
-              {state.statusMessage}
-            </p>
-          </div>
-          <div
-            className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 text-left leading-relaxed ${
-              notice.critical ? "bg-amber-50 border-amber-200 text-amber-900" : "bg-stone-50 border-stone-200 text-stone-700"
-            }`}
-          >
-            {notice.critical
-              ? <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
-              : <Info size={16} className="text-stone-500 shrink-0 mt-0.5" aria-hidden="true" />}
-            <span>{notice.text}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Modal>
+      <Modal.Backdrop isOpen={busy} isDismissable={false} isKeyboardDismissDisabled>
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog role="alertdialog" data-testid="operation-modal" className="items-center text-center">
+            <Modal.Header className="items-center">
+              <Spinner size="lg" color="warning" aria-hidden="true" />
+              <Modal.Heading>{title}</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="flex flex-col gap-4">
+              <p className="text-sm text-muted [overflow-wrap:anywhere]" aria-live="polite">
+                {state.statusMessage}
+              </p>
+              <Alert status={notice.critical ? "warning" : "default"} className="text-left">
+                <Alert.Indicator />
+                <Alert.Content>
+                  <Alert.Description className="text-xs leading-relaxed">{notice.text}</Alert.Description>
+                </Alert.Content>
+              </Alert>
+            </Modal.Body>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }

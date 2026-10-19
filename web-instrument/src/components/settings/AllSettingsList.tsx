@@ -2,7 +2,9 @@
  * AllSettingsList.tsx - Every setting the drive unit reports, with a generic editor.
  */
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
+import { Card, Input, NumberField, TextField } from "@heroui/react";
+import { OptionSelect } from "../ui/OptionSelect.tsx";
 import type { EnrichedSetting, InstrumentState } from "../../types.ts";
 import { matchesQuery, useSearchQuery, useSetting } from "./SettingRow.tsx";
 
@@ -25,20 +27,22 @@ export function AllSettingsList({ state, names, title, description, "data-testid
   if (visible.length === 0) return null;
 
   return (
-    <section className="bg-white border border-stone-200 rounded-3xl shadow-xs overflow-hidden" data-testid={testId}>
-      <header className="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-4 pb-3 sm:px-5 border-b border-stone-200">
+    <Card className="p-0 gap-0 overflow-hidden" data-testid={testId}>
+      <Card.Header className="flex flex-row flex-wrap items-baseline justify-between gap-2 px-4 pt-4 pb-3 sm:px-5 border-b border-separator">
         <div>
-          <h2 className="text-base font-bold text-stone-900">{title}</h2>
-          {description && <p className="text-xs text-stone-500 mt-0.5">{description}</p>}
+          <Card.Title className="text-base font-bold">{title}</Card.Title>
+          {description && <Card.Description className="text-xs mt-0.5">{description}</Card.Description>}
         </div>
-        <span className="text-xs text-stone-500">{visible.length} setting{visible.length === 1 ? "" : "s"}</span>
-      </header>
-      <ul className="flex flex-col divide-y divide-stone-200">
-        {visible.map((name) => (
-          <SettingListItem key={name} name={name} />
-        ))}
-      </ul>
-    </section>
+        <span className="text-xs text-muted">{visible.length} setting{visible.length === 1 ? "" : "s"}</span>
+      </Card.Header>
+      <Card.Content>
+        <ul className="flex flex-col divide-y divide-separator">
+          {visible.map((name) => (
+            <SettingListItem key={name} name={name} />
+          ))}
+        </ul>
+      </Card.Content>
+    </Card>
   );
 }
 
@@ -87,56 +91,41 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
   const choices = spec.choices.length ? spec.choices : Object.keys(spec.choiceLabels ?? {}).map(Number);
   if (spec.choiceLabels && choices.length) {
     return (
-      <select
+      <OptionSelect
         aria-label={setting.label}
-        value={current}
-        onChange={(event) => setting.stage(Number(event.target.value))}
-        className="w-full text-sm p-2 rounded-xl border border-stone-300 bg-white min-h-[44px]"
-      >
-        {choices.map((choice) => (
-          <option key={choice} value={choice}>
-            {setting.format(choice)}
-          </option>
-        ))}
-      </select>
+        value={current === "" ? null : current}
+        options={choices.map((choice) => ({ id: String(choice), label: setting.format(choice) }))}
+        onChange={(id) => setting.stage(Number(id))}
+      />
     );
   }
 
-  const numeric = spec.value_type === "number";
-  const commit = (event?: FormEvent) => {
-    event?.preventDefault();
-    const trimmed = draft.trim();
-    if (trimmed === current) return;
-    if (numeric) {
-      const next = Number(trimmed);
-      if (trimmed === "" || !Number.isFinite(next)) {
-        setDraft(current);
-        return;
-      }
-      setting.stage(next);
-    } else {
-      setting.stage(trimmed);
-    }
-  };
-
-  return (
-    <form onSubmit={commit} className="flex items-center gap-2">
-      <input
+  if (spec.value_type === "number") {
+    return (
+      <NumberField
         aria-label={setting.label}
-        type={numeric ? "number" : "text"}
-        inputMode={numeric ? "decimal" : undefined}
-        min={numeric ? spec.userMin : undefined}
-        max={numeric ? spec.userMax : undefined}
-        step={numeric ? spec.userStep : undefined}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => commit()}
-        className="min-w-0 flex-1 rounded-xl border border-stone-300 bg-white px-3 min-h-[44px] font-mono focus:outline-none focus:ring-2 focus:ring-amber-300"
-        style={{ fontSize: "16px" }}
-      />
-      {numeric && spec.displayUnit && !/^0\./.test(spec.displayUnit) && (
-        <span className="shrink-0 text-xs text-stone-500">{spec.displayUnit}</span>
-      )}
-    </form>
+        value={Number.isFinite(setting.numeric) ? setting.numeric : NaN}
+        minValue={spec.userMin}
+        maxValue={spec.userMax}
+        step={spec.userStep}
+        onChange={(next) => Number.isFinite(next) && setting.stage(next)}
+        fullWidth
+      >
+        <NumberField.Group>
+          <NumberField.Input className="font-mono" />
+        </NumberField.Group>
+      </NumberField>
+    );
+  }
+
+  // Text and date settings commit on blur or Enter, not on every keystroke.
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed !== current) setting.stage(trimmed);
+  };
+  return (
+    <TextField aria-label={setting.label} value={draft} onChange={setDraft} onBlur={commit} fullWidth>
+      <Input className="font-mono" onKeyDown={(event) => event.key === "Enter" && commit()} />
+    </TextField>
   );
 }

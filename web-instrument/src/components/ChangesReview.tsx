@@ -11,8 +11,7 @@ import { AlertTriangle, RotateCcw, ShieldCheck } from "lucide-react";
 import type { InstrumentState } from "../types.ts";
 import type { SessionController } from "../core/sessionController.ts";
 import { formatSetting, isRegulatedSetting, settingLabel } from "../domain/settingFormat.ts";
-import { Button } from "./ui/Button.tsx";
-import { Modal } from "./ui/Dialog.tsx";
+import { Alert, Button, Card, Checkbox, Label, Modal } from "@heroui/react";
 
 interface StagedChange {
   name: string;
@@ -47,10 +46,10 @@ export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
   const count = changes.length;
   if (count === 0) return null;
   return (
-    <aside
-      className="sticky bottom-6 z-40 mt-auto flex items-center justify-between gap-4 rounded-2xl border border-stone-700 bg-stone-900 p-4 text-white shadow-2xl"
+    <Card
+      render={(props) => <aside {...props} aria-label="Changes to save" />}
+      className="sticky bottom-6 z-40 mt-auto flex-row items-center justify-between gap-4 bg-stone-900 text-white shadow-2xl"
       data-testid="transaction-rail"
-      aria-label="Changes to save"
     >
       <div className="min-w-0">
         <p className="text-sm font-semibold text-amber-300">
@@ -66,26 +65,14 @@ export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
         </ul>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <Button
-          variant="custom"
-          size="sm"
-          onClick={() => controller.discardAllStaged()}
-          data-testid="btn-discard-staged"
-          className="bg-transparent text-stone-300 hover:bg-white/10 hover:text-white text-xs min-h-[44px]"
-        >
+        <Button variant="ghost" onPress={() => controller.discardAllStaged()} data-testid="btn-discard-staged" className="text-stone-300 hover:text-white">
           Discard all
         </Button>
-        <Button
-          variant="custom"
-          size="sm"
-          onClick={onReview}
-          data-testid="btn-review-save"
-          className="bg-amber-400 text-stone-950 hover:bg-amber-300 text-xs font-bold min-h-[44px]"
-        >
+        <Button onPress={onReview} data-testid="btn-review-save" className="bg-amber-400 text-stone-950 hover:bg-amber-300 font-bold">
           Review & save
         </Button>
       </div>
-    </aside>
+    </Card>
   );
 }
 
@@ -119,88 +106,88 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
   };
 
   return (
-      <Modal
-        open={open && count > 0}
-        onOpenChange={onOpenChange}
-        title={`Save ${count} change${count === 1 ? "" : "s"} to the bike?`}
-        description="Check each change. You can undo any of them before saving."
-        maxWidth="lg"
-        data-testid="review-dialog"
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={() => controller.discardAllStaged()}
-              className="mr-auto text-stone-600"
-            >
-              Discard all
-            </Button>
-            <Button variant="outline" size="md" onClick={() => onOpenChange(false)}>
-              Keep editing
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              disabled={saving || (regulated.length > 0 && !acknowledged)}
-              onClick={save}
-              data-testid="btn-commit-batch"
-            >
-              Save to bike
-            </Button>
-          </>
-        }
-      >
-        <ul className="flex flex-col divide-y divide-stone-200 rounded-xl border border-stone-200" aria-label="Staged changes">
-          {changes.map((change) => (
-            <li key={change.name} className="flex items-center justify-between gap-3 px-3 py-2.5" data-testid={`review-item-${change.name}`}>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-stone-900 flex items-center gap-1.5">
-                  {change.regulated && <AlertTriangle size={14} className="text-amber-700 shrink-0" aria-label="Regulated setting" />}
-                  {change.label}
-                </p>
-                <p className="text-xs text-stone-600 [overflow-wrap:anywhere]">
-                  <span className="sr-only">from </span>
-                  <span className="text-stone-500 line-through decoration-stone-400">{change.before}</span>
-                  <span aria-hidden="true"> → </span>
-                  <span className="sr-only"> to </span>
-                  <strong className="font-semibold text-amber-800">{change.after}</strong>
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => controller.revertParameter(change.name)}
-                aria-label={`Undo change to ${change.label}`}
-                className="shrink-0 gap-1 text-xs text-stone-600 min-h-[40px]"
-              >
-                <RotateCcw size={13} aria-hidden="true" />
-                Undo
+    <Modal>
+      <Modal.Backdrop isOpen={open && count > 0} onOpenChange={onOpenChange}>
+        <Modal.Container size="lg" scroll="inside">
+          <Modal.Dialog data-testid="review-dialog">
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <Modal.Heading>{`Save ${count} change${count === 1 ? "" : "s"} to the bike?`}</Modal.Heading>
+              <p className="text-sm text-muted">Check each change. You can undo any of them before saving.</p>
+            </Modal.Header>
+            <Modal.Body className="flex flex-col gap-4">
+              <ul className="flex flex-col divide-y divide-separator rounded-xl border border-separator" aria-label="Staged changes">
+                {changes.map((change) => (
+                  <li key={change.name} className="flex items-center justify-between gap-3 px-3 py-2.5" data-testid={`review-item-${change.name}`}>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium flex items-center gap-1.5">
+                        {change.regulated && <AlertTriangle size={14} className="text-warning shrink-0" aria-label="Regulated setting" />}
+                        {change.label}
+                      </p>
+                      <p className="text-xs text-muted [overflow-wrap:anywhere]">
+                        <span className="sr-only">from </span>
+                        <span className="line-through">{change.before}</span>
+                        <span aria-hidden="true"> → </span>
+                        <span className="sr-only"> to </span>
+                        <strong className="font-semibold text-foreground">{change.after}</strong>
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onPress={() => controller.revertParameter(change.name)}
+                      aria-label={`Undo change to ${change.label}`}
+                      className="shrink-0"
+                    >
+                      <RotateCcw size={13} aria-hidden="true" />
+                      Undo
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+
+              {regulated.length > 0 && (
+                <Alert status="warning">
+                  <Alert.Content>
+                    <Checkbox isSelected={acknowledged} onChange={setAcknowledged} data-testid="ack-regulated">
+                      <Checkbox.Control>
+                        <Checkbox.Indicator />
+                      </Checkbox.Control>
+                      <Checkbox.Content>
+                        <Label className="text-xs leading-relaxed">
+                          {regulated.map((change) => change.label).join(" and ")} {regulated.length === 1 ? "changes" : "change"} legal
+                          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
+                          approved.
+                        </Label>
+                      </Checkbox.Content>
+                    </Checkbox>
+                  </Alert.Content>
+                </Alert>
+              )}
+
+              <p className="flex items-start gap-2 text-xs text-muted">
+                <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
+                Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
+              </p>
+            </Modal.Body>
+            <Modal.Footer className="flex-wrap">
+              <Button variant="ghost" onPress={() => controller.discardAllStaged()} className="mr-auto">
+                Discard all
               </Button>
-            </li>
-          ))}
-        </ul>
-
-        {regulated.length > 0 && (
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={acknowledged}
-              onChange={(event) => setAcknowledged(event.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-stone-900"
-              data-testid="ack-regulated"
-            />
-            <span>
-              {regulated.map((change) => change.label).join(" and ")} {regulated.length === 1 ? "changes" : "change"} legal
-              or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer approved.
-            </span>
-          </label>
-        )}
-
-        <p className="mt-4 flex items-start gap-2 text-xs text-stone-600">
-          <ShieldCheck size={14} className="mt-0.5 shrink-0 text-emerald-700" aria-hidden="true" />
-          Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
-        </p>
-      </Modal>
+              <Button variant="tertiary" slot="close">
+                Keep editing
+              </Button>
+              <Button
+                isDisabled={saving || (regulated.length > 0 && !acknowledged)}
+                onPress={save}
+                data-testid="btn-commit-batch"
+              >
+                Save to bike
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }

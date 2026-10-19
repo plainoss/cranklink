@@ -1,33 +1,39 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
-/* Shared controls use HeroUI's BEM classes; app-specific layout stays in Tailwind. */
+/* Controls are HeroUI components; this theme maps them onto the app's
+   stone-on-warm-canvas palette. App-specific layout stays in Tailwind. */
 
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --background: #f4f3ef;
+  --foreground: #1c1917;
+  --surface: #fff;
+  --surface-secondary: #f5f5f4;
+  --surface-tertiary: #e7e5e4;
+  --accent: #1c1917;
+  --accent-foreground: #fff;
+  --warning: #f59e0b;
+  --warning-foreground: #1c1917;
+  --focus: #f59e0b;
+  --radius: 0.75rem;
 }
 
-/* One accent for primary actions across the app: stone on the warm canvas. */
-.button--primary {
-  background-color: #1c1917;
-  color: #fff;
-  border-color: transparent;
-}
-
-.button--primary:hover:not(:disabled) {
-  background-color: #000;
-}
-
-/* Touch-sized default for dialogs and forms. */
-.button--md,
-.button--lg {
-  min-height: 44px;
-}
-
-.button:focus-visible {
-  outline: 2px solid #f59e0b;
-  outline-offset: 2px;
+/* Touch-sized HeroUI controls on phones and tablets. */
+@media (max-width: 1023px) {
+  .button,
+  .toggle-button,
+  .number-field__increment-button,
+  .number-field__decrement-button {
+    min-height: 44px;
+  }
+  .button--icon-only,
+  .number-field__increment-button,
+  .number-field__decrement-button {
+    min-width: 44px;
+  }
 }
 
 html,
@@ -137,15 +143,6 @@ body {
 [data-testid*="param-row-"],
 [data-testid*="identity-strip"] {
   font-variant-numeric: tabular-nums;
-}
-
-/* Hide scrollbar for clean horizontal tabs */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
 
 /* Menu dropdown bounds */

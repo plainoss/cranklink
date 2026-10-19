@@ -1,11 +1,9 @@
 import { useState, useRef, type DragEvent } from "react";
-import { AlertTriangle, UploadCloud, FileCheck2 } from "lucide-react";
+import { UploadCloud, FileCheck2 } from "lucide-react";
+import { Alert, Button, Card, Chip, Disclosure } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { Card } from "../ui/Card.tsx";
-import { Button } from "../ui/Button.tsx";
-import { Badge } from "../ui/Badge.tsx";
-import { Modal } from "../ui/Dialog.tsx";
+import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 type ProgramTarget = "pair" | "dcas" | "rx";
 
@@ -58,199 +56,154 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
     controller.executeFirmwareSync(true, target === "pair" ? null : target).catch(() => {});
   };
 
+  const fileSlot = (label: string, file: typeof firmware.dcasFile, expected: string) => (
+    <Card variant="secondary" className="gap-1 p-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold">{label}</span>
+        <Chip size="sm" variant="soft" color={file ? "success" : "default"}>
+          {file ? "Loaded" : "Missing"}
+        </Chip>
+      </div>
+      <p className="text-[11px] text-muted font-mono truncate">{file ? file.filename : `Waiting for ${expected}`}</p>
+    </Card>
+  );
+
   return (
     <div className="w-full flex flex-col gap-6" data-testid="firmware-section">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <p className="text-sm text-stone-600 leading-relaxed max-w-prose">
+        <p className="text-sm text-muted leading-relaxed max-w-prose">
           These drive units run two microcontrollers, DCAS (-D) and RX (-M). Load a matched pair of firmware files, run the
           non-erasing check, then program both together.
         </p>
-        <Badge variant={firmware.companionValid ? "success" : "neutral"} className="shrink-0 self-start">
+        <Chip variant="soft" color={firmware.companionValid ? "success" : "default"} className="shrink-0 self-start">
           {firmware.companionValid ? "Pair verified" : "Waiting for files"}
-        </Badge>
+        </Chip>
       </div>
 
-      <div
-        className="p-3.5 sm:p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs"
-        data-testid="fw-risk-notice"
-      >
-        <p className="flex items-center gap-2.5 leading-relaxed">
-          <AlertTriangle size={18} className="text-amber-700 shrink-0" aria-hidden="true" />
-          <span>
-            <strong>Experimental:</strong> firmware programming is tested on EP800-CRG only, and firmware compatibility is
-            not verified.
-          </span>
-        </p>
-        <button
-          type="button"
-          onClick={onOpenWarning}
-          data-testid="btn-review-fw-warning"
-          className="shrink-0 self-start sm:self-auto font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950 min-h-[32px]"
-        >
-          Read the risk notice
-        </button>
-      </div>
+      <Alert status="warning" data-testid="fw-risk-notice">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Description className="text-xs leading-relaxed">
+            <strong>Experimental:</strong> firmware programming is tested on EP800-CRG only, and firmware compatibility is not
+            verified.
+          </Alert.Description>
+          <Button variant="ghost" size="sm" onPress={onOpenWarning} data-testid="btn-review-fw-warning" className="mt-1 -ml-2 self-start">
+            Read the risk notice
+          </Button>
+        </Alert.Content>
+      </Alert>
 
-      <div
+      <Card
         data-dropzone="true"
-        onDragOver={(e) => {
+        onDragOver={(e: DragEvent<HTMLDivElement>) => {
           e.preventDefault();
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`border-2 border-dashed rounded-3xl p-8 flex flex-col items-center justify-center text-center transition-colors ${
-          dragOver ? "border-amber-500 bg-amber-50/60" : "border-stone-300 bg-white"
-        }`}
+        className={`items-center text-center border-2 border-dashed p-8 transition-colors ${dragOver ? "border-warning bg-warning-soft" : "border-separator"}`}
       >
+        {/* The browser's file picker; HeroUI's Button opens it. */}
         <input
           ref={fileInputRef}
-          id="firmware-files"
           type="file"
           multiple
           accept=".dat,.bin"
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <div className="w-12 h-12 rounded-2xl bg-stone-100 text-stone-700 flex items-center justify-center mb-3" aria-hidden="true">
-          <UploadCloud size={24} />
-        </div>
-        <h2 className="text-sm sm:text-base font-semibold text-stone-900">Drop the -D and -M firmware files here</h2>
-        <p className="text-xs text-stone-500 mt-1 max-w-md">
+        <UploadCloud size={28} className="text-muted" aria-hidden="true" />
+        <Card.Title className="text-sm sm:text-base font-semibold">Drop the -D and -M firmware files here</Card.Title>
+        <Card.Description className="text-xs max-w-md">
           Both files are checked for compatibility with each other and their SHA-256 digests are shown.
-        </p>
-        <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => fileInputRef.current?.click()}>
+        </Card.Description>
+        <Button variant="outline" size="sm" onPress={() => fileInputRef.current?.click()}>
           Choose files…
         </Button>
-      </div>
+      </Card>
 
-      {/* Validation & Companion Status Card */}
-      <Card className="flex flex-col gap-4 border-stone-200">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-            <FileCheck2 size={18} className="text-stone-700" />
-            <span>Pair check</span>
-          </h4>
+      <Card className="gap-4">
+        <Card.Title className="text-sm font-bold flex items-center gap-2">
+          <FileCheck2 size={18} aria-hidden="true" />
+          Pair check
+        </Card.Title>
+        <Alert status={firmware.companionValid ? "success" : "default"}>
+          <Alert.Content>
+            <Alert.Description className="text-xs font-mono leading-relaxed" data-testid="companion-status">
+              {firmware.companionMessage}
+            </Alert.Description>
+          </Alert.Content>
+        </Alert>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {fileSlot("DCAS MCU (-D)", firmware.dcasFile, "DUEP800-D.x.x.x.dat")}
+          {fileSlot("Renesas RX MCU (-M)", firmware.rxFile, "DUEP800-M.x.x.x.dat")}
         </div>
-
-        <div
-          className={`p-3.5 rounded-xl border text-xs font-mono leading-relaxed ${
-            firmware.companionValid
-              ? "bg-emerald-50 border-emerald-200 text-emerald-900"
-              : "bg-stone-50 border-stone-200 text-stone-700"
-          }`}
-          data-testid="companion-status"
-        >
-          {firmware.companionMessage}
-        </div>
-
-        {/* Microcontroller Status Pills */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <div className="p-3 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-stone-800">DCAS MCU (-D)</span>
-              <Badge variant={firmware.dcasFile ? "success" : "neutral"}>
-                {firmware.dcasFile ? "Loaded" : "Missing"}
-              </Badge>
-            </div>
-            <div className="text-[11px] text-stone-500 font-mono truncate">
-              {firmware.dcasFile ? firmware.dcasFile.filename : "Waiting for DUEP800-D.x.x.x.dat"}
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col gap-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-stone-800">Renesas RX MCU (-M)</span>
-              <Badge variant={firmware.rxFile ? "success" : "neutral"}>
-                {firmware.rxFile ? "Loaded" : "Missing"}
-              </Badge>
-            </div>
-            <div className="text-[11px] text-stone-500 font-mono truncate">
-              {firmware.rxFile ? firmware.rxFile.filename : "Waiting for DUEP800-M.x.x.x.dat"}
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-3 border-t border-stone-100">
+        <Card.Footer className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 p-0 pt-3 border-t border-separator">
           <Button
             variant="outline"
-            size="md"
-            disabled={!firmware.companionValid || isFlashing}
-            onClick={() => controller.executeFirmwareSync(false).catch(() => {})}
+            isDisabled={!firmware.companionValid || isFlashing}
+            onPress={() => controller.executeFirmwareSync(false).catch(() => {})}
             data-action="fw-dry-run-pair"
             data-testid="btn-fw-dry-run-pair"
-            className="w-full sm:w-auto text-xs"
           >
             Run non-erasing check
           </Button>
-
           <Button
-            variant="primary"
-            size="md"
-            disabled={!firmware.companionValid || !firmware.dryRunPassed || isFlashing}
-            onClick={() => setConfirming("pair")}
+            isDisabled={!firmware.companionValid || !firmware.dryRunPassed || isFlashing}
+            onPress={() => setConfirming("pair")}
             data-action="fw-flash-pair"
             data-testid="btn-fw-flash-pair"
-            className="w-full sm:w-auto text-xs"
           >
             Program both to the bike
           </Button>
-        </div>
+        </Card.Footer>
       </Card>
 
-      {/* Advanced Single-MCU Recovery Override */}
-      <details
-        className="rounded-2xl border border-stone-200 bg-white p-4 text-xs group"
-        data-testid="single-mcu-override"
-      >
-        <summary className="font-semibold text-stone-700 hover:text-stone-900 cursor-pointer select-none">
-          Recovery: program one microcontroller only
-        </summary>
-        <div className="pt-3 text-stone-600 leading-relaxed border-t border-stone-100 mt-2 flex flex-col gap-3">
-          <p>
-            If one microcontroller was interrupted during a previous flash and remains in bootloader recovery mode,
-            you can target that specific MCU independently.
-          </p>
-          <div className="flex items-center gap-3 flex-wrap">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!firmware.dcasFile || isFlashing}
-              onClick={() => setConfirming("dcas")}
-              className="text-xs"
-            >
-              Force Program DCAS Only
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!firmware.rxFile || isFlashing}
-              onClick={() => setConfirming("rx")}
-              className="text-xs"
-            >
-              Force Program RX Only
-            </Button>
-          </div>
-        </div>
-      </details>
-      <Modal
-        open={confirming !== null}
+      <Card className="gap-0 py-2" data-testid="single-mcu-override">
+        <Disclosure>
+          <Disclosure.Heading>
+            <Disclosure.Trigger className="w-full flex items-center justify-between text-xs font-semibold min-h-[40px]">
+              Recovery: program one microcontroller only
+              <Disclosure.Indicator />
+            </Disclosure.Trigger>
+          </Disclosure.Heading>
+          <Disclosure.Content>
+            <Disclosure.Body className="flex flex-col gap-3 text-xs text-muted leading-relaxed pb-2">
+              <p>
+                If one microcontroller was interrupted during a previous flash and remains in bootloader recovery mode, you can
+                target that specific MCU independently.
+              </p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button variant="danger-soft" size="sm" isDisabled={!firmware.dcasFile || isFlashing} onPress={() => setConfirming("dcas")}>
+                  Force program DCAS only
+                </Button>
+                <Button variant="danger-soft" size="sm" isDisabled={!firmware.rxFile || isFlashing} onPress={() => setConfirming("rx")}>
+                  Force program RX only
+                </Button>
+              </div>
+            </Disclosure.Body>
+          </Disclosure.Content>
+        </Disclosure>
+      </Card>
+
+      <ConfirmDialog
+        isOpen={confirming !== null}
         onOpenChange={(open) => !open && setConfirming(null)}
         title={confirming ? PROGRAM_COPY[confirming].title : ""}
-        footer={
-          <>
-            <Button variant="outline" size="md" onClick={() => setConfirming(null)}>
-              Cancel
-            </Button>
-            <Button variant={confirming === "pair" ? "primary" : "danger"} size="md" onClick={program} data-testid="btn-confirm-program">
-              Program
-            </Button>
-          </>
-        }
+        status={confirming === "pair" ? "warning" : "danger"}
+        actions={[
+          {
+            label: "Program",
+            variant: confirming === "pair" ? "primary" : "danger",
+            onPress: program,
+            "data-testid": "btn-confirm-program",
+          },
+        ]}
       >
-        <p className="text-sm text-stone-700 leading-relaxed">{confirming && PROGRAM_COPY[confirming].body}</p>
-      </Modal>
+        <p className="text-sm text-muted leading-relaxed">{confirming && PROGRAM_COPY[confirming].body}</p>
+      </ConfirmDialog>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { AlertTriangle, LogOut, Menu, Save, Search, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, LogOut, Menu, Save, Search, ShieldAlert } from "lucide-react";
+import { Alert, Button, Card, Chip, Drawer, Link, SearchField, Separator, Toast, toast } from "@heroui/react";
 import type { InstrumentState, SettingSectionId } from "./types.ts";
 import type { SessionController } from "./core/sessionController.ts";
 import {
@@ -24,9 +25,7 @@ import { BackupView } from "./components/views/BackupView.tsx";
 import { DiagnosticsView } from "./components/views/DiagnosticsView.tsx";
 import { ChangesRail, ReviewDialog } from "./components/ChangesReview.tsx";
 import { FailureBanner } from "./components/FailureBanner.tsx";
-import { Toast } from "./components/Toast.tsx";
-import { Button } from "./components/ui/Button.tsx";
-import { Modal } from "./components/ui/Dialog.tsx";
+import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
 import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
 
@@ -68,6 +67,19 @@ export function App({ controller }: AppProps) {
   );
 
   useEffect(() => controller.subscribe(setState), [controller]);
+
+  // Completed writes confirm through HeroUI's toast queue.
+  useEffect(() => {
+    const notice = state.toast;
+    if (!notice) return;
+    controller.dismissToast();
+    toast.success(notice.message, {
+      timeout: 8000,
+      ...(notice.action === "backup"
+        ? { actionProps: { children: "View backups", onPress: () => void navigate({ to: pathFor({ goal: "backup" }) }) } }
+        : {}),
+    });
+  }, [state.toast, controller, navigate]);
 
   const connected = !["disconnected", "connecting", "probing", "error"].includes(state.phase);
 
@@ -117,29 +129,30 @@ export function App({ controller }: AppProps) {
   };
 
   const approvalBanner = state.mcpApproval && (
-    <section
+    <Alert
+      status="warning"
       aria-label="Agent approval request"
       data-testid="mcp-approval-banner"
-      className="fixed bottom-4 left-4 right-4 z-[70] mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-100 p-4 text-stone-900 shadow-xl sm:flex-row sm:items-center sm:justify-between"
+      className="fixed bottom-4 left-4 right-4 z-[70] mx-auto max-w-3xl shadow-xl flex-col sm:flex-row sm:items-center"
     >
-      <div className="flex min-w-0 items-start gap-3">
-        <ShieldAlert size={19} className="mt-0.5 shrink-0 text-amber-800" aria-hidden="true" />
-        <div className="min-w-0">
-          <strong className="block text-sm font-semibold">External agent request · {state.mcpApproval.tool}</strong>
-          <p className="mt-1 [overflow-wrap:anywhere] text-xs text-stone-700">
-            {state.mcpApproval.diff.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ")}
-          </p>
-        </div>
-      </div>
+      <Alert.Indicator>
+        <ShieldAlert size={19} aria-hidden="true" />
+      </Alert.Indicator>
+      <Alert.Content className="min-w-0">
+        <Alert.Title>External agent request · {state.mcpApproval.tool}</Alert.Title>
+        <Alert.Description className="[overflow-wrap:anywhere] text-xs">
+          {state.mcpApproval.diff.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ")}
+        </Alert.Description>
+      </Alert.Content>
       <div className="flex shrink-0 gap-2 self-end sm:self-auto">
-        <Button variant="outline" size="sm" onClick={() => controller.respondMcpApproval(false)} data-testid="btn-mcp-reject" className="min-h-[44px] bg-white">
+        <Button variant="tertiary" onPress={() => controller.respondMcpApproval(false)} data-testid="btn-mcp-reject">
           Reject
         </Button>
-        <Button variant="primary" size="sm" onClick={() => controller.respondMcpApproval(true)} data-testid="btn-mcp-approve" className="min-h-[44px]">
+        <Button onPress={() => controller.respondMcpApproval(true)} data-testid="btn-mcp-approve">
           Authorize write
         </Button>
       </div>
-    </section>
+    </Alert>
   );
 
   if (!connected) {
@@ -149,6 +162,7 @@ export function App({ controller }: AppProps) {
         {approvalBanner}
         <OperationModal state={state} />
         {riskWarning}
+        <Toast.Provider />
       </>
     );
   }
@@ -163,20 +177,23 @@ export function App({ controller }: AppProps) {
   );
 
   const deviceCard = (
-    <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200/80 flex flex-col gap-1.5" data-testid="identity-strip">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Connected unit</span>
+    <Card variant="secondary" className="gap-1.5 p-3.5" data-testid="identity-strip">
+      <Card.Header className="flex flex-row items-center justify-between gap-2 p-0">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Connected unit</span>
         <LinkStatus state={state} />
-      </div>
-      <div className="font-bold text-sm text-stone-900 truncate" title={friendlyMotorName(state.identity)}>
+      </Card.Header>
+      <Card.Title className="text-sm font-bold truncate" title={friendlyMotorName(state.identity)}>
         {friendlyMotorName(state.identity)}
-      </div>
-      <p className="pt-1 border-t border-stone-200/60 text-[11px] font-mono text-stone-600 grid grid-cols-2 gap-x-2 gap-y-0.5">
-        <span className="col-span-2">SN: {state.identity?.serial}</span>
-        <span>DCAS: {state.identity?.dcasVersion}</span>
-        <span>RX: {state.identity?.rxVersion}</span>
-      </p>
-    </div>
+      </Card.Title>
+      <Card.Content className="p-0">
+        <Separator />
+        <p className="pt-1 text-[11px] font-mono text-muted grid grid-cols-2 gap-x-2 gap-y-0.5">
+          <span className="col-span-2">SN: {state.identity?.serial}</span>
+          <span>DCAS: {state.identity?.dcasVersion}</span>
+          <span>RX: {state.identity?.rxVersion}</span>
+        </p>
+      </Card.Content>
+    </Card>
   );
 
   const brand = (
@@ -189,29 +206,31 @@ export function App({ controller }: AppProps) {
   );
 
   const sidebarFooter = (
-    <div className="flex flex-col gap-1 border-t border-stone-100 pt-2">
-      <button
-        type="button"
-        onClick={() => {
+    <div className="flex flex-col gap-1">
+      <Separator className="mb-1" />
+      <Button
+        variant="ghost"
+        fullWidth
+        onPress={() => {
           setDrawerOpen(false);
           setWarningOpen(true);
         }}
         data-testid={isDesktop ? "btn-sidebar-warning" : "btn-drawer-warning"}
-        className="w-full flex items-center gap-2.5 px-3.5 rounded-lg text-sm text-stone-600 hover:text-stone-900 hover:bg-stone-100 min-h-[44px]"
+        className="justify-start"
       >
-        <AlertTriangle size={16} className="text-amber-600 shrink-0" aria-hidden="true" />
-        <span>Safety &amp; disclaimer</span>
-      </button>
+        <AlertTriangle size={16} className="text-warning shrink-0" aria-hidden="true" />
+        Safety &amp; disclaimer
+      </Button>
       <Button
         variant="ghost"
-        size="md"
-        onClick={disconnect}
+        fullWidth
+        onPress={disconnect}
         data-testid={isDesktop ? "btn-disconnect" : "btn-disconnect-mobile"}
         data-action="disconnect"
-        className="w-full justify-start gap-2 text-stone-600 hover:text-red-700"
+        className="justify-start"
       >
         <LogOut size={16} aria-hidden="true" />
-        <span>Disconnect</span>
+        Disconnect
       </Button>
     </div>
   );
@@ -221,9 +240,9 @@ export function App({ controller }: AppProps) {
   const title = searchQuery.trim() && searchable ? "Search results" : titleFor(destination);
 
   return (
-    <div className="min-h-dvh bg-[#f4f3ef] text-stone-900 flex">
+    <div className="min-h-dvh bg-background text-foreground flex">
       {isDesktop ? (
-        <aside className="w-72 shrink-0 flex flex-col justify-between gap-4 border-r border-stone-200/90 bg-white p-5 sticky top-0 h-dvh overflow-y-auto">
+        <aside className="w-72 shrink-0 flex flex-col justify-between gap-4 border-r border-separator bg-surface p-5 sticky top-0 h-dvh overflow-y-auto">
           <div className="flex flex-col gap-4">
             <div className="px-2">{brand}</div>
             {deviceCard}
@@ -232,51 +251,35 @@ export function App({ controller }: AppProps) {
           {sidebarFooter}
         </aside>
       ) : (
-        drawerOpen && (
-          <div className="fixed inset-0 z-50">
-            <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-xs" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-label="Navigation"
-              className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-white shadow-2xl p-5 flex flex-col justify-between gap-6 overflow-y-auto animate-in slide-in-from-left duration-200"
-            >
-              <div className="flex flex-col gap-6">
-                <div className="flex items-center justify-between">
-                  {brand}
-                  <button
-                    type="button"
-                    onClick={() => setDrawerOpen(false)}
-                    aria-label="Close navigation menu"
-                    className="rounded-lg text-stone-500 hover:text-stone-800 min-h-[44px] min-w-[44px] flex items-center justify-center"
-                  >
-                    <X size={18} aria-hidden="true" />
-                  </button>
-                </div>
-                <div data-testid="mobile-device-summary">{deviceCard}</div>
-                {navList}
-              </div>
-              {sidebarFooter}
-            </div>
-          </div>
-        )
+        <Drawer>
+          <Drawer.Backdrop isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
+            <Drawer.Content placement="left" className="w-72 max-w-[85vw]">
+              <Drawer.Dialog aria-label="Navigation">
+                <Drawer.Header className="flex flex-row items-center justify-between">
+                  <Drawer.Heading>{brand}</Drawer.Heading>
+                  <Drawer.CloseTrigger aria-label="Close navigation menu" />
+                </Drawer.Header>
+                <Drawer.Body className="flex flex-col gap-6">
+                  <div data-testid="mobile-device-summary">{deviceCard}</div>
+                  {navList}
+                </Drawer.Body>
+                <Drawer.Footer className="flex-col items-stretch">{sidebarFooter}</Drawer.Footer>
+              </Drawer.Dialog>
+            </Drawer.Content>
+          </Drawer.Backdrop>
+        </Drawer>
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200/90">
+        <header className="sticky top-0 z-30 bg-surface/95 backdrop-blur-md border-b border-separator">
           <div className="h-16 px-4 sm:px-8 flex items-center justify-between gap-2 sm:gap-4">
             <div className="flex items-center gap-2 min-w-0">
               {!isDesktop && (
-                <button
-                  type="button"
-                  onClick={() => setDrawerOpen(true)}
-                  aria-label="Open navigation menu"
-                  className="-ml-2 rounded-xl text-stone-700 hover:bg-stone-100 min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
-                >
+                <Button variant="ghost" isIconOnly onPress={() => setDrawerOpen(true)} aria-label="Open navigation menu" className="-ml-2 shrink-0">
                   <Menu size={20} aria-hidden="true" />
-                </button>
+                </Button>
               )}
-              <h1 className="font-bold text-base tracking-tight text-stone-900 truncate">{title}</h1>
+              <h1 className="font-bold text-base tracking-tight truncate">{title}</h1>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -284,29 +287,20 @@ export function App({ controller }: AppProps) {
                 <SearchInput value={searchQuery} onChange={setSearchQuery} />
               )}
               {searchable && !isDesktop && !showSearchInput && (
-                <button
-                  type="button"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="Search settings"
-                  data-testid="btn-open-search"
-                  className="rounded-xl text-stone-700 hover:bg-stone-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
-                >
+                <Button variant="ghost" isIconOnly onPress={() => setSearchOpen(true)} aria-label="Search settings" data-testid="btn-open-search">
                   <Search size={19} aria-hidden="true" />
-                </button>
+                </Button>
               )}
               {stagedCount > 0 && !isDesktop && (
-                <button
-                  type="button"
-                  onClick={() => setReviewOpen(true)}
+                <Button
+                  onPress={() => setReviewOpen(true)}
                   aria-label={`Review ${stagedCount} change${stagedCount === 1 ? "" : "s"} and save to the bike`}
                   data-testid="btn-review-changes"
-                  className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  className="bg-amber-400 text-stone-950 hover:bg-amber-300"
                 >
-                  <Save size={19} strokeWidth={2.4} aria-hidden="true" />
-                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-none text-stone-950">
-                    {stagedCount}
-                  </span>
-                </button>
+                  <Save size={18} strokeWidth={2.4} aria-hidden="true" />
+                  {stagedCount}
+                </Button>
               )}
             </div>
           </div>
@@ -318,16 +312,15 @@ export function App({ controller }: AppProps) {
                 autoFocus
                 className="flex-1"
               />
-              <button
-                type="button"
-                onClick={() => {
+              <Button
+                variant="ghost"
+                onPress={() => {
                   setSearchQuery("");
                   setSearchOpen(false);
                 }}
-                className="text-sm font-medium text-stone-600 min-h-[44px] px-2"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           )}
         </header>
@@ -350,63 +343,47 @@ export function App({ controller }: AppProps) {
 
       <ReviewDialog state={state} controller={controller} open={reviewOpen} onOpenChange={setReviewOpen} />
 
-      <Modal
-        open={disconnectConfirmOpen}
+      <ConfirmDialog
+        isOpen={disconnectConfirmOpen}
         onOpenChange={setDisconnectConfirmOpen}
         title="Save changes before disconnecting?"
-        description={`${stagedCount} staged change${stagedCount === 1 ? " hasn’t" : "s haven’t"} been written to the bike yet.`}
-        footer={
-          <>
-            <Button variant="outline" size="md" onClick={() => setDisconnectConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              size="md"
-              onClick={() => {
-                setDisconnectConfirmOpen(false);
-                controller.disconnect().catch(() => {});
-              }}
-            >
-              Discard & disconnect
-            </Button>
-            <Button variant="primary" size="md" onClick={saveAndDisconnect} data-testid="btn-save-disconnect">
-              Save & disconnect
-            </Button>
-          </>
-        }
+        status="warning"
+        actions={[
+          {
+            label: "Discard & disconnect",
+            variant: "danger",
+            onPress: () => {
+              setDisconnectConfirmOpen(false);
+              controller.disconnect().catch(() => {});
+            },
+          },
+          { label: "Save & disconnect", onPress: saveAndDisconnect, "data-testid": "btn-save-disconnect" },
+        ]}
       >
-        <p className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
-          <AlertTriangle size={18} className="text-amber-700 shrink-0" aria-hidden="true" />
-          Disconnecting without saving discards them. Saving writes them first, with a backup of the current values.
+        <p className="text-sm text-muted">
+          {stagedCount} staged change{stagedCount === 1 ? " hasn’t" : "s haven’t"} been written to the bike yet. Disconnecting
+          without saving discards them. Saving writes them first, with a backup of the current values.
         </p>
-      </Modal>
+      </ConfirmDialog>
 
-      <Toast
-        toast={state.toast}
-        onDismiss={() => controller.dismissToast()}
-        onAction={(action) => {
-          controller.dismissToast();
-          if (action === "backup") go({ goal: "backup" });
-        }}
-      />
       {approvalBanner}
       <OperationModal state={state} />
       {riskWarning}
+      <Toast.Provider />
     </div>
   );
 }
 
 function LinkStatus({ state }: { state: InstrumentState }) {
-  const [label, tone] = state.linkLost
-    ? ["Link closed", "bg-amber-100 text-amber-900"]
+  const [label, color] = state.linkLost
+    ? (["Link closed", "warning"] as const)
     : state.transport === "sim"
-      ? ["Simulator", "bg-violet-100 text-violet-900"]
-      : ["Connected", "bg-emerald-100 text-emerald-800"];
+      ? (["Simulator", "accent"] as const)
+      : (["Connected", "success"] as const);
   return (
-    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${tone}`} data-testid="link-status">
+    <Chip size="sm" variant="soft" color={color} data-testid="link-status">
       {label}
-    </span>
+    </Chip>
   );
 }
 
@@ -422,20 +399,13 @@ function SearchInput({
   className?: string;
 }) {
   return (
-    <div className={`relative flex items-center ${className}`}>
-      <Search size={14} className="absolute left-3 text-stone-400 pointer-events-none" aria-hidden="true" />
-      <input
-        data-testid="search-filter-input"
-        type="search"
-        aria-label="Search settings"
-        placeholder="Search settings"
-        value={value}
-        autoFocus={autoFocus}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full lg:w-56 pl-8 pr-3 py-1.5 bg-stone-100 hover:bg-stone-200/60 focus:bg-white border border-stone-200/90 rounded-full focus:outline-none focus:ring-2 focus:ring-amber-300 min-h-[40px]"
-        style={{ fontSize: "16px" }}
-      />
-    </div>
+    <SearchField aria-label="Search settings" value={value} onChange={onChange} autoFocus={autoFocus} className={`min-w-0 lg:w-56 ${className}`}>
+      <SearchField.Group className="min-w-0">
+        <SearchField.SearchIcon />
+        <SearchField.Input placeholder="Search settings" data-testid="search-filter-input" style={{ fontSize: "16px" }} />
+        <SearchField.ClearButton />
+      </SearchField.Group>
+    </SearchField>
   );
 }
 
@@ -458,22 +428,22 @@ function NavList({
     const Icon = entry.icon;
     return (
       <li key={entry.testId}>
-        <button
-          type="button"
-          onClick={() => onNavigate(entry.destination)}
+        <Link
+          href={`#${pathFor(entry.destination)}`}
+          onPress={() => onNavigate(entry.destination)}
           data-testid={entry.testId}
           aria-current={active ? "page" : undefined}
-          className={`w-full flex items-center gap-2.5 border-l-[3px] rounded-lg text-left text-sm min-h-[44px] lg:min-h-[38px] transition-colors cursor-pointer ${
+          className={`w-full flex items-center gap-2.5 border-l-[3px] rounded-lg text-sm min-h-[44px] lg:min-h-[38px] no-underline transition-colors ${
             nested ? "px-3" : "px-3.5 font-semibold"
           } ${
             active
-              ? "bg-amber-100 border-amber-500 text-stone-950 font-semibold"
-              : "border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100"
+              ? "bg-warning-soft border-warning text-foreground font-semibold"
+              : "border-transparent text-muted hover:text-foreground hover:bg-surface-secondary"
           }`}
         >
           <Icon size={16} aria-hidden="true" />
           <span>{entry.label}</span>
-        </button>
+        </Link>
       </li>
     );
   };
@@ -483,17 +453,19 @@ function NavList({
       <ul className="flex flex-col gap-1">
         {item(OVERVIEW_ITEM)}
         <li>
-          <p className="flex items-center justify-between px-3.5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-500" data-testid="nav-section-parameters">
+          <p className="flex items-center justify-between px-3.5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted" data-testid="nav-section-parameters">
             <span>Tuning</span>
             {stagedCount > 0 && (
-              <span className="normal-case tracking-normal text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-950">
+              <Chip size="sm" color="warning" variant="soft" className="normal-case tracking-normal">
                 {stagedCount} unsaved
-              </span>
+              </Chip>
             )}
           </p>
           <ul className="flex flex-col gap-0.5 pl-1">{tuneItems.map((entry) => item(entry, true))}</ul>
         </li>
-        <li aria-hidden="true" className="my-2 border-t border-stone-200" />
+        <li aria-hidden="true">
+          <Separator className="my-2" />
+        </li>
         {TOOL_ITEMS.map((entry) => item(entry))}
       </ul>
     </nav>

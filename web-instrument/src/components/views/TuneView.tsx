@@ -5,14 +5,12 @@
  * value, any staged value, and an undo control in the same place.
  */
 
-import { useState, type ReactNode } from "react";
-import { Cog, Compass, ShieldCheck, Sliders, Wrench, Minus, Plus } from "lucide-react";
+import { Cog, Compass, ShieldCheck, Sliders, Wrench } from "lucide-react";
+import { Alert, NumberField, Tabs, ToggleButton, ToggleButtonGroup } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import type { TuneCategory } from "../../navigation.ts";
 import { TIRE_PRESETS, clampSettingValue, modernTorqueLevels, settingAcceptsValue } from "../../domain/schema.ts";
-import { Button } from "../ui/Button.tsx";
-import { Tabs } from "../ui/Tabs.tsx";
 import {
   SettingsProvider,
   SettingsSection,
@@ -61,7 +59,7 @@ export function TuneView({ state, controller, category, query }: TuneViewProps) 
           />
         ) : (
           <>
-            {show("geometry") && hasSection(state, "geometry") && <GeometrySection state={state} />}
+            {show("geometry") && hasSection(state, "geometry") && <GeometrySection />}
             {show("profiles") && hasSection(state, "profiles") && <ProfilesSection state={state} />}
             {show("drivetrain") && hasSection(state, "drivetrain") && <DrivetrainSection />}
             {show("maintenance") && hasSection(state, "maintenance") && <MaintenanceSection />}
@@ -95,20 +93,26 @@ function NoSearchResults({ query }: { query: string }) {
   );
 }
 
-function GeometrySection({ state }: { state: InstrumentState }) {
+function GeometrySection() {
   return (
     <SettingsSection
       title="Bike & Geometry"
       description="Region and assist speed, wheel size, lighting, and installation."
-      icon={<Compass size={18} className="text-stone-600" aria-hidden="true" />}
+      icon={<Compass size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-geometry"
     >
       <SettingRow
         name="destination"
         footer={
-          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            Only choose the region that applies where you ride. Changing it can make the bike non-compliant with local e-bike law.
-          </p>
+          <Alert status="warning">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description className="text-xs">
+                Only choose the region that applies where you ride. Changing it can make the bike non-compliant with local
+                e-bike law.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert>
         }
       >
         <SettingSelect name="destination" />
@@ -119,12 +123,12 @@ function GeometrySection({ state }: { state: InstrumentState }) {
         <p className="text-xs text-stone-500" data-testid="speed-destination-hint">
           If the speed needs a different region, that region change is staged too. Both appear in the review before saving.
         </p>
-        <SpeedPresets state={state} />
+        <SpeedPresets />
       </SettingRow>
 
       <SettingRow
         name="tire-circumference"
-        inlineControl={<TireStepper />}
+        inlineControl={<TireField />}
       >
         <TirePresets />
       </SettingRow>
@@ -145,59 +149,42 @@ function GeometrySection({ state }: { state: InstrumentState }) {
   );
 }
 
-function SpeedPresets({ state }: { state: InstrumentState }) {
+function SpeedPresets() {
   const speed = useSetting("speed-limit");
   const spec = speed.spec;
   const presets = spec ? [20, 25, 32, 45].filter((value) => settingAcceptsValue(spec, value)) : [];
   if (presets.length === 0) return null;
   return (
-    <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="Speed presets">
-      <span className="text-xs text-stone-500">Presets:</span>
-      {presets.map((value) => (
-        <PresetChip key={value} selected={speed.numeric === value} onClick={() => speed.stage(value)}>
-          {value} km/h
-        </PresetChip>
-      ))}
-    </div>
+    <PresetGroup
+      label="Speed presets"
+      selected={presets.includes(speed.numeric) ? speed.numeric : null}
+      options={presets.map((value) => ({ value, label: `${value} km/h` }))}
+      onSelect={speed.stage}
+    />
   );
 }
 
-function TireStepper() {
+function TireField() {
   const tire = useSetting("tire-circumference");
   const spec = tire.spec;
   if (!spec) return null;
-  const value = Number.isFinite(tire.numeric) ? tire.numeric : spec.userMin;
-  // Step by about 10 mm, rounded up to the unit's own step.
-  const nudge = Math.ceil(10 / spec.userStep) * spec.userStep;
-  const step = (delta: number) => tire.stage(clampSettingValue(spec, value + delta));
   return (
-    <div className="flex items-center gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => step(-nudge)}
-        disabled={value <= spec.userMin}
-        data-testid="stepper-minus-tire-circumference"
-        aria-label={`Decrease tire circumference by ${nudge} mm`}
-        className="w-11 h-11 p-0 shrink-0 min-w-[44px] min-h-[44px]"
-      >
-        <Minus size={16} aria-hidden="true" />
-      </Button>
-      <output className="min-w-[80px] text-center font-mono font-bold text-stone-900 text-sm tabular-nums" aria-live="polite">
-        {tire.format(tire.value)}
-      </output>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => step(nudge)}
-        disabled={value >= spec.userMax}
-        data-testid="stepper-plus-tire-circumference"
-        aria-label={`Increase tire circumference by ${nudge} mm`}
-        className="w-11 h-11 p-0 shrink-0 min-w-[44px] min-h-[44px]"
-      >
-        <Plus size={16} aria-hidden="true" />
-      </Button>
-    </div>
+    <NumberField
+      aria-label={tire.label}
+      value={Number.isFinite(tire.numeric) ? tire.numeric : spec.userMin}
+      minValue={spec.userMin}
+      maxValue={spec.userMax}
+      step={spec.userStep}
+      formatOptions={{ style: "unit", unit: "millimeter", useGrouping: false }}
+      onChange={(next) => Number.isFinite(next) && tire.stage(clampSettingValue(spec, next))}
+      className="w-48"
+    >
+      <NumberField.Group>
+        <NumberField.DecrementButton data-testid="stepper-minus-tire-circumference" />
+        <NumberField.Input className="text-center font-mono font-bold tabular-nums" />
+        <NumberField.IncrementButton data-testid="stepper-plus-tire-circumference" />
+      </NumberField.Group>
+    </NumberField>
   );
 }
 
@@ -205,51 +192,55 @@ function TirePresets() {
   const tire = useSetting("tire-circumference");
   const spec = tire.spec;
   const presets = spec ? TIRE_PRESETS.filter((preset) => settingAcceptsValue(spec, Number(preset.value))) : [];
-  const selected = presets.find((preset) => Number(preset.value) === tire.numeric);
   if (presets.length === 0) return null;
+  const values = presets.map((preset) => Number(preset.value));
   return (
     <div className="flex flex-col gap-2">
-      {/* A compact picker on phones; chips where there is room. */}
-      <label className="sm:hidden text-xs text-stone-500">
-        Common sizes
-        <select
-          value={selected ? String(selected.value) : ""}
-          onChange={(event) => event.target.value && tire.stage(Number(event.target.value))}
-          className="mt-1 w-full text-sm p-2.5 rounded-xl border border-stone-300 bg-white text-stone-900 min-h-[44px]"
-        >
-          <option value="">Choose a common size…</option>
-          {presets.map((preset) => (
-            <option key={preset.label} value={String(preset.value)}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="hidden sm:flex items-center gap-1.5 flex-wrap" role="group" aria-label="Common tire sizes">
-        <span className="text-xs text-stone-500 mr-1">Common sizes:</span>
-        {presets.map((preset) => (
-          <PresetChip key={preset.label} selected={selected === preset} onClick={() => tire.stage(Number(preset.value))}>
-            {preset.label}
-          </PresetChip>
-        ))}
-      </div>
-      <p className="text-[11px] text-stone-500">Chart sizes are estimates; a measured roll-out is most accurate.</p>
+      <PresetGroup
+        label="Common tire sizes"
+        selected={values.includes(tire.numeric) ? tire.numeric : null}
+        options={presets.map((preset) => ({ value: Number(preset.value), label: preset.label }))}
+        onSelect={tire.stage}
+      />
+      <p className="text-[11px] text-muted">Chart sizes are estimates; a measured roll-out is most accurate.</p>
     </div>
   );
 }
 
-function PresetChip({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: ReactNode }) {
+/** Quick values for a setting; the matching one shows as selected. */
+function PresetGroup({
+  label,
+  selected,
+  options,
+  onSelect,
+}: {
+  label: string;
+  selected: number | null;
+  options: Array<{ value: number; label: string }>;
+  onSelect: (value: number) => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={selected}
-      className={`min-h-[32px] px-2.5 text-xs font-mono rounded-lg border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
-        selected ? "bg-stone-900 text-white border-stone-900" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-100"
-      }`}
-    >
-      {children}
-    </button>
+    <div className="flex flex-col items-start gap-1.5">
+      <span className="text-xs text-muted" aria-hidden="true">{label}</span>
+      <ToggleButtonGroup
+        aria-label={label}
+        selectionMode="single"
+        selectedKeys={selected === null ? [] : [String(selected)]}
+        onSelectionChange={(keys) => {
+          const [key] = [...keys];
+          if (key !== undefined) onSelect(Number(key));
+        }}
+        size="sm"
+        isDetached
+        className="flex-wrap justify-start"
+      >
+        {options.map((option) => (
+          <ToggleButton key={option.value} id={String(option.value)} className="font-mono text-xs">
+            {option.label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+    </div>
   );
 }
 
@@ -260,8 +251,6 @@ const MODES = [
 ] as const;
 
 function ProfilesSection({ state }: { state: InstrumentState }) {
-  const [profile, setProfile] = useState<"1" | "2">("1");
-  const p = `profile${profile}`;
   const bound = (name: string, fallback: number) => {
     const value = Number(state.liveValues[name]?.value);
     return Number.isFinite(value) ? value : fallback;
@@ -272,43 +261,47 @@ function ProfilesSection({ state }: { state: InstrumentState }) {
     <SettingsSection
       title="Assist Profiles"
       description="Peak torque, assist character, and start response for each mode."
-      icon={<Sliders size={18} className="text-stone-600" aria-hidden="true" />}
+      icon={<Sliders size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-profiles"
-      actions={
-        <div className="w-full sm:w-auto">
-          <Tabs
-            value={profile}
-            onValueChange={(next) => setProfile(next as "1" | "2")}
-            items={[
-              { id: "1", label: "Profile 1" },
-              { id: "2", label: "Profile 2" },
-            ]}
-          />
-        </div>
-      }
     >
-      {MODES.map((mode) => (
-        <div key={mode.id} className="flex flex-col divide-y divide-stone-100 [&:not(:has([data-setting-row]))]:hidden">
-          <h3 className="flex items-center gap-2 px-4 pt-4 sm:px-5 text-sm font-bold text-stone-900 border-0">
-            <span className={`w-2.5 h-2.5 rounded-full ${mode.dot}`} aria-hidden="true" />
-            {mode.title} mode
-          </h3>
-          <SettingRow name={`${p}.${mode.id}.torque`} title={`${mode.title} peak torque`} showValue>
-            <SettingSlider name={`${p}.${mode.id}.torque`} values={torqueLevels(mode.id)} data-testid={`slider-${mode.id}-torque`} />
-          </SettingRow>
-          <SettingRow name={`${p}.${mode.id}.character`} title={`${mode.title} assist character`} showValue>
-            <SettingSlider name={`${p}.${mode.id}.character`} />
-          </SettingRow>
-          <SettingRow name={`${p}.${mode.id}.start`} title={`${mode.title} start response`} showValue>
-            <SettingSlider name={`${p}.${mode.id}.start`} />
-          </SettingRow>
-        </div>
-      ))}
-      <SettingRow
-        name={`${p}.display`}
-        title="Mode names on the display"
-        inlineControl={<SettingSegmented name={`${p}.display`} />}
-      />
+      <Tabs defaultSelectedKey="profile1" className="pt-4">
+        <Tabs.ListContainer className="px-4 sm:px-5">
+          <Tabs.List aria-label="Assist profile">
+            {(["profile1", "profile2"] as const).map((profile, index) => (
+              <Tabs.Tab key={profile} id={profile}>
+                Profile {index + 1}
+                <Tabs.Indicator />
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+        </Tabs.ListContainer>
+        {(["profile1", "profile2"] as const).map((p) => (
+          <Tabs.Panel key={p} id={p} className="p-0">
+            {MODES.map((mode) => (
+              <div key={mode.id} className="flex flex-col divide-y divide-separator [&:not(:has([data-setting-row]))]:hidden">
+                <h3 className="flex items-center gap-2 px-4 pt-4 sm:px-5 text-sm font-bold">
+                  <span className={`w-2.5 h-2.5 rounded-full ${mode.dot}`} aria-hidden="true" />
+                  {mode.title} mode
+                </h3>
+                <SettingRow name={`${p}.${mode.id}.torque`} title={`${mode.title} peak torque`} showValue>
+                  {torqueLevels(mode.id) ? (
+                    <SettingSegmented name={`${p}.${mode.id}.torque`} values={torqueLevels(mode.id)} data-testid={`levels-${mode.id}-torque`} />
+                  ) : (
+                    <SettingSlider name={`${p}.${mode.id}.torque`} data-testid={`slider-${mode.id}-torque`} />
+                  )}
+                </SettingRow>
+                <SettingRow name={`${p}.${mode.id}.character`} title={`${mode.title} assist character`} showValue>
+                  <SettingSlider name={`${p}.${mode.id}.character`} />
+                </SettingRow>
+                <SettingRow name={`${p}.${mode.id}.start`} title={`${mode.title} start response`} showValue>
+                  <SettingSlider name={`${p}.${mode.id}.start`} />
+                </SettingRow>
+              </div>
+            ))}
+            <SettingRow name={`${p}.display`} title="Mode names on the display" inlineControl={<SettingSegmented name={`${p}.display`} />} />
+          </Tabs.Panel>
+        ))}
+      </Tabs>
       <SettingRow name="assist-pattern" inlineControl={<SettingSegmented name="assist-pattern" />} />
     </SettingsSection>
   );
@@ -319,7 +312,7 @@ function DrivetrainSection() {
     <SettingsSection
       title="Drivetrain & Di2"
       description="Shifting system, gearing, and Di2 automatic shifting."
-      icon={<Cog size={18} className="text-stone-600" aria-hidden="true" />}
+      icon={<Cog size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-drivetrain"
     >
       <SettingRow name="shifting-system">
@@ -349,7 +342,7 @@ function MaintenanceSection() {
     <SettingsSection
       title="Service & Maintenance"
       description="Service reminders shown on the cycle computer."
-      icon={<Wrench size={18} className="text-stone-600" aria-hidden="true" />}
+      icon={<Wrench size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-maintenance"
     >
       <SettingRow name="maintenance-alert" inlineControl={<SettingSegmented name="maintenance-alert" />} />
@@ -365,7 +358,7 @@ function OemSection() {
     <SettingsSection
       title="OEM Factory Bounds"
       description="Manufacturer limits that every assist profile must stay within."
-      icon={<ShieldCheck size={18} className="text-stone-600" aria-hidden="true" />}
+      icon={<ShieldCheck size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-oem"
       notice={
         <SectionNotice>

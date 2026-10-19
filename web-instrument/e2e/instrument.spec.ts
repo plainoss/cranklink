@@ -60,27 +60,27 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(tireRow).toBeVisible();
     await expect(tireRow).toContainText("Live: 2280 mm");
 
-    // 3. Stage changes inline (step tire circumference +10mm twice -> 2300 mm)
+    // 3. Stage changes inline (step tire circumference +1 mm twice -> 2282 mm)
     await page.getByTestId("stepper-plus-tire-circumference").click();
     await page.getByTestId("stepper-plus-tire-circumference").click();
-    await expect(tireRow).toContainText("Staged: 2300 mm");
+    await expect(tireRow).toContainText("Staged: 2282 mm");
 
     // Transaction rail appears automatically with staged changes
     const txRail = page.getByTestId("transaction-rail");
     await expect(txRail).toBeVisible();
     await expect(txRail).toContainText("1 change to save");
-    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("Tire Circumference: 2280 mm → 2300 mm");
+    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("Tire Circumference: 2280 mm → 2282 mm");
 
     // 4. Every save goes through the review dialog, then the real Rust WASM `settings batch`
     await page.getByTestId("btn-review-save").click();
     const review = page.getByTestId("review-dialog");
-    await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2300 mm");
+    await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
     await review.getByTestId("btn-commit-batch").click();
 
     // Transaction rail clears, live value updates, and a confirmation names the backup
     await expect(txRail).toBeHidden();
-    await expect(tireRow).toContainText("Live: 2300 mm");
-    await expect(page.getByTestId("toast")).toContainText("Saved 1 setting");
+    await expect(tireRow).toContainText("Live: 2282 mm");
+    await expect(page.getByRole("region").getByText("Saved 1 setting")).toBeVisible();
 
     // 5. Verify pre-write backup was automatically persisted in Snapshots & Rollback journal
     await page.getByTestId("nav-section-journal").click();
@@ -92,7 +92,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     // Restore pre-write backup value (2280 mm) after confirming what it restores
     await restoreBtn.click();
     await page.getByTestId("btn-confirm-restore").click();
-    await expect(page.getByTestId("toast")).toContainText("Restored the backup");
+    await expect(page.getByRole("region").getByText("Restored the backup")).toBeVisible();
 
     // Navigate back to parameters and confirm live value returned to 2280 mm
     await page.getByTestId("nav-group-geometry").click();
@@ -115,7 +115,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
 
     // Select DU-EP801 flagship simulator (requires --ble-unit-auth and serial binding)
-    await page.getByTestId("sim-model-select").selectOption("ep801");
+    await page.getByTestId("sim-model-select").getByRole("button").click();
+    await page.getByRole("option", { name: "DU-EP801" }).click();
     await page.getByTestId("btn-connect-sim").click();
 
     await expect(page.getByTestId("identity-strip")).toContainText("EP801");
@@ -135,7 +136,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("btn-review-save").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
-    await expect(page.getByTestId("toast")).toContainText("Saved 3 settings");
+    await expect(page.getByRole("region").getByText("Saved 3 settings")).toBeVisible();
   });
 
   test("synchronized Dual-MCU firmware workflow (DCAS + RX pair by default)", async ({ page }) => {
@@ -154,9 +155,9 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
     await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
 
-    // Verify single-MCU recovery override is collapsed by default inside <details>
+    // Verify single-MCU recovery override is collapsed by default
     const overrideDetails = page.getByTestId("single-mcu-override");
-    await expect(overrideDetails).not.toHaveAttribute("open", "");
+    await expect(overrideDetails.getByRole("button", { name: /program one microcontroller/i })).toHaveAttribute("aria-expanded", "false");
 
     // Verify firmware risk notice is visible and can open the risk warning modal
     await expect(page.getByTestId("fw-risk-notice")).toBeVisible();
