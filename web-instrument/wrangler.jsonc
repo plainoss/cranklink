@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cranklink",
+  "account_id": "60d502e306ecf0bdad0bb3719d83b30c",
+  "compatibility_date": "2026-10-19",
+  // Static assets only: _headers rules apply solely to asset responses, so no Worker script.
+  "assets": {
+    "directory": "./dist"
+  },
+  // Branch previews (wrangler preview) need no overrides: there are no bindings.
+  "previews": {}
+}

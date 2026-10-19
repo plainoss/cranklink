@@ -9,6 +9,7 @@ def check(root: pathlib.Path) -> list[str]:
     errors = []
     required = (
         "index.html",
+        "_headers",
         "worker.js",
         "host.js",
         "coi-serviceworker.js",

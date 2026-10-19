@@ -13,7 +13,8 @@
     "pretest:e2e": "node scripts/ensure-port-free.mjs 8030",
     "test:e2e": "playwright test",
     "test:production": "playwright test --config playwright.production.config.ts",
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
+    "build:cloudflare": "./scripts/build-cloudflare.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
@@ -21,7 +22,8 @@
     "coi-serviceworker": "0.1.7",
     "nano-staged": "^1.0.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "wrangler": "^4.151.1"
   },
   "dependencies": {
     "@heroui/react": "^3.2.6",
