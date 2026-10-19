@@ -22,7 +22,7 @@ if (!canonical.equals(fs.readFileSync(path.join(root, "coi-serviceworker.js"))))
   throw new Error("Service worker must match the pinned coi-serviceworker dependency.");
 }
 for (const name of [
-  "worker.js", "host.js", "coi-serviceworker.js", "favicon.svg",
+  "worker.js", "host.js", "coi-serviceworker.js",
   "licenses/coi-serviceworker-LICENSE.txt",
   "pkg/cranklink.js", "pkg/cranklink_bg.wasm",
   "schemas/ep800-crg.json", "schemas/ep600.json", "schemas/ep801.json", "schemas/ep500.json",
