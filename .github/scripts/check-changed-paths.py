@@ -28,7 +28,7 @@ WEB_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "web-instrument/**",
-    ".github/workflows/deploy-pages.yml",
+    ".github/workflows/web.yml",
     ".github/scripts/check-web-assets.py",
     ".github/scripts/serve-web-build.py",
     ".github/scripts/check-changed-paths.py",

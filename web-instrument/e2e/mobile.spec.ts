@@ -6,7 +6,7 @@ async function openInstrument(page: Page) {
     try {
       return await page.evaluate(() => window.crossOriginIsolated &&
         Boolean((window as any).estepsTerminal?.status().ready));
-    } catch { return false; } // The service worker reloads a first visit.
+    } catch { return false; }
   }, { timeout: 30_000 }).toBe(true);
   const dismissBtn = page.getByTestId("btn-dismiss-warning");
   if (await dismissBtn.isVisible()) {

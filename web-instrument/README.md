@@ -1,8 +1,8 @@
 # Browser instrument
 
-Open [cranklink on GitHub Pages](https://plainoss.github.io/cranklink/). The browser instrument uses the same Rust core as the native CLI, compiled to WASM. It provides component discovery and motor identity, firmware inspection, schema-supported settings reads/writes, serial-bound backups and restore, plus a command terminal for ordered read/set/restore batches. The responsive layout supports phone, tablet, and desktop screens, with navigation and staged-change review adapted to smaller displays.
+Open [cranklink](https://cranklink.plainoss.workers.dev/). The browser instrument uses the same Rust core as the native CLI, compiled to WASM. It provides component discovery and motor identity, firmware inspection, schema-supported settings reads/writes, serial-bound backups and restore, plus a command terminal for ordered read/set/restore batches. The responsive layout supports phone, tablet, and desktop screens, with navigation and staged-change review adapted to smaller displays.
 
-Use a browser with the required WebUSB, Web Serial, or Web Bluetooth API, such as Chrome or Edge where supported. Browser and operating-system support determine which transports work; a phone supporting one API may lack another. The connect screen lists which connections the current browser supports. Development builds (`npm run dev`) add a simulator that emulates a Bluetooth gateway and drive unit, with optional fault injection, for exploring settings without hardware; published builds omit it. A compatible BLE gateway is required for wireless access. The first visit may reload once while a service worker enables the isolation needed by WASM. Allow site storage and service workers.
+Use a browser with the required WebUSB, Web Serial, or Web Bluetooth API, such as Chrome or Edge where supported. Browser and operating-system support determine which transports work; a phone supporting one API may lack another. The connect screen lists which connections the current browser supports. Development builds (`npm run dev`) add a simulator that emulates a Bluetooth gateway and drive unit, with optional fault injection, for exploring settings without hardware; published builds omit it. A compatible BLE gateway is required for wireless access. Allow site storage.
 
 On Android, connect the SM-PCE02 with **USB** (WebUSB). The adapter's `0x0A00` device revision is supported at 2 Mbaud. If its internal supercapacitor needs charging, the connection screen shows progress and waits up to 90 seconds before continuing. Keep the USB cable connected; a timeout reports the power state and asks you to check the USB power source.
 
@@ -38,7 +38,7 @@ npm run build
 npm run preview
 ```
 
-Open the displayed local URL on port 8030. The pinned wasm-bindgen CLI matches the Rust lockfile. Rebuild the WASM package after Rust changes, then rebuild the web instrument. Deploy the complete `dist` output, including its WASM runtime and service worker assets.
+Open the displayed local URL on port 8030. The pinned wasm-bindgen CLI matches the Rust lockfile. Rebuild the WASM package after Rust changes, then rebuild the web instrument. `npm run build:cloudflare` performs the whole sequence, bootstrapping the pinned Rust toolchain and wasm-bindgen when missing.
 
 ## Verify
 
@@ -54,9 +54,22 @@ npm run test:smoke
 # Full parallel E2E: all wire-level GATT simulator, authentication, WebMCP, and mobile views (~7s)
 npm run test:e2e
 
-# Production suite: serves dist at /cranklink/ verifying service-worker COOP/COEP isolation
+# Production suite: serves dist with only its _headers rules, verifying COOP/COEP isolation
 npx playwright install chromium
 npm run test:production
 ```
 
-The production suite serves the exact `dist` output at `/cranklink/` without isolation headers and checks service-worker isolation, WASM startup, and the production UI controls. This validates the published artifact and subpath; it does not test real adapters, motors, or Bluetooth radios.
+The production suite serves the exact `dist` output with only the headers declared in its `_headers` file, as Cloudflare Workers does, and checks cross-origin isolation, WASM startup, and the production UI controls. Set `PLAYWRIGHT_BASE_URL` to run it against a deployed preview. It does not test real adapters, motors, or Bluetooth radios.
+
+## Deploy
+
+[Cloudflare Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) builds and deploys the instrument as a static-assets Worker (`wrangler.jsonc`). Pushes to `main` deploy to production at <https://cranklink.plainoss.workers.dev/>; every other branch gets its own preview on `*-cranklink.plainoss.workers.dev`, linked from the Workers Builds check on its commit. `_headers` supplies the COOP/COEP isolation headers. The Workers Builds project uses:
+
+| Setting | Value |
+|---|---|
+| Root directory | `web-instrument` |
+| Build command | `npm run build:cloudflare` |
+| Deploy / preview command | `npx wrangler deploy` / `npx wrangler preview` |
+| Build variable | `SKIP_DEPENDENCY_INSTALL=1` |
+
+To deploy a preview manually after a local build: `npx wrangler preview --name <name>`.

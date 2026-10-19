@@ -9,10 +9,9 @@ def check(root: pathlib.Path) -> list[str]:
     errors = []
     required = (
         "index.html",
+        "_headers",
         "worker.js",
         "host.js",
-        "coi-serviceworker.js",
-        "licenses/coi-serviceworker-LICENSE.txt",
         "pkg/cranklink.js",
         "pkg/cranklink_bg.wasm",
         "schemas/ep800-crg.json",
@@ -29,13 +28,11 @@ def check(root: pathlib.Path) -> list[str]:
         path = root / name
         if not path.is_file() or not path.stat().st_size:
             errors.append(f"Missing or empty runtime asset: {name}")
-    if not (root / ".nojekyll").is_file():
-        errors.append("Missing .nojekyll")
 
     # This is a publication allowlist, not just a presence check. Generated
     # documentation, maps, metadata and stale binaries must never hitchhike.
-    allowed_files = set(required) | {".nojekyll"}
-    allowed_directories = {"assets", "pkg", "schemas", "licenses"}
+    allowed_files = set(required)
+    allowed_directories = {"assets", "pkg", "schemas"}
     bundled_asset = re.compile(r"assets/index-[A-Za-z0-9_-]+\.(js|css)")
     bundles = {"js": [], "css": []}
     package = root / "pkg"
