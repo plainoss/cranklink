@@ -223,8 +223,8 @@ export function App({ controller }: AppProps) {
   return (
     <div className="min-h-dvh bg-[#f4f3ef] text-stone-900 flex">
       {isDesktop ? (
-        <aside className="w-72 shrink-0 flex flex-col justify-between gap-6 border-r border-stone-200/90 bg-white p-5 sticky top-0 h-dvh overflow-y-auto">
-          <div className="flex flex-col gap-6">
+        <aside className="w-72 shrink-0 flex flex-col justify-between gap-4 border-r border-stone-200/90 bg-white p-5 sticky top-0 h-dvh overflow-y-auto">
+          <div className="flex flex-col gap-4">
             <div className="px-2">{brand}</div>
             {deviceCard}
             {navList}
@@ -463,7 +463,7 @@ function NavList({
           onClick={() => onNavigate(entry.destination)}
           data-testid={entry.testId}
           aria-current={active ? "page" : undefined}
-          className={`w-full flex items-center gap-2.5 border-l-[3px] rounded-lg text-left text-sm min-h-[44px] transition-colors cursor-pointer ${
+          className={`w-full flex items-center gap-2.5 border-l-[3px] rounded-lg text-left text-sm min-h-[44px] lg:min-h-[38px] transition-colors cursor-pointer ${
             nested ? "px-3" : "px-3.5 font-semibold"
           } ${
             active

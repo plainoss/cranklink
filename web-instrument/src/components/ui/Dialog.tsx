@@ -81,9 +81,9 @@ export function Modal({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         data-testid={testId}
-        className={`relative bg-white rounded-2xl shadow-2xl border border-stone-200 z-50 p-6 w-[calc(100%-2rem)] ${maxW} max-h-[90dvh] overflow-y-auto focus:outline-none animate-in zoom-in-95 duration-150`}
+        className={`relative bg-white rounded-2xl shadow-2xl border border-stone-200 z-50 w-[calc(100%-2rem)] ${maxW} max-h-[90dvh] flex flex-col focus:outline-none animate-in zoom-in-95 duration-150`}
       >
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-4">
           <div>
             <h2 id={titleId} className="text-lg font-bold text-stone-900">
               {title}
@@ -104,10 +104,11 @@ export function Modal({
           </button>
         </div>
 
-        <div data-modal-body>{children}</div>
+        {/* Title and actions stay visible; only the body scrolls on short screens. */}
+        <div data-modal-body className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
 
         {footer && (
-          <div className="mt-6 pt-4 border-t border-stone-100 flex flex-wrap items-center justify-end gap-3">{footer}</div>
+          <div className="px-6 py-4 border-t border-stone-100 flex flex-wrap items-center justify-end gap-3">{footer}</div>
         )}
       </div>
     </div>

@@ -77,8 +77,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             <h1 className="text-2xl font-bold tracking-tight">cranklink</h1>
           </div>
           <p className="text-sm text-stone-600 leading-relaxed">
-            Read and adjust settings, back up, and update firmware on Shimano STEPS EP6, EP8, and EP801 drive units from
-            your browser.
+            Read and adjust settings, back up, and update firmware on Shimano STEPS drive units from your browser.
           </p>
         </header>
 
