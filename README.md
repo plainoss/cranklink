@@ -214,7 +214,8 @@ The [web instrument](https://plainoss.github.io/cranklink/) compiles the same co
 - Component discovery, firmware inspection, and settings backup & tuning sliders.
 - Bluetooth reads motor identity and settings in one session and keeps the connection for later reads, writes, and validated firmware-pair commands. Use Disconnect to release it; a rejected PIN is cleared so reconnecting prompts again. Each command with `--trace PATH` creates its own trace file.
 - Speed sliders and presets stage a compatible destination automatically, with both changes shown before saving. Selecting a destination adjusts the staged speed to its supported range.
-- Built-in simulator for testing without connected hardware.
+- Every save goes through a review with per-change undo; failures report which changes reached the bike.
+- Development builds include a simulator for testing without connected hardware.
 
 See the [web instrument documentation](web-instrument/README.md).
 

@@ -48,8 +48,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.locator("main").getByRole("button").first()).toBeVisible();
     await expect(page.getByTestId("empty-state-start-sim")).toBeVisible();
 
-    // 1. Connect to DU-EP800-CRG simulator via "..." menu — executes connect + probe + schema load + settings read
-    await page.getByTestId("btn-more-menu").click();
+    // 1. Connect to the DU-EP800-CRG simulator — executes connect + probe + schema load + settings read
     await page.getByTestId("btn-connect-sim").click();
 
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
@@ -61,24 +60,27 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(tireRow).toBeVisible();
     await expect(tireRow).toContainText("Live: 2280 mm");
 
-    // 3. Stage changes inline (step tire circumference +10mm twice -> 2300 mm)
+    // 3. Stage changes inline (step tire circumference +1 mm twice -> 2282 mm)
     await page.getByTestId("stepper-plus-tire-circumference").click();
     await page.getByTestId("stepper-plus-tire-circumference").click();
-    await expect(tireRow).toContainText("Staged: 2300 mm");
+    await expect(tireRow).toContainText("Staged: 2282 mm");
 
     // Transaction rail appears automatically with staged changes
     const txRail = page.getByTestId("transaction-rail");
     await expect(txRail).toBeVisible();
-    await expect(txRail).toContainText("Changes to save (1)");
-    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2280 mm → 2300 mm");
+    await expect(txRail).toContainText("1 change to save");
+    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("Tire Circumference: 2280 mm → 2282 mm");
 
-    // 4. Commit batch via real Rust WASM `settings batch` into GATT simulator
-    await page.getByTestId("btn-commit-batch").click();
+    // 4. Every save goes through the review dialog, then the real Rust WASM `settings batch`
+    await page.getByTestId("btn-review-save").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
+    await review.getByTestId("btn-commit-batch").click();
 
-    // Transaction rail clears and live value updates to 2300 mm
+    // Transaction rail clears, live value updates, and a confirmation names the backup
     await expect(txRail).toBeHidden();
-    await expect(tireRow).toContainText("Live: 2300 mm");
-    await expect(page.getByTestId("status-message")).toContainText("Committed 1 change");
+    await expect(tireRow).toContainText("Live: 2282 mm");
+    await expect(page.getByRole("region").getByText("Saved 1 setting")).toBeVisible();
 
     // 5. Verify pre-write backup was automatically persisted in Snapshots & Rollback journal
     await page.getByTestId("nav-section-journal").click();
@@ -87,9 +89,10 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     const restoreBtn = page.locator('[data-action="restore-snapshot"]').first();
     await expect(restoreBtn).toBeVisible();
 
-    // Restore pre-write backup value (2280 mm)
+    // Restore pre-write backup value (2280 mm) after confirming what it restores
     await restoreBtn.click();
-    await expect(page.getByTestId("status-message")).toContainText("Restored ");
+    await page.getByTestId("btn-confirm-restore").click();
+    await expect(page.getByRole("region").getByText("Restored the backup")).toBeVisible();
 
     // Navigate back to parameters and confirm live value returned to 2280 mm
     await page.getByTestId("nav-group-geometry").click();
@@ -98,43 +101,46 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
   test("reloads under existing service worker and reconnects cleanly", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
     // Reload under the existing service worker and reconnect to persisted storage
     await page.reload();
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
   });
 
-  test("modern DU-EP600 / DU-EP801 session authentication and preset macros", async ({ page }) => {
+  test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
     await openInstrument(page);
 
     // Select DU-EP801 flagship simulator (requires --ble-unit-auth and serial binding)
-    await page.getByTestId("btn-more-menu").click();
-    await page.getByTestId("sim-model-select").selectOption("ep801");
+    await page.getByTestId("sim-model-select").getByRole("button").click();
+    await page.getByRole("option", { name: "DU-EP801" }).click();
     await page.getByTestId("btn-connect-sim").click();
 
     await expect(page.getByTestId("identity-strip")).toContainText("EP801");
     await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
     await expect(page.getByTestId("identity-strip")).toContainText("DCAS: 4.6.0.1");
 
-    // Apply "Trail Climbing (85 Nm Boost)" preset macro
-    await page.getByTestId("macro-trail-85nm").click();
-    await expect(page.getByTestId("transaction-rail")).toBeVisible();
+    // Stage three profile torques and save them in one authenticated batch
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      // EP801 accepts only its basic-mode torque levels.
+      controller.stageParameter("profile1.boost.torque", 78);
+      controller.stageParameter("profile1.trail.torque", 70);
+      controller.stageParameter("profile1.eco.torque", 42);
+    });
+    await expect(page.getByTestId("transaction-rail")).toContainText("3 changes to save");
 
-    // Commit macro batch to EP801
+    await page.getByTestId("btn-review-save").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
-    await expect(page.getByTestId("status-message")).toContainText("Committed");
+    await expect(page.getByRole("region").getByText("Saved 3 settings")).toBeVisible();
   });
 
   test("synchronized Dual-MCU firmware workflow (DCAS + RX pair by default)", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
@@ -149,9 +155,9 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
     await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
 
-    // Verify single-MCU recovery override is collapsed by default inside <details>
+    // Verify single-MCU recovery override is collapsed by default
     const overrideDetails = page.getByTestId("single-mcu-override");
-    await expect(overrideDetails).not.toHaveAttribute("open", "");
+    await expect(overrideDetails.getByRole("button", { name: /program one microcontroller/i })).toHaveAttribute("aria-expanded", "false");
 
     // Verify firmware risk notice is visible and can open the risk warning modal
     await expect(page.getByTestId("fw-risk-notice")).toBeVisible();
@@ -166,7 +172,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
   test("WebMCP external agent authorization flow", async ({ page }) => {
     await openInstrument(page);
-    await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
@@ -239,8 +244,6 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
       },
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
-    // Re-evaluate supported browser transports after installing the chooser.
-    (window as any).estepsInstrumentController.setSection("parameters");
     return { hasSimulator: Boolean(device) };
   }, rejectAuthentication);
   expect(setup).toEqual({ hasSimulator: true });
@@ -251,14 +254,15 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
 test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
   test.setTimeout(60_000);
   await selectSimulatedBluetoothDevice(page);
-  await expect(page.getByTestId("status-message")).toContainText("74 parameters read");
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().statusMessage))
+    .toContain("74 parameters read");
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   const state = await page.evaluate(() => {
-    const state = (window as any).estepsInstrumentController.getState();
+    const state = (window as any).cranklinkInstrumentController.getState();
     return {
       phase: state.phase,
       transport: state.transport,
-      errorBanner: state.errorBanner,
+      failure: state.failure,
       settings: Object.keys(state.liveValues),
       logs: state.logs as { stream: string; text: string }[],
       chooserCalls: (window as any).testBluetoothChooserCalls(),
@@ -266,7 +270,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   });
   expect(state.phase).toBe("ready");
   expect(state.transport).toBe("ble");
-  expect(state.errorBanner).toBeNull();
+  expect(state.failure).toBeNull();
   expect(state.settings).toHaveLength(74);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
@@ -280,7 +284,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   await expect(page.locator(".console-log-line.stderr")).toHaveCount(0);
   await expect(page.locator(".console-log-line.notice").first()).toBeVisible();
   const saved = await page.evaluate(async () => {
-    const controller = (window as any).estepsInstrumentController;
+    const controller = (window as any).cranklinkInstrumentController;
     const motorStarts = () => (window as any).testBluetoothDevice.writes.filter((w: any) => w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 1).length;
     const initialMotorStarts = motorStarts();
     controller.stageParameter("tire-circumference", 2150);
@@ -305,23 +309,24 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
     return event.defaultPrevented;
   });
   expect(await unloadIsGuarded(), "An idle retained Bluetooth session requires explicit disconnect before leaving").toBe(true);
-  await page.evaluate(() => (window as any).estepsInstrumentController.disconnect());
+  await page.evaluate(() => (window as any).cranklinkInstrumentController.disconnect());
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
   expect(await unloadIsGuarded(), "Confirmed disconnect releases the unload guard").toBe(false);
 });
 
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {
   await selectSimulatedBluetoothDevice(page, true);
-  await expect.poll(() => page.evaluate(() => (window as any).estepsInstrumentController.getState().phase)).toBe("ready");
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
   await page.evaluate(async () => {
-    const controller = (window as any).estepsInstrumentController;
+    const controller = (window as any).cranklinkInstrumentController;
     controller.stageParameter("walk-assist", 0);
     await controller.commitStagedBatch().catch(() => {});
   });
   await expect(page.getByTestId("error-banner")).toBeVisible();
-  await expect(page.getByTestId("status-message")).toContainText("cleanup wasn’t confirmed");
+  await expect(page.getByTestId("error-banner")).toContainText("closed before the bike confirmed");
+  await expect(page.getByTestId("link-status")).toHaveText("Link closed");
   const state = await page.evaluate(() => {
-    const state = (window as any).estepsInstrumentController.getState();
+    const state = (window as any).cranklinkInstrumentController.getState();
     return {
       phase: state.phase,
       settings: Object.keys(state.liveValues),
@@ -338,7 +343,7 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   expect(commands[2]).toContain("settings batch");
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
-  const authLogs = await page.evaluate(() => (window as any).estepsInstrumentController.getState().logs);
+  const authLogs = await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs);
   expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
 });

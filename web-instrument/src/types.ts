@@ -78,9 +78,15 @@ export interface SettingEntry {
 export interface JournalSnapshot {
   filename: string;
   kind: "full-snapshot" | "setting-backup" | "journal" | "firmware";
-  timestamp: string;
+  /** Files written by one save, restore, or capture share a group key. */
+  group: string;
+  /** Parsed creation time, or null when the filename carries no stamp. */
+  createdAt: Date | null;
   serial?: string;
   summary: string;
+  /** Setting name and prior value for single-setting backups. */
+  setting?: string;
+  before?: number | string | null;
   sizeBytes: number;
 }
 
@@ -114,11 +120,6 @@ export interface FirmwarePackageState {
   lastFlashReceipt: any | null;
 }
 
-export type WorkspaceSection =
-  | "parameters"
-  | "firmware"
-  | "journal";
-
 export interface MCPApprovalRequest {
   id: string;
   tool: string;
@@ -135,6 +136,23 @@ export interface LogEntry {
   text: string;
 }
 
+export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect";
+
+/** The latest failure with enough context to say what happened to the bike. */
+export interface OperationFailure {
+  kind: OperationKind;
+  /** Complete error text; the UI summarizes it and Diagnostics keeps it whole. */
+  error: string;
+  /** Settings in write order for a failed save. */
+  settings?: string[];
+}
+
+export interface Toast {
+  id: number;
+  message: string;
+  action?: "backup";
+}
+
 export type SessionPhase =
   | "disconnected"
   | "connecting"
@@ -148,7 +166,10 @@ export type SessionPhase =
 export interface InstrumentState {
   phase: SessionPhase;
   statusMessage: string;
-  errorBanner: string | null;
+  failure: OperationFailure | null;
+  /** The transport link closed after a failure; reconnect before more commands. */
+  linkLost: boolean;
+  toast: Toast | null;
   transport: TransportType | null;
   simulatorOptions: SimulatorOptions;
   identity: DeviceIdentity | null;
@@ -156,13 +177,8 @@ export interface InstrumentState {
   liveValues: Record<string, SettingEntry>;
   unavailableValues: Record<string, string>;
   stagedValues: Record<string, number | string>;
-  activeSection: WorkspaceSection;
-  activeParameterGroup: SettingSectionId | "all";
-  activeProfileTab: 1 | 2;
-  searchFilter: string;
   firmware: FirmwarePackageState;
   snapshots: JournalSnapshot[];
   logs: LogEntry[];
-  consoleExpanded: boolean;
   mcpApproval: MCPApprovalRequest | null;
 }

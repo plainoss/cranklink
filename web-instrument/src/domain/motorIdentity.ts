@@ -27,6 +27,11 @@ export function detectMotorIdentity(parsed: { model_series?: number; model_unit?
   return { modelSlug: model.slug, model: name, isCargo: isCargo || /-(CRG|TRK)$/.test(name) };
 }
 
+/** Models using the modern settings protocol: drive-unit authentication, modern destinations and torque levels. */
+export function isModernModel(slug: string | undefined): boolean {
+  return slug === "ep600" || slug === "ep801" || slug === "ep500";
+}
+
 export function friendlyMotorName(identity: DeviceIdentity | null): string {
   if (!identity) return "Shimano STEPS";
   if (identity.modelSlug === "ep800-crg") {
