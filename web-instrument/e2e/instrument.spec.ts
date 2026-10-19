@@ -26,15 +26,11 @@ async function openInstrument(page: Page) {
     try {
       return await page.evaluate(() => window.crossOriginIsolated &&
         Boolean((window as any).estepsTerminal?.status().ready));
-    } catch { return false; } // A first-visit service worker may reload the page.
+    } catch { return false; }
   }, { timeout: 30_000 }).toBe(true);
   const dismissBtn = page.getByTestId("btn-dismiss-warning");
   if (await dismissBtn.isVisible()) {
     await dismissBtn.click();
-  }
-  if (page.url().includes("/cranklink/")) {
-    await expect.poll(() => page.evaluate(() =>
-      navigator.serviceWorker.controller?.scriptURL || "")).toContain("/cranklink/coi-serviceworker.js");
   }
 }
 
@@ -96,13 +92,13 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2280 mm");
   });
 
-  test("reloads under existing service worker and reconnects cleanly", async ({ page }) => {
+  test("reloads and reconnects cleanly to persisted storage", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
-    // Reload under the existing service worker and reconnect to persisted storage
+    // Reload and reconnect to persisted storage
     await page.reload();
     await openInstrument(page);
     await page.getByTestId("btn-more-menu").click();

@@ -14,7 +14,7 @@ Recover supported motors left unresponsive in bootloader mode, inspect bus compo
 - **Safe by default**: All firmware flashing runs as a dry-run unless `--write` is specified. Settings modifications automatically save timestamped pre-write backups with readback verification.
 - **Bootloader recovery**: Direct offline flashing and bootloader probing for compatible EP800 motors (`23/00`, DCASX board 1).
 - **Diagnostics & tuning**: Discover all E-TUBE bus components, inspect firmware revisions, and adjust assist profiles, torque, wheel geometry, and lighting.
-- **Dual interfaces**: Fast native CLI plus a browser-based [Web Instrument](https://plainoss.github.io/cranklink/) running the same engine via WebUSB / WebBluetooth.
+- **Dual interfaces**: Fast native CLI plus a browser-based [Web Instrument](https://cranklink.plainoss.workers.dev/) running the same engine via WebUSB / WebBluetooth.
 
 ## CLI command overview
 
@@ -207,7 +207,7 @@ SM-PCE02 Adapter:
 
 ## Browser instrument
 
-The [web instrument](https://plainoss.github.io/cranklink/) compiles the same core engine to WebAssembly, providing an interactive UI for phones, tablets, and desktops:
+The [web instrument](https://cranklink.plainoss.workers.dev/) compiles the same core engine to WebAssembly, providing an interactive UI for phones, tablets, and desktops:
 
 - Hardware connection via WebUSB, Web Serial, or Web Bluetooth (Chrome, Edge).
 - On Android, use WebUSB for the SM-PCE02. Direct USB supports its `0x0A00` device revision at 2 Mbaud.
