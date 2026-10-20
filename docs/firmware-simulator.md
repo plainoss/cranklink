@@ -2,7 +2,7 @@
 
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
-This implementation covers the packet engine, native/Bluetooth transports and a limited persistent-write path from the [simulator plan](firmware-simulator-plan.md). Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
+This implementation covers the packet engine, native/Bluetooth transports and a limited persistent-write path. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
 
 ## Verified firmware coverage
 
@@ -122,7 +122,7 @@ This native Unix transport works without the `ble` Cargo feature. It runs the ac
 
 Radio pairing, gateway PIN challenge delivery, notifications, motor logical-address relocation during role handoff and the slave-radio stop acknowledgment are modeled topology boundaries. The actual motor stop handler must confirm disconnection. Passing cleanup does not validate physical role handoff or RF. This socket service remains read-only. Use `--drop-replies`, or `--gatt-fault stale-free|duplicate-free`, to exercise response loss and notification handling. The separate persistent browser peer below enables narrowly scoped writes.
 
-The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. See [feature findings](simulator-feature-findings.md) and the [past PR assessment](simulator-pr-review.md). A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
+The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
 
 ## Persistent writes and retained browser sessions
 
@@ -132,7 +132,7 @@ The unavailable physical EEPROM commit/ready boundary is modeled with an atomic 
 
 The browser regression runner uses unchanged historical Rust/WASM, `worker.js`, `host.js`, `WebBleGatt` and `BrowserFiles` in Chromium. A test peripheral forwards GATT operations to stock gateway/motor execution. The same master-routed commands save lamp `1 → 2`, or protected wheel circumference `2150 → 2151`, before reading again and explicitly disconnecting. It verifies actual changed receipts, durable IndexedDB backups before each SET, commit counts, ownership release, retained routing, cleanup, a new motor instance and a firmware GET after disk reload. Both source versions run with fresh state under always-advertising and connection-mode-ending controls.
 
-The [lamp report](../tools/firmware-sim/browser-pr11-lamp-validation.json) and [protected wheel report](../tools/firmware-sim/browser-pr11-tire-validation.json) reproduce PR #11's repeated-save failure under the explicit connection-mode model: the old version shuts down after save one and cannot reconnect for save two; the fixed version completes both saves on one connection. In the always-advertising control, both versions save successfully, but only the fixed version retains the connection. This is browser-worker/protocol/storage integration, not complete UI clicking or RF validation. See the [detailed PR assessment](simulator-pr-review.md#would-it-have-caught-pr-11s-bluetooth-issue).
+The [lamp report](../tools/firmware-sim/browser-pr11-lamp-validation.json) and [protected wheel report](../tools/firmware-sim/browser-pr11-tire-validation.json) reproduce PR #11's repeated-save failure under the explicit connection-mode model: the old version shuts down after save one and cannot reconnect for save two; the fixed version completes both saves on one connection. In the always-advertising control, both versions save successfully, but only the fixed version retains the connection. This is browser-worker/protocol/storage integration, not complete UI clicking or RF validation.
 
 ### Run the pinned browser comparison
 
@@ -180,7 +180,14 @@ CRANKLINK_SIM_FIXTURES=/tmp/firmware-fixtures.json \
   --output /tmp/native-verification.json
 ```
 
-Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fixtures.json --output /tmp/gatt-verification.json` in the same Python environment for the real Bluetooth client and stock GATT lifecycle matrix. `verify_features.py` adds snapshot, batch and preflight checks; its commands are documented in [feature findings](simulator-feature-findings.md).
+Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fixtures.json --output /tmp/gatt-verification.json` in the same Python environment for the real Bluetooth client and stock GATT lifecycle matrix. `verify_features.py` adds snapshot, batch and preflight checks:
+
+```sh
+python tools/firmware-sim/verify_features.py --binary target/debug/cranklink \
+  --fixtures /absolute/path/fixtures.local.json --output /tmp/cranklink-feature-results.json
+```
+
+Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contain raw CLI output and should stay local.
 
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600 and SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. The [native results](../tools/firmware-sim/native-validation.json) record successful probes, settings reads and the expected E6100 model rejection. Firmware metadata checks and the virtual endpoint never weaken those CLI gates.
 

@@ -49,8 +49,8 @@ export function RiskWarningModal({ open, onOpenChange, onDismiss }: RiskWarningM
                     1). Other models and revisions are completely untested.
                   </li>
                   <li>
-                    <strong>No compatibility verification:</strong> cranklink <strong>does not verify firmware compatibility</strong>{" "}
-                    against your specific drive unit or board revision. Flashing mismatched or corrupt containers (.dat) can
+                    <strong>Limited compatibility checks:</strong> cranklink checks a container's declared model, board, and
+                    integrity, but <strong>cannot prove an image is correct</strong> for your exact drive unit. A wrong image can
                     permanently brick the unit into an unrecoverable state.
                   </li>
                   <li>

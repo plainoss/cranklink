@@ -132,7 +132,7 @@ EXAMPLES:
     name = "cranklink",
     version,
     about = "Shimano STEPS e-bike diagnostic, recovery, and configuration CLI",
-    long_about = "Shimano STEPS e-bike diagnostic, recovery, and configuration CLI with BLE & USB/serial support.\nSafe by default: all firmware flashing requires explicit --write to program; pre-write backups are durable and automatic.",
+    long_about = "Shimano STEPS e-bike diagnostic, recovery, and configuration CLI with BLE & USB/serial support.\nFirmware flashing is a dry run unless --write is given; settings writes are backed up first. Unofficial; can brick hardware.",
     styles = STYLES,
     after_help = EXAMPLES
 )]

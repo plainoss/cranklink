@@ -15,7 +15,7 @@ test("production build omits development simulator controls", async ({ page }) =
   await expect(modal).toBeVisible();
   await expect(modal).toContainText("Unofficial Software & Hardware Risk");
   await expect(modal).toContainText("Tested on EP800-CRG only");
-  await expect(modal).toContainText("No compatibility verification");
+  await expect(modal).toContainText("Limited compatibility checks");
   await page.getByTestId("btn-dismiss-warning").click();
   await expect(modal).toBeHidden();
 

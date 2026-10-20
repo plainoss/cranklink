@@ -1,35 +1,49 @@
 # cranklink
 
-Open-source diagnostic, tuning, and recovery toolkit for compatible Shimano STEPS e-bike drive units, over an SM-PCE02 USB adapter or Bluetooth LE.
+[![CLI](https://github.com/plainoss/cranklink/actions/workflows/build-cli.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/build-cli.yml)
+[![Web](https://github.com/plainoss/cranklink/actions/workflows/web.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/web.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-It started as a successful attempt to recover a bricked EP800-CRG that official software and dealer channels could not repair.
-
-- **Bootloader recovery** for EP800 motors stuck in bootloader mode.
-- **Diagnostics**: discover E-TUBE bus components, read model, serial, and firmware versions.
-- **Tuning**: assist profiles, torque, wheel circumference, lighting, with backups and readback verification.
-- **CLI and browser**: native CLI plus a [web instrument](https://cranklink.plainoss.workers.dev/) running the same engine via WebUSB / Web Bluetooth.
+Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. Available as a web app and a CLI built on the same Rust core.
 
 > [!WARNING]
-> **Unofficial and experimental. You can brick your hardware.**
-> cranklink is not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and void warranties. It is meant for technical users who accept full responsibility for the outcome.
+> Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
 >
-> Firmware flashing has **only been tested on a DU-EP800-CRG** (`23/00`, DCASX board 1). cranklink checks the container's declared model, board, and integrity, but it cannot prove an image is correct for your exact hardware. A wrong image can leave the motor unrecoverable, even with dealer tools.
+> Firmware flashing has only been tested on a DU-EP800-CRG (`23/00`, DCASX board 1). cranklink checks the container's declared series, unit, board, and integrity, but cannot prove an image is correct for a given unit. A wrong image can leave the motor unrecoverable, including by dealer tools.
 
-## Supported hardware
+The project began as the recovery of a bricked EP800-CRG that official tools and dealer service could not restore.
 
-| Drive unit | Diagnostics | Settings read/write | Firmware flashing |
+## Web app
+
+**[cranklink.plainoss.workers.dev](https://cranklink.plainoss.workers.dev/)**
+
+[![Web app, assist profile settings](docs/images/web-instrument.png)](https://cranklink.plainoss.workers.dev/)
+
+The core compiled to WebAssembly; all protocol work runs in the browser. Requires Chrome or Edge on desktop or Android (Safari and iOS lack WebUSB and Web Bluetooth), plus one of:
+
+- **SM-PCE02** over WebUSB or Web Serial. Required for firmware recovery. On Android, use WebUSB.
+- **Bluetooth**, via the bike's E-TUBE gateway (e.g. SC-EM800). Power the bike on shortly before connecting; if it is not listed, power-cycle it or enable the gateway's connection mode. Close other apps connected to the bike.
+
+Firmware images are not bundled.
+
+## Supported motors
+
+| Drive unit | Settings | Firmware recovery | Hardware-tested |
 | --- | --- | --- | --- |
-| EP800 / EP800-CRG | ✓ | ✓ | ✓ (tested on EP800-CRG only) |
-| EP801 / EP600 | ✓ | ✓ (dedicated schemas) | — |
-| EP500 | ✓ | — | — |
+| EP800, EP800-CRG | Profiles, speed, wheel, lamp | Yes | Yes |
+| EP600, EP801, EP500 (incl. CRG) | Profiles, speed, wheel, lamp | Opt-in¹ | No |
+| E5100 | Common settings, speed | Opt-in¹ | No |
+| E8000, E7000, E6100, E6000 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
 
-Available fields depend on firmware and device permissions; see [settings compatibility](docs/settings-protocol.md#compatibility-and-validation).
+All families support component discovery and identification. Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
-## Install
+¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 
-Prebuilt binaries for Linux, macOS (Intel and Apple Silicon), and Windows are attached to tagged [GitHub releases](https://github.com/plainoss/cranklink/releases).
+## Command line
 
-To build from source (Rust 1.90+):
+### Install
+
+Tagged [releases](https://github.com/plainoss/cranklink/releases) attach prebuilt binaries for Linux, macOS, and Windows. To build from source (Rust 1.90+):
 
 ```sh
 git clone https://github.com/plainoss/cranklink.git
@@ -45,9 +59,7 @@ Omit `--features ble` for a USB-only build. Linux BLE needs a C compiler and Blu
 - **macOS**: `--port usb` for direct SM-PCE02 access.
 - **Linux**: grant access to USB device `1e44:7151` or the serial port (`/dev/ttyUSB0`).
 - **Windows**: prefer the FTDI COM port (`--port COM3`); direct USB requires WinUSB.
-- Close other adapter applications first. If the adapter's supercapacitor needs charging, cranklink waits up to 90 s ([details](docs/usb.md)).
-
-## Quickstart
+- Close other adapter applications first. If the adapter's supercapacitor needs charging, cranklink waits up to 90 s; keep USB connected.
 
 ### Connect and identify
 
@@ -65,7 +77,7 @@ Drive Unit Probe:
   Renesas (M): v4.1.11.0
 ```
 
-Commands that touch settings or firmware take `-s <SERIAL>` (the 12-digit hex serial from `probe`) so they only ever act on the motor you meant.
+Commands that touch settings or firmware take `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial.
 
 ### Read and change settings
 
@@ -83,11 +95,11 @@ cranklink --port usb -s <SERIAL> settings set profile1.boost.torque 85 --backup 
 cranklink --port usb -s <SERIAL> settings restore before.json
 ```
 
-OEM-protected settings authenticate with the drive unit automatically; over Bluetooth, settings that need it are routed through the gateway automatically. See [settings and batch plans](docs/settings-protocol.md), [Bluetooth](docs/bluetooth.md), and [component selection](docs/unit-identification.md).
+See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
 
 ### Recover a motor stuck in bootloader mode
 
-Requirements: EP800 family (`23/00`, DCASX board 1), an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
+Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only EP800 (`23/00`, DCASX board 1) is tested; other families need `--allow-unverified-model`. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
 
 ```sh
 # 1. Inspect the containers offline
@@ -107,40 +119,14 @@ cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion.
 
-## Web instrument
+`cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts.
 
-[cranklink.plainoss.workers.dev](https://cranklink.plainoss.workers.dev/) runs the same core compiled to WebAssembly in Chrome or Edge on desktop and Android. It connects over WebUSB, Web Serial, or Web Bluetooth, and covers discovery, firmware inspection, backups, and settings. Every save goes through a review with per-change undo. See the [web instrument docs](web-instrument/README.md).
+## Documentation
 
-## Command reference
-
-```text
-cranklink [OPTIONS] <COMMAND>
-├── scan        Discover USB adapters and BLE gateways (--ble)
-├── units       Inventory E-TUBE bus components
-├── probe       Drive unit model, serial, firmware versions
-├── settings
-│   ├── schema  Available settings, units, ranges, permissions
-│   ├── read    Read one setting or snapshot all to JSON
-│   ├── set     Change a setting (backup + readback verification)
-│   ├── restore Revert from a serial-bound backup
-│   └── batch   Apply an ordered JSON plan in one session
-├── firmware
-│   ├── inspect Decode and validate .dat containers offline
-│   ├── probe   Bootloader state (DCAS or RX)
-│   └── flash   Program firmware (dry run unless --write)
-│       ├── dcas      D / DCASX MCU over wired adapter
-│       ├── rx        M / Renesas RX MCU over wired adapter
-│       └── ble-pair  Both MCUs via BLE relay
-├── adapter     SM-PCE02 status and power cycling
-├── ble         Bluetooth gateway discovery and link testing
-└── session     Persistent JSON-RPC driver for scripts and agents
-```
-
-Add `--json` to any command for machine-readable output; `cranklink session --json` keeps one connection open for automation.
-
-## Offline simulator
-
-A headless simulator runs stock display, gateway, and motor firmware on a virtual bus, so the CLI (`--port sim:/path/to/socket`) and Bluetooth client (`ble-sim:/path/to/socket`) can be tested without hardware. Firmware images are fetched from official distribution endpoints and cached locally, never committed. See the [simulator guide](docs/firmware-simulator.md).
+- [Settings](docs/settings.md): protected writes, backups, batch plans.
+- [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
+- [Firmware simulator](docs/firmware-simulator.md): offline testing against stock firmware.
+- [Web app development](web-instrument/README.md): build, test, deploy.
 
 ## License
 
