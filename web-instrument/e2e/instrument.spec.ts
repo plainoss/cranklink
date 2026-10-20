@@ -204,10 +204,12 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
-async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false) {
-  await page.addInitScript(() => {
-    sessionStorage.setItem("esteps_ble_passkey", "000000");
-  });
+async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true) {
+  if (cachePasskey) {
+    await page.addInitScript(() => {
+      sessionStorage.setItem("esteps_ble_passkey", "000000");
+    });
+  }
   await openInstrument(page);
   const setup = await page.evaluate(async (reject) => {
     const simulatorModule = "/simulator.js";
@@ -246,6 +248,23 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
   await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
   await page.getByTestId("btn-connect-ble").click();
 }
+
+test("Bluetooth passkey prompt takes keyboard input while connecting", async ({ page }) => {
+  test.setTimeout(60_000);
+  await selectSimulatedBluetoothDevice(page, false, false);
+  const passkeyDialog = page.getByRole("dialog", { name: "Bluetooth passkey", exact: true });
+  await expect(passkeyDialog).toBeVisible();
+  // The busy overlay traps focus, so it must yield while the operator types.
+  await expect(page.getByTestId("operation-modal")).toHaveCount(0);
+  const field = passkeyDialog.getByLabel("Passkey", { exact: true });
+  await expect(field).toBeFocused();
+  await page.keyboard.type("00a0000");
+  await expect(field).toHaveValue("000000");
+  await page.keyboard.press("Enter");
+  await expect(passkeyDialog).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().statusMessage))
+    .toContain("74 parameters read");
+});
 
 test("Bluetooth connect reads every setting and keeps routine notices out of errors", async ({ page }) => {
   test.setTimeout(60_000);

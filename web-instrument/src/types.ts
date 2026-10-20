@@ -181,4 +181,6 @@ export interface InstrumentState {
   snapshots: JournalSnapshot[];
   logs: LogEntry[];
   mcpApproval: MCPApprovalRequest | null;
+  /** The Bluetooth gateway is waiting for the operator to enter its passkey. */
+  passkeyPromptOpen: boolean;
 }

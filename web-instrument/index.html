@@ -23,31 +23,6 @@
       <input id="file-picker" type="file" multiple />
     </div>
 
-    <!-- Native Bluetooth 6-digit Passkey Dialog -->
-    <dialog id="ble-passkey-dialog" aria-labelledby="ble-passkey-title" aria-describedby="ble-passkey-help">
-      <form method="dialog">
-        <h2 id="ble-passkey-title">Bluetooth passkey</h2>
-        <p id="ble-passkey-help">
-          Enter the 6-digit passkey for the Shimano E-TUBE Bluetooth gateway.
-        </p>
-        <label for="ble-passkey">Passkey</label>
-        <input
-          id="ble-passkey"
-          type="password"
-          inputmode="numeric"
-          pattern="[0-9]{6}"
-          minlength="6"
-          maxlength="6"
-          autocomplete="off"
-          required
-        />
-        <div class="ble-passkey-actions">
-          <button id="ble-passkey-cancel" type="button">Cancel</button>
-          <button type="submit" value="authenticate">Authenticate</button>
-        </div>
-      </form>
-    </dialog>
-
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

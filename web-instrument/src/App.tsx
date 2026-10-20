@@ -27,6 +27,7 @@ import { ChangesRail, ReviewDialog } from "./components/ChangesReview.tsx";
 import { FailureBanner } from "./components/FailureBanner.tsx";
 import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
+import { PasskeyDialog } from "./components/ui/PasskeyDialog.tsx";
 import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
 
 const DISCLAIMER_KEY = "cranklink_disclaimer_dismissed";
@@ -161,6 +162,7 @@ export function App({ controller }: AppProps) {
         <ConnectView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} />
         {approvalBanner}
         <OperationModal state={state} />
+        <PasskeyDialog state={state} controller={controller} />
         {riskWarning}
         <Toast.Provider />
       </>
@@ -368,6 +370,7 @@ export function App({ controller }: AppProps) {
 
       {approvalBanner}
       <OperationModal state={state} />
+      <PasskeyDialog state={state} controller={controller} />
       {riskWarning}
       <Toast.Provider />
     </div>

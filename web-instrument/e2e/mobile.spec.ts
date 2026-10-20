@@ -59,7 +59,9 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await checkResponsiveBounds(page, "disconnected");
   // Exercise the small-screen passkey layout without requesting any radio access.
   await page.setViewportSize({ width: 320, height: 851 });
-  await page.locator("#ble-passkey-dialog").evaluate((element: HTMLDialogElement) => element.showModal());
+  await page.evaluate(() => {
+    (window as any).testPasskeyAnswer = (window as any).cranklinkInstrumentController.requestPasskey(new AbortController().signal);
+  });
   const passkeyDialog = page.getByRole("dialog", { name: "Bluetooth passkey", exact: true });
   const dialogBounds = await passkeyDialog.boundingBox();
   expect(dialogBounds).not.toBeNull();
@@ -68,8 +70,10 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(852);
   await expect(passkeyDialog.getByLabel("Passkey", { exact: true })).toBeFocused();
-  await checkTouchTarget(page.locator("#ble-passkey-cancel"));
-  await passkeyDialog.evaluate((element: HTMLDialogElement) => element.close());
+  await checkTouchTarget(page.getByTestId("btn-passkey-cancel"));
+  await page.getByTestId("btn-passkey-cancel").tap();
+  await expect(passkeyDialog).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).testPasskeyAnswer)).toBeNull();
   await page.setViewportSize({ width: 393, height: 851 });
 
   await checkTouchTarget(page.getByTestId("btn-more-menu"));
