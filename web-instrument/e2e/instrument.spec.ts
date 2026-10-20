@@ -161,7 +161,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     const modal = page.getByTestId("risk-warning-modal");
     await expect(modal).toBeVisible();
     await expect(modal).toContainText("Tested on EP800-CRG only");
-    await expect(modal).toContainText("No compatibility verification");
+    await expect(modal).toContainText("Limited compatibility checks");
     await page.getByTestId("btn-dismiss-warning").click();
     await expect(modal).toBeHidden();
   });

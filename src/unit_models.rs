@@ -1,6 +1,6 @@
 //! Component names derived from E-TUBE stock identity and optional discriminators.
 //!
-//! Component selection and read commands: `docs/unit-identification.md`.
+//! Component selection and read commands: `docs/settings.md`.
 //! Naming a component does not imply any settings/authentication support.
 
 #[derive(Debug, Clone, Copy)]
