@@ -47,6 +47,8 @@ export interface TerminalHost {
     usbSelected: boolean;
     transport: string | null;
   };
+  /** Registers how the host asks the operator for the Bluetooth passkey. */
+  setPasskeyPrompt: (prompt: (signal: AbortSignal) => Promise<string | null>) => void;
   simulator?: any;
   configureSimulator?: (opts: any) => void;
 }
@@ -59,6 +61,7 @@ export class SessionController {
   private toastCounter = 0;
   private activeCapture: { stdout: string; stderr: string; echo: string } | null = null;
   private execQueue: Promise<any> = Promise.resolve();
+  private pendingPasskey: ((value: string | null) => void) | null = null;
   private syncInProgress: Promise<DeviceIdentity> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
 
@@ -92,6 +95,7 @@ export class SessionController {
       snapshots: [],
       logs: [],
       mcpApproval: null,
+      passkeyPromptOpen: false,
     };
   }
 
@@ -155,6 +159,7 @@ export class SessionController {
 
   public attachTerminal(term: TerminalHost): void {
     this.terminal = term;
+    term.setPasskeyPrompt((signal) => this.requestPasskey(signal));
     if (typeof window !== "undefined") {
       const prevPrint = (window as any).estepsTerminalPrint;
       (window as any).estepsTerminalPrint = (text: string, stream: "stdout" | "stderr" | "notice" = "stdout") => {
@@ -168,6 +173,29 @@ export class SessionController {
       };
     }
     this.refreshSnapshots();
+  }
+
+  /** Ask the operator for the Bluetooth passkey; resolves null when cancelled or aborted. */
+  public requestPasskey(signal: AbortSignal): Promise<string | null> {
+    if (this.pendingPasskey) return Promise.reject(new Error("A passkey prompt is already open"));
+    return new Promise((resolve) => {
+      const settle = (value: string | null) => {
+        signal.removeEventListener("abort", onAbort);
+        this.pendingPasskey = null;
+        this.update({ passkeyPromptOpen: false });
+        resolve(value);
+      };
+      const onAbort = () => settle(null);
+      if (signal.aborted) return resolve(null);
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.pendingPasskey = settle;
+      this.update({ passkeyPromptOpen: true });
+    });
+  }
+
+  /** Answer the open passkey prompt; null cancels it. */
+  public answerPasskey(value: string | null): void {
+    this.pendingPasskey?.(value);
   }
 
   public appendLog(stream: "stdout" | "stderr" | "notice" | "cmd", text: string): void {

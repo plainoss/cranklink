@@ -136,6 +136,7 @@ describe("SessionController Finite State Machine & Staging", () => {
     const virtualFiles = new Map<string, Uint8Array>();
 
     controller.attachTerminal({
+      setPasskeyPrompt: () => {},
       status: () => ({ ready: true, busy: false, usbSelected: true, transport: "sim" }),
       files: {
         list: () => Array.from(virtualFiles.keys()).map((p) => ({ path: p })),
@@ -237,6 +238,7 @@ describe("SessionController Finite State Machine & Staging", () => {
 describe("BLE initial settings connection", () => {
   function terminalFor(snapshot: any, commands: string[]) {
     return {
+      setPasskeyPrompt: () => {},
       status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
       files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
       run: async (line: string) => {
@@ -431,6 +433,7 @@ describe("Speed and destination staging", () => {
     let fail = false;
     const files = new Map<string, Uint8Array>();
     controller.attachTerminal({
+      setPasskeyPrompt: () => {},
       status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
       files: {
         list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {},
@@ -604,6 +607,7 @@ describe("Disconnect cleanup reporting", () => {
     const controller = new SessionController();
     controller.attachTerminal({
       run,
+      setPasskeyPrompt: () => {},
       status: () => ({ ready: true, busy: false, usbSelected: false, transport: "ble" }),
       files: { list: () => [], bytes: () => new Uint8Array(), initialize: async () => {}, import: async () => {} },
     });

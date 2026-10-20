@@ -37,13 +37,15 @@ function guidance(phase: SessionPhase, transport: TransportType | null): { text:
 
 export function OperationModal({ state }: { state: InstrumentState }) {
   const busy = ["connecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
+  // Steps aside for the passkey prompt so focus and the on-screen keyboard go to its field.
+  const open = busy && !state.passkeyPromptOpen;
   const title = state.phase === "connecting" ? connectingTitle(state.transport) : TITLES[state.phase] ?? "Working…";
   const notice = guidance(state.phase, state.transport);
 
   // Operations cannot be cancelled from here, so the dialog ignores outside clicks and Escape.
   return (
     <Modal>
-      <Modal.Backdrop isOpen={busy} isDismissable={false} isKeyboardDismissDisabled>
+      <Modal.Backdrop isOpen={open} isDismissable={false} isKeyboardDismissDisabled>
         <Modal.Container size="sm" placement="center">
           <Modal.Dialog role="alertdialog" data-testid="operation-modal" className="items-center text-center">
             <Modal.Header className="items-center">
