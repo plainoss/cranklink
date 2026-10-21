@@ -1,4 +1,16 @@
 //! E-TUBE BLE sessions. Motor firmware uses a separate guarded relay; radio DFU is absent.
+//!
+//! Short PCE commands use `[0, control, params..]` on `PCE_COMMAND`; notifications
+//! begin with the reply control. FREE requests use `[target, group, opcode,
+//! params..]`, and FREE notifications retain the responding component slot.
+//! Neither channel uses USB delimiters, FCS or padding. Unlike a USB control-0x48
+//! reply, the FREE route byte is the component rather than the PC recipient.
+//!
+//! Gateway PIN authentication, gateway role/discovery and motor PC-link or
+//! protected-setting authorization are separate state transitions. Inventory
+//! resolves multiple component types, but `start_component` requires a motor.
+//! Master discovery can itself start remote PC links through the gateway;
+//! startup consumes those receipts instead of replaying the motor keys.
 use crate::{
     device::{Identity, UnitCommands},
     platform::{sleep, Instant},
@@ -31,8 +43,12 @@ pub(crate) mod unit_auth;
 #[cfg(test)]
 mod unit_auth_session_tests;
 
+/// Configuration service. Characteristic short IDs below use the same UUID
+/// suffix through `uuid`; they are separate channels, not USB control bytes.
 pub const SERVICE: &str = "000018ff-5348-494d-414e-4f5f424c4500";
+/// Proof writes and authentication events; subscribe before sending proofs.
 pub const AUTH_CONTROL: u16 = 0x2af3;
+/// Read the gateway nonce; independent of the motor authorization challenge.
 pub const AUTH_NONCE: u16 = 0x2af4;
 pub const PCE_RESPONSE: u16 = 0x2af9;
 pub const PCE_COMMAND: u16 = 0x2afa;
@@ -136,9 +152,9 @@ pub fn open(port: &str, trace: Option<&Path>, passkey: Option<String>) -> Result
     }
 }
 
-// Normalize AES keys to 16 bytes, apply ECB/PKCS padding, and truncate
-// the encrypted result to the challenge length.
-// For a challenge <=16 bytes only the first ECB block is retained.
+// Gateway proof: for nonce length n=1..16, fill its first AES-128 ECB block
+// with PKCS#7 byte 16-n and retain only n encrypted bytes. For n=16 there is
+// no retained extra padding block. This is not the motor challenge scheme.
 fn encrypt_challenge(key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
     ensure!(
         !nonce.is_empty() && nonce.len() <= 16,
@@ -153,6 +169,8 @@ fn encrypt_challenge(key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
     normalized.fill(0);
     Ok(block[..nonce.len()].to_vec())
 }
+// Preserve all six ASCII digits, including leading zeroes. User proof uses
+// the ten-byte prefix plus those six bytes; app proof uses a separate key.
 fn auth_packets(passkey: &str, nonce: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     ensure!(
         passkey.len() == 6 && passkey.bytes().all(|b| b.is_ascii_digit()),
@@ -389,6 +407,12 @@ impl BleSession {
         }
         result
     }
+    /// Both auth characteristics must exist, or both must be absent. When
+    /// present, read nonce (one 100 ms retry if empty), subscribe to auth events,
+    /// then write 01|user-proof and 02|app-proof with response. Next perform
+    /// Feature FF/00 access check, subscribe to PCE/FREE replies, and select
+    /// normal/slave mode. Only PCE 04 readback with high bits 80 confirms this
+    /// setup; OS pairing or successful proof writes alone cannot establish it.
     fn authenticate_gateway(&mut self) -> Result<()> {
         ensure!(!self.authenticated, "BLE session already authenticated");
         for id in [PCE_COMMAND, FREE_COMMAND, FEATURE] {
@@ -488,6 +512,9 @@ impl BleSession {
             self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply))?;
         Ok(n.value[1..].to_vec())
     }
+    /// Slave discovery enters gateway PC-link (0C/01), reads master information
+    /// (0D/00), then uses routed 01/14 rather than the USB master's PCE 1B.
+    /// The bitmap can omit the master; verify its identity separately at slot 0.
     pub fn discover_units(&mut self) -> Result<Vec<u8>> {
         ensure!(
             !self.firmware_active,
@@ -513,6 +540,8 @@ impl BleSession {
         // omit this master even when it is the motor we need to read.
         let master = self.gateway(0x0d, &[0], 0x2d)?;
         ensure!(master.len() >= 3, "truncated BLE master identity");
+        // This handler's battery-present status is not evidence of a complete
+        // traction BMS handshake or assist readiness.
         ensure!(master[0] == 1, "BLE master reports no connected battery");
         if master[1] != 0xff {
             // GET_UNIT_INFO byte 2 is a compatibility flag, NOT the unit number.
@@ -537,6 +566,11 @@ impl BleSession {
         }
         Ok(slots)
     }
+    /// Establish the gateway's identity, select master 20 -> A0 (PC source 0),
+    /// then PnP 1D/00, wait 5 s, read 1B and start gateway PC-link 0C/01.
+    /// That last step sends the remote motor start and keys on our behalf;
+    /// `start_component` must consume its receipt and verify owner zero.
+    /// Role changes invalidate cached addresses and target selection.
     fn discover_master_units(&mut self) -> Result<Vec<u8>> {
         if self.master_routing_active {
             let mode = self.gateway(4, &[], 0x24)?;
@@ -754,6 +788,9 @@ impl BleSession {
             rx_version,
         })
     }
+    /// Release motor ownership, restore/confirm slave mode, then stop the
+    /// gateway PC-link before closing GATT. A timeout fences further traffic;
+    /// after that, disconnect cannot stand in for an acknowledged motor stop.
     pub fn stop(&mut self) -> Result<()> {
         ensure!(
             !self.firmware_active,
@@ -843,6 +880,7 @@ impl BleSession {
         self.linked_slot = None;
         Ok(())
     }
+    /// Close GATT only; use `stop` first to confirm protocol-level cleanup.
     pub fn close(&mut self) -> Result<()> {
         self.io.close()
     }

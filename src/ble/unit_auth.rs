@@ -2,6 +2,13 @@
 //! Legacy keys use the six DCAS serial bytes in wire order; modern keys also
 //! use the final six ASCII product-serial characters. Gateway passkey
 //! authentication is separate. Never log these keys or proofs.
+//!
+//! Legacy exchanges are 16/D8 -> DA challenge, E0 proof -> E2 receipt;
+//! modern exchanges are 33/68 -> 6A encrypted challenge, 70 proof -> 72 receipt.
+//! The session splits each 16-byte block into ordered selector/data records:
+//! 16 carries 6 bytes, 26 carries 6, and 34 carries 4 plus two FF filler bytes.
+//! Those selectors are hexadecimal; they are not byte counts or GATT fragment
+//! counters. Sessions reject reordered fragments and make one attempt only.
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
 use anyhow::{ensure, Result};
 use zeroize::{Zeroize, Zeroizing};

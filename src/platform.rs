@@ -1,4 +1,9 @@
 //! Operating-system boundaries shared by the CLI and the WebAssembly worker.
+//!
+//! The SM-PCE02 serial route uses 2,000,000 baud, 8N1, no flow control, and
+//! asserted RTS. RTS does not imply CTS handshaking, and this host-side rate
+//! does not specify the external E-TUBE wire rate. Other PC interfaces need
+//! their own transport contract.
 use anyhow::Result;
 use std::io::{self, Read, Write};
 use std::time::Duration;
@@ -17,6 +22,8 @@ mod simulator_port;
 /// The synchronous protocol engine owns one transport. Browser calls block only
 /// inside its dedicated worker; the main browser thread services USB requests.
 pub trait Port: Read + Write {
+    /// Bound individual I/O calls. The session applies a separate elapsed-time
+    /// deadline while assembling and matching protocol replies across reads.
     fn set_timeout(&mut self, timeout: Duration) -> io::Result<()>;
 }
 

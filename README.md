@@ -39,7 +39,7 @@ All families support component discovery and identification. Field availability 
 
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 
-For byte layouts, routing, session lifecycles, settings commands and verified coverage boundaries, see the [E-TUBE protocol reference](docs/etube-protocol.md).
+For how Cranklink discovers Di2 and e-bike components, interprets traffic and chooses component-specific operations, see [Understanding E-TUBE with Cranklink](docs/etube-protocol.md), including its [wire reference](docs/etube-protocol.md#wire-reference).
 
 ## Command line
 
