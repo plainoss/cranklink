@@ -9,7 +9,8 @@
 import type {
   InstrumentState,
   TransportType,
-  MotorModel,
+  SettingsModel,
+  ComponentUnit,
   SimulatorOptions,
   DeviceIdentity,
   SettingEntry,
@@ -18,10 +19,10 @@ import type {
   OperationFailure,
   OperationKind,
 } from "../types.ts";
-import { enrichSchema, destinationForSpeed, destinationSpeedRange } from "../domain/schema.ts";
+import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
 import { formatValue, formatSetting, settingLabel } from "../domain/settingFormat.ts";
 import { isLinkLost } from "../domain/errors.ts";
-import { detectMotorIdentity, isModernModel } from "../domain/motorIdentity.ts";
+import { detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
@@ -62,7 +63,7 @@ export class SessionController {
   private activeCapture: { stdout: string; stderr: string; echo: string } | null = null;
   private execQueue: Promise<any> = Promise.resolve();
   private pendingPasskey: ((value: string | null) => void) | null = null;
-  private syncInProgress: Promise<DeviceIdentity> | null = null;
+  private syncInProgress: Promise<DeviceIdentity | null> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
 
   constructor() {
@@ -79,6 +80,7 @@ export class SessionController {
         fault: "none",
       },
       identity: null,
+      units: [],
       schema: [],
       liveValues: {},
       unavailableValues: {},
@@ -261,7 +263,7 @@ export class SessionController {
   public async connectAndSync(
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
-  ): Promise<DeviceIdentity> {
+  ): Promise<DeviceIdentity | null> {
     const task = this.doConnectAndSync(transport, simOpts);
     this.syncInProgress = task;
     try {
@@ -276,7 +278,7 @@ export class SessionController {
   private async doConnectAndSync(
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
-  ): Promise<DeviceIdentity> {
+  ): Promise<DeviceIdentity | null> {
     const mergedSim: SimulatorOptions = {
       ...this.state.simulatorOptions,
       ...simOpts,
@@ -321,53 +323,18 @@ export class SessionController {
 
       this.update({
         phase: "probing",
-        statusMessage: "Identifying drive unit and firmware versions…",
+        statusMessage: "Discovering connected components…",
       });
-
-      let initialSnapshot: any = null;
-      let identity: DeviceIdentity;
-      if (transport === "ble") {
-        this.update({
-          phase: "reading",
-          statusMessage: "Identifying drive unit and reading settings…",
-        });
-        const result = await this.exec("--ble-master=master settings read");
-        if (result.code !== 0) {
-          throw new Error(result.stderr || `Settings read failed (${result.code})`);
-        }
-        initialSnapshot = this.extractLastJsonObject(result.stdout);
-        if (!initialSnapshot?.identity || !initialSnapshot?.values) {
-          throw new Error("Settings response lacks drive-unit identity or parameters. Reload the updated application before reconnecting.");
-        }
-        identity = this.parseIdentity(initialSnapshot.identity);
-      } else {
-        identity = await this.probeIdentity();
+      const units = await this.readInventory();
+      const preferred = units.find((unit) => isMotorStock(unit.model_series, unit.model_unit))
+        ?? units.find((unit) => (unit.model || unit.model_candidates.length) && ![unit.model, ...unit.model_candidates].some((name) => name?.startsWith("DU-")));
+      if (!preferred) {
+        this.update({ phase: "ready", statusMessage: "Connected. Select a catalogued component from the inventory." });
+        return null;
       }
-
-      this.update({
-        identity,
-        phase: "reading",
-        statusMessage: `Reading ${identity.model} settings…`,
-      });
-
-      const schema = await this.loadSchema(identity.modelSlug);
-      this.update({ schema });
-
-      if (initialSnapshot) {
-        this.applyParameterSnapshot(initialSnapshot, identity);
-      } else {
-        await this.readAllParameters(transport, identity);
-      }
-      this.refreshSnapshots();
-
-      if (this.state.phase === "reading" || this.state.phase === "probing") {
-        this.update({
-          phase: "ready",
-          statusMessage: `Synced with ${identity.model} (${Object.keys(this.state.liveValues).length} parameters read).`,
-        });
-      }
-
-      return identity;
+      // An unsupported target does not discard a successful connection or its
+      // inventory: the operator can choose another component.
+      return await this.doSelectComponent(preferred).catch(() => null);
     } catch (err: any) {
       this.fail("connect", err, { phase: "error", status: (error) => `Handshake failed: ${error}` });
       throw err;
@@ -382,34 +349,115 @@ export class SessionController {
     const { transport, identity, stagedValues, simulatorOptions } = this.state;
     if (!transport) throw new Error("No previous connection to reopen.");
     await this.disconnect().catch(() => {});
-    const next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
-    if (identity && next.serial === identity.serial && Object.keys(stagedValues).length > 0) {
+    let next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+    const samePrevious = (candidate: DeviceIdentity | null) => !!identity && !!candidate
+      && candidate.serial === identity.serial && candidate.modelSlug === identity.modelSlug
+      && candidate.modelSeries === identity.modelSeries && candidate.modelUnit === identity.modelUnit;
+    if (identity && !samePrevious(next)) {
+      const candidates = this.state.units.filter((unit) => unit.model_series === identity.modelSeries && unit.model_unit === identity.modelUnit
+        && (identity.isMotor || unit.model === identity.model || unit.model_candidates.includes(identity.model)))
+        .sort((a, b) => Number(b.slot === identity.slot) - Number(a.slot === identity.slot));
+      for (const previous of candidates) {
+        if (previous.slot === next?.slot) continue;
+        next = await this.selectComponent(previous.slot);
+        if (samePrevious(next)) break;
+      }
+    }
+    if (samePrevious(next) && Object.keys(stagedValues).length > 0) {
       for (const [name, value] of Object.entries(stagedValues)) this.stageParameter(name, value);
     }
   }
 
 
-  private async probeIdentity(): Promise<DeviceIdentity> {
-    const probeRes = await this.exec("probe");
-    if (probeRes.code !== 0) {
-      throw new Error(probeRes.stderr || `Probe failed (${probeRes.code})`);
-    }
+  private async readInventory(): Promise<ComponentUnit[]> {
+    const result = await this.exec(`${this.state.transport === "ble" ? "--ble-master=master " : ""}units`);
+    if (result.code !== 0) throw new Error(result.stderr || "Component discovery failed.");
+    const parsed = this.extractLastJsonObject(result.stdout);
+    if (!Array.isArray(parsed?.units)) throw new Error("Component discovery returned no valid inventory.");
+    const slots = new Set<number>();
+    const units: ComponentUnit[] = parsed.units.map((unit: any) => {
+      const validName = (name: unknown) => typeof name === "string" && /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(name);
+      if (!Number.isInteger(unit.slot) || unit.slot < 0 || unit.slot > 31 || slots.has(unit.slot)
+          || !Number.isInteger(unit.model_series) || unit.model_series < 0 || unit.model_series > 255
+          || !Number.isInteger(unit.model_unit) || unit.model_unit < 0 || unit.model_unit > 255
+          || (unit.model !== null && !validName(unit.model))
+          || !Array.isArray(unit.model_candidates) || !unit.model_candidates.every(validName)) {
+        throw new Error("Component discovery returned an invalid identity.");
+      }
+      slots.add(unit.slot);
+      return unit as ComponentUnit;
+    });
+    this.update({ units });
+    return units;
+  }
 
-    const parsed = this.extractLastJsonObject(probeRes.stdout);
-    if (!parsed) {
-      throw new Error("Could not parse JSON identity from probe output.");
+  public async refreshUnits(): Promise<ComponentUnit[]> {
+    this.requireIdleTargetChange();
+    this.startOperation({ phase: "probing", statusMessage: "Refreshing component inventory…" });
+    try {
+      const units = await this.readInventory();
+      this.update({ phase: "ready", statusMessage: `Found ${units.length} connected components.` });
+      return units;
+    } catch (error) {
+      this.fail("read", error, { phase: "ready" });
+      throw error;
     }
+  }
 
-    return this.parseIdentity(parsed);
+  private requireIdleTargetChange(): void {
+    if (!this.state.transport || this.state.phase !== "ready") throw new Error("Wait for the current operation before selecting a component.");
+    if (Object.keys(this.state.stagedValues).length) throw new Error("Save or discard staged changes before selecting a component.");
+    if (this.state.linkLost) throw new Error("Reconnect before selecting a component.");
+    if (this.state.mcpApproval) throw new Error("Finish the pending change review before selecting a component.");
+  }
+
+  public async selectComponent(slot: number): Promise<DeviceIdentity> {
+    this.requireIdleTargetChange();
+    const unit = this.state.units.find((entry) => entry.slot === slot);
+    if (!unit || (!unit.model && !unit.model_candidates.length)) throw new Error("Select a catalogued component from the current inventory.");
+    const task = this.doSelectComponent(unit);
+    this.syncInProgress = task;
+    try { return await task; }
+    finally { if (this.syncInProgress === task) this.syncInProgress = null; }
+  }
+
+  private async doSelectComponent(unit: ComponentUnit): Promise<DeviceIdentity> {
+    const transport = this.state.transport!;
+    this.startOperation({ phase: "reading", statusMessage: `Reading ${unit.model || `component at slot ${unit.slot}`}…` });
+    try {
+      const target = `--slot ${unit.slot} ${unit.model ? `--component '${unit.model}' ` : ""}`;
+      const modern = isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
+      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${modern ? "--ble-unit-auth " : ""}settings read`);
+      if (result.code !== 0) throw new Error(result.stderr || "Component settings read failed.");
+      const snapshot = this.extractLastJsonObject(result.stdout);
+      const identity = this.parseIdentity(snapshot?.identity);
+      if (identity.slot !== unit.slot || identity.modelSeries !== unit.model_series || identity.modelUnit !== unit.model_unit
+          || (unit.model && identity.model !== unit.model)
+          || (!identity.isMotor && !unit.model && unit.model_candidates.length && !unit.model_candidates.includes(identity.model))) {
+        throw new Error("The component identity changed. Refresh the inventory before selecting it.");
+      }
+      const schema = await this.loadSchema(identity.modelSlug, identity.isMotor);
+      // Validate before replacing the old target's identity and values.
+      if (!snapshot?.values || typeof snapshot.values !== "object" || Array.isArray(snapshot.values)) throw new Error("Component response lacks a valid settings snapshot.");
+      this.speedDestinationBeforeAuto = null;
+      this.update({ identity, schema, stagedValues: {}, firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, lastFlashReceipt: null } });
+      this.applyParameterSnapshot(snapshot, identity);
+      this.refreshSnapshots();
+      return identity;
+    } catch (error) {
+      this.fail("connect", error, { phase: "ready" });
+      throw error;
+    }
   }
 
   private parseIdentity(parsed: any): DeviceIdentity {
-    if (!/^[0-9a-f]{12}$/i.test(String(parsed.serial || ""))) {
-      throw new Error("Drive-unit response lacks a verified serial identity.");
+    if (!parsed || !Number.isInteger(parsed.slot) || parsed.slot < 0 || parsed.slot > 31
+        || !/^[0-9a-f]{12}$/i.test(String(parsed.serial || ""))) {
+      throw new Error("Component response lacks a verified serial identity.");
     }
     return {
-      slot: parsed.slot ?? 13,
-      ...detectMotorIdentity(parsed),
+      slot: parsed.slot,
+      ...detectDeviceIdentity(parsed),
       serial: String(parsed.serial).toUpperCase(),
       dcasVersion: String(parsed.dcas_version || "—"),
       rxVersion: String(parsed.rx_version || "—"),
@@ -417,22 +465,24 @@ export class SessionController {
     };
   }
 
-  private async loadSchema(modelSlug: MotorModel) {
-    try {
-      const res = await fetch(`./schemas/${modelSlug}.json`);
-      if (res.ok) {
-        const rawSpecs = await res.json();
-        return enrichSchema(rawSpecs, modelSlug);
+  private async loadSchema(modelSlug: SettingsModel, isMotor: boolean) {
+    if (isMotor) {
+      try {
+        const res = await fetch(`./schemas/${modelSlug}.json`);
+        if (res.ok) {
+          const rawSpecs = await res.json();
+          return enrichSchema(rawSpecs, modelSlug);
+        }
+      } catch {
+        // Offline schema queries use the same Rust model gate as live reads.
       }
-    } catch {
-      // Fallback to WASM CLI schema command if static fetch fails
     }
-    const schemaRes = await this.exec(`settings schema --model ${modelSlug}`);
+    const schemaRes = await this.exec(`settings schema --model '${modelSlug}'`);
     if (schemaRes.code === 0) {
       const arr = JSON.parse(schemaRes.stdout);
       return enrichSchema(arr, modelSlug);
     }
-    return [];
+    throw new Error(schemaRes.stderr || `Could not load the ${modelSlug} settings schema.`);
   }
 
   public async readAllParameters(
@@ -442,14 +492,14 @@ export class SessionController {
     const transport = transportOverride ?? this.state.transport;
     const identity = identityOverride ?? this.state.identity;
     if (!transport || !identity) {
-      throw new Error("Connect to a drive unit before reading parameters.");
+      throw new Error("Connect to a component before reading parameters.");
     }
 
     const wasReady = this.state.phase === "ready";
     if (wasReady) {
       this.startOperation({
         phase: "reading",
-        statusMessage: "Reading settings from the drive unit…",
+        statusMessage: "Reading settings from the component…",
       });
     }
 
@@ -472,7 +522,12 @@ export class SessionController {
 
   private applyParameterSnapshot(snapshot: any, identity: DeviceIdentity): Record<string, SettingEntry> {
     if (!snapshot?.values || typeof snapshot.values !== "object" || Array.isArray(snapshot.values)) {
-      throw new Error("Drive-unit response lacks a valid settings snapshot.");
+      throw new Error("Component response lacks a valid settings snapshot.");
+    }
+    const actual = this.parseIdentity(snapshot.identity);
+    if (actual.serial !== identity.serial || actual.modelSlug !== identity.modelSlug || actual.slot !== identity.slot
+        || actual.modelSeries !== identity.modelSeries || actual.modelUnit !== identity.modelUnit) {
+      throw new Error("Settings snapshot belongs to a different component.");
     }
     const liveValues: Record<string, SettingEntry> = {};
     const unavailableValues: Record<string, string> = {};
@@ -499,10 +554,12 @@ export class SessionController {
     requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    if (isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
-      return `--expect-serial ${cleanSerial} --ble-unit-auth `;
+    const component = identity.isMotor ? "" : `--component '${identity.model}' `;
+    const target = `--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
+    if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
+      return `${target}--ble-unit-auth `;
     }
-    return `--expect-serial ${cleanSerial} `;
+    return target;
   }
 
   public async disconnect(): Promise<void> {
@@ -523,6 +580,8 @@ export class SessionController {
         phase: "disconnected",
         transport: null,
         identity: null,
+        units: [],
+        schema: [],
         liveValues: {},
         unavailableValues: {},
         stagedValues: {},
@@ -539,10 +598,20 @@ export class SessionController {
    * If the new value equals the live value on the motor, it automatically unstages.
    */
   public stageParameter(name: string, value: number | string): void {
+    const reject = (message: string): never => { this.fail("stage", message); throw new Error(message); };
+    const spec = this.state.schema.find((setting) => setting.name === name);
+    if (this.state.phase !== "ready" || this.state.linkLost) reject("Wait for a connected, idle component before staging settings.");
+    if (!spec || spec.read_only || this.state.unavailableValues[name] || !this.state.liveValues[name]) {
+      return reject(`Setting ${name} is unavailable or read-only on this component.`);
+    }
+    if (spec.value_type === "number" || spec.value_type === "enum") {
+      if ((String(value).trim() === "" || !settingAcceptsValue(spec, Number(value))) && name !== "speed-limit") reject(`Setting ${name} is outside the permitted range or choices.`);
+      value = Number(value);
+    }
     const nextStaged = { ...this.state.stagedValues };
     const stage = (key: string, next: number | string) => {
       const live = this.state.liveValues[key]?.value;
-      if (live !== undefined && String(live) === String(next)) delete nextStaged[key];
+      if (key !== "hub-adjustment" && live !== undefined && String(live) === String(next)) delete nextStaged[key];
       else nextStaged[key] = next;
     };
     const model = this.state.identity?.modelSlug;
@@ -597,7 +666,7 @@ export class SessionController {
   }
 
   /**
-   * Executes all staged parameter changes in a single atomic WASM `settings batch` session.
+   * Executes all staged parameter changes in a single WASM `settings batch` session.
    * Automatically creates pre-state backup snapshots and journals every operation.
    */
   public async commitStagedBatch(): Promise<any> {
@@ -609,10 +678,15 @@ export class SessionController {
     }
     const { transport, identity, stagedValues } = this.state;
     if (!transport || !identity) {
-      throw new Error("No active drive unit session.");
+      throw new Error("No active component session.");
     }
+    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before saving.");
     const entries = Object.entries(stagedValues);
     if (entries.length === 0) return null;
+    for (const [name] of entries) {
+      const spec = this.state.schema.find((setting) => setting.name === name);
+      if (!spec || spec.read_only || this.state.unavailableValues[name]) throw new Error(`Setting ${name} is unavailable or read-only on this component.`);
+    }
 
     // Destination is written before speed-limit so ceiling checks use the updated destination.
     const sortedEntries = [...entries].sort(([a], [b]) => {
@@ -654,7 +728,13 @@ export class SessionController {
 
       const resultJson = this.extractLastJsonObject(batchRes.stdout);
 
-      // Update liveValues from verified readbacks
+      if (resultJson?.completed !== operations.length || !Array.isArray(resultJson?.results)
+          || resultJson.results.length !== operations.length
+          || !resultJson.results.every((receipt: any, index: number) => receipt?.setting === operations[index].name && receipt.after !== undefined
+            && String(receipt.after) === operations[index].value)) {
+        throw new Error("Save did not return a complete set of verified setting receipts. Read the component before deciding what to retry.");
+      }
+      // Update liveValues only from complete, verified readbacks.
       const nextLive = { ...this.state.liveValues };
       if (resultJson?.results && Array.isArray(resultJson.results)) {
         for (const r of resultJson.results) {
@@ -664,10 +744,6 @@ export class SessionController {
               raw: nextLive[r.setting]?.raw || "",
             };
           }
-        }
-      } else {
-        for (const [k, v] of sortedEntries) {
-          nextLive[k] = { value: v, raw: nextLive[k]?.raw || "" };
         }
       }
 
@@ -700,14 +776,14 @@ export class SessionController {
     }
     const { transport, identity } = this.state;
     if (!transport || !identity) {
-      throw new Error("Connect to a drive unit to capture a snapshot.");
+      throw new Error("Connect to a component to capture a snapshot.");
     }
     this.startOperation({
       phase: "reading",
       statusMessage: "Reading every setting into a backup…",
     });
     try {
-      const filename = `snapshot_${identity.serial}_${fileStamp()}.json`;
+      const filename = `snapshot_${identity.modelSlug}_${identity.serial}_${fileStamp()}.json`;
       const flags = this.buildSessionFlags(transport, identity, false);
       const res = await this.exec(`${flags}settings read --output '${filename}'`);
       if (res.code !== 0) {
@@ -736,9 +812,20 @@ export class SessionController {
     }
     const { transport, identity } = this.state;
     if (!transport || !identity) {
-      throw new Error("Connect to the target drive unit before restoring a backup.");
+      throw new Error("Connect to the target component before restoring a backup.");
     }
     if (filenames.length === 0) return;
+    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before restoring.");
+    if (Object.keys(this.state.stagedValues).length) throw new Error("Save or discard staged changes before restoring a backup.");
+    for (const filename of filenames) {
+      const backup = JSON.parse(new TextDecoder().decode(this.terminal!.files.bytes(filename)));
+      if (!["cranklink-setting-backup-v1", "esteps-setting-backup-v1"].includes(backup.format)
+          || String(backup.serial).toUpperCase() !== identity.serial
+          || (!identity.isMotor && backup.settings_model !== identity.modelSlug)
+          || (backup.settings_model !== undefined && backup.settings_model !== identity.modelSlug)) {
+        throw new Error("Backup model or serial does not match the selected component.");
+      }
+    }
     this.startOperation({
       phase: "committing",
       statusMessage: `Restoring ${filenames.length} backup file${filenames.length > 1 ? "s" : ""}…`,
@@ -786,6 +873,7 @@ export class SessionController {
 
       let kind: JournalSnapshot["kind"] = "journal";
       let serial: string | undefined;
+      let settingsModel: string | undefined;
       let setting: string | undefined;
       let before: number | string | null = null;
       let summary = `${(bytes.length / 1024).toFixed(1)} KiB`;
@@ -799,12 +887,14 @@ export class SessionController {
           if (parsed.format === "cranklink-setting-backup-v1" || parsed.format === "esteps-setting-backup-v1") {
             kind = "setting-backup";
             serial = parsed.serial;
+            settingsModel = parsed.settings_model;
             setting = String(parsed.setting);
             before = parsed.before ?? null;
             summary = `${formatSetting(this.state.schema, setting, before)} before the change`;
           } else if (parsed.values) {
             kind = "full-snapshot";
-            serial = parsed.serial;
+            serial = parsed.identity?.serial ?? parsed.serial;
+            settingsModel = parsed.identity?.settings_model ?? parsed.settings_model;
             summary = `Full configuration (${Object.keys(parsed.values).length} parameters)`;
           }
         } catch {
@@ -822,6 +912,7 @@ export class SessionController {
         group: snapshotGroup(path),
         createdAt: parseFileStamp(path),
         serial,
+        settingsModel,
         summary,
         ...(setting !== undefined ? { setting, before } : {}),
         sizeBytes: bytes.length,
@@ -927,6 +1018,7 @@ export class SessionController {
     if (!transport || !identity) {
       throw new Error("Connect to a drive unit before running firmware operations.");
     }
+    if (!identity.isMotor) throw new Error("Firmware operations are available only for supported drive units.");
     if (!firmware.dcasFile || !firmware.rxFile || !firmware.companionValid) {
       throw new Error("Load a validated DCAS (-D) + RX (-M) firmware companion pair first.");
     }

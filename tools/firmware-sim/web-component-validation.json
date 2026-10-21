@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-21",
+  "validation_stage": "web component integration after initial CLI implementation",
+  "passed_within_declared_scope": true,
+  "base_commit": "0ee1e48c68a4684b93585088f203e01da59c1d0f",
+  "parent_commit_before_web_integration": "66c29446df7f0d958a871f93e5f19e91f45e616a",
+  "initial_cli_validation": "component-validation.json",
+  "hardware_access": false,
+  "execution_cpu_model": "cortex-m3 (modeled execution model, not physical CPU identification)",
+  "source_sha256": {
+    "Cargo.lock": "e56dd586efd453545105813963b23cde1c8c3ab44a9f725aa47e75ead679e1d8",
+    "Cargo.toml": "61c14fe41c0ac9a252a838ceaacee6a61d7524b501de51f82e600c1bdb998b11",
+    "src/ble/browser.rs": "555e05172418043bbcf91f8c6e7f16f733a7803fbaf4ae9be894a3092f2080fb",
+    "src/ble/firmware.rs": "f1275e1ecd3190c3626c884303356fe5398db62b16feae18ac4f258913dd581d",
+    "src/ble/modern_session_tests.rs": "d6343007c6d3edc46f90c4b18cf416bf0edeb40fb618746558f0eb6c93dccd44",
+    "src/ble/native.rs": "42a3e1d433b9fb0a44d1a4cc2dd985e3e70d69e4171478fabd71b0c9cba14433",
+    "src/ble/simulator.rs": "c67a374a0e2c13ac8c60bdd55d80f59e4290f3fa662204ea43ac8f073be92903",
+    "src/ble/simulator_tests.rs": "a81248f3ec419fd69f49923cdb68c3f1b79ca984966da9791e6e715d3ce5ed45",
+    "src/ble/unit_auth.rs": "efb2bdcb53fa7d94f8f549d93eae25ac889bd7d841da71b406f577260ecbcef1",
+    "src/ble/unit_auth_session_tests.rs": "57068fd98a03062f1f0039fde861e88672c4c2f39cce96624d49e4aed39ebe11",
+    "src/ble.rs": "09f669dc690e3fa41737b6213a3d1adb7d75c0e5b0db8f990f77d0c74a56ef6d",
+    "src/bootloader_dump.rs": "a03238c44d5170213158df62e0a7e71c6dac19277e3c4c1a9f95541dbdea4d95",
+    "src/cli/session.rs": "e279eab6e40521913db35406b428a2a4d1e797107823180e91807c5b86236b93",
+    "src/cli.rs": "4cfc2184dbf092b22966bc28a12cf0c355f384f95aa1dbd6cf0e150f40b2298a",
+    "src/device.rs": "4e1b31416891447323c68546627d976b762e3b4fd1ae632c0ae65ac961cf48eb",
+    "src/device_unit_auth_tests.rs": "49f66e4d7439df1d4eeccb9aa5729399b0c8e01b67fed4251e12c8a0d633aee1",
+    "src/discovery.rs": "2282bbb5431f4303d2e76e7fbc85130fe83a807e9b216bbda8ad1e203c4481f4",
+    "src/firmware.rs": "c6bc398d000321fc9c5ac9ecb563fccd780ee10d0a3838ff9ac45029daa419a7",
+    "src/firmware_io.rs": "b60c60a3d38701406a61cb00780e8e3a8da2d216779e18c47a1181f160904aa7",
+    "src/lib.rs": "4b12a65aca0b530b5725edc11a7cab2eb509674c3a40a13b900609d167242bd3",
+    "src/main.rs": "5dc418db931d17135c554efd085e8a5a7d4026e729e17ea1da8ab1e53502d259",
+    "src/motor_support.rs": "b3e75324133c444ab42916e3ceb07565bb3d8420e68bbb65e7b1b0a060b1601e",
+    "src/native_usb.rs": "aa86f3d11c3118d44fa5dda1067ed895fa1dcd7bc6f0226f0649b568ce4f299c",
+    "src/platform.rs": "17acec91933c889ab208b05645c5a980fa20c52631ad6433d66f09efee13971a",
+    "src/protocol.rs": "b1061ec8dfdc7be9828755b10bb381bc8215baa1407c5039bfb59e4f39fcb8c7",
+    "src/recovery.rs": "aaab58ec96c110eff696977bae842f7d671095bd5170b59ced072ca0dca35eb9",
+    "src/rx.rs": "2efe4e7df070744fd5a92e876c7c96ef33d4c0bdd384aa06af1ee84fb981f8ae",
+    "src/settings/batch/tests.rs": "ea6cd366ef2fa86f0c76aa3b7f0e62a590d9ab4cd268fc0ed95ac6ddf197884f",
+    "src/settings/batch.rs": "0342f8dec2e3c44e0d2667e9a7e89c76435f76e8aeee8d871a11a23cd35352dc",
+    "src/settings/component_tests.rs": "bc811bd3838ddeac00909893cdccc04a0b33af904126a10060de9da0a9a14069",
+    "src/settings/components.rs": "0f89691dfc9b85aaca1d4db15f3057f9b738c698aa4147323368dc250c0ede21",
+    "src/settings/components_other.rs": "5049a544703c182b8de90a4d07ffe2f5b715a30d4420855d9ac6536cdae00030",
+    "src/settings.rs": "7ff33842a60ed85c446f291d3be04be02d54b05eb47e8070e8ae2f2f24796113",
+    "src/simulator_port.rs": "9178cfd7a04dbfb76c37a0df9e0bacfd8b54ad26075f02d68598915bfb9f14aa",
+    "src/storage.rs": "32c0d8246a1c7e333f09eacb2ca0b445acf3b0374cbb77de30281811a847213e",
+    "src/unit_models.rs": "5d33e546615c2e3a263c8361e930290f5c69892abeeeb3f147ce4dcb903449e4",
+    "src/wasm.rs": "48ca5f7a1715739b7aba069a5e24fa4907810f954d7b0990c2d799e3611cbb7d",
+    "tools/firmware-sim/component_browser_peer.py": "5a892b2546969a80093d54093552d7d624abb320ab40108bcfd33ce2c5b21c07",
+    "web-instrument/app.js": "6b804ec564e9bc4386f5319b45e1575935ed46243ef847c726b9fa6d9339e9c7",
+    "web-instrument/ble.js": "f1c293dd2df7b5fc79c9e3de959c6a8fb8e3e22d3afc4918db7ce14e3fa355f3",
+    "web-instrument/files.js": "75f141c2048fc0abdc50aac61a308b8d0768abef113bd16e2078f971aa8e0ce6",
+    "web-instrument/host.js": "be41c3c28047ab3b321f09a9b5127bc9ca4bf37295cc7584dc3a30c10b1e6078",
+    "web-instrument/package-lock.json": "351c4c7c186cd6cce39cf06852522150b61cc0eed908c4afa48430e6448c18a3",
+    "web-instrument/package.json": "22166e93749212e4af32453a55b2fe689c56486f69e4d18ca31b7cad25232309",
+    "web-instrument/serial.js": "6c79a00a8f7d37a2b99318b5801fdb1148d0c21c1548414ff69c1877db8bbf8f",
+    "web-instrument/simulator.js": "11376312fc4e099313ed6d15f917bd748c59a9d195472245bfaaf3b774550ea3",
+    "web-instrument/src/App.tsx": "192a926868e30853ebd24771803ac8016d8424d922db645b916b4a5bde5237e2",
+    "web-instrument/src/components/ChangesReview.tsx": "c240dad84b90c78e83bc2f69fc22b8131701da475abd0c15974537b957b248c1",
+    "web-instrument/src/components/FailureBanner.tsx": "4165fcbe112cbb164ae7fde2c1fbf240af8cd6c8f3a96257c8ded40d30dfee55",
+    "web-instrument/src/components/settings/AllSettingsList.tsx": "4147f1480518b9a272e61ceaedb6bb7204e38b6f8270716a90aa5b0de1839f41",
+    "web-instrument/src/components/settings/SettingRow.tsx": "73ffb18435cb6c3a40fae58dc94a3243e7bd372ba37fb45e51c3f70a11bfb188",
+    "web-instrument/src/components/ui/ConfirmDialog.tsx": "84eb99add1755728763cf62fb224b369be5ade3f533c73ade7d93cf94bd4a2f6",
+    "web-instrument/src/components/ui/OperationModal.tsx": "152f5e25837862abfd7d39618f633ea1d50bc9de5520b8c383b884d0c99b85ad",
+    "web-instrument/src/components/ui/OptionSelect.tsx": "a6d5a5f2527a86a51bdaafb1a655ffe840b8cfe676831574666ab7d4bf680f70",
+    "web-instrument/src/components/ui/PasskeyDialog.tsx": "19e737f5cae992df8c98a5c152209bbf727ee8a926fbb8cd5faa1a8740a6c56f",
+    "web-instrument/src/components/ui/RiskWarningModal.tsx": "7fb7c72667c2bdb6eeb04ff10de3fb90e0ea36ce36a3b1eb9952afde78a7c0d8",
+    "web-instrument/src/components/views/BackupView.tsx": "657b52a4a482e1dce79a9a06e9a5c26ea15b4a945dc00ead887f754df7215796",
+    "web-instrument/src/components/views/ConnectView.tsx": "315ffe461cd9d19722ddf6cdf90a8603219c3457e60b0d75270e85c263e8a6b5",
+    "web-instrument/src/components/views/DiagnosticsView.tsx": "e88f1af2787c51d47213ca98c6bf0852e6d17c8a3b083f86f003d8ea1850ef79",
+    "web-instrument/src/components/views/FirmwareView.tsx": "e8cbca7d6216e2fe22d5d654a6f2d0ddfb8872d4baa8fa499f503bcbab98c92c",
+    "web-instrument/src/components/views/OverviewView.tsx": "f88dc27e42beaa88acff44c88827024ccf52eff082f37cc9c370fed06665fe9f",
+    "web-instrument/src/components/views/TuneView.tsx": "7086bd8f45df908676b5f5edd477d3030e2a52c4eaef398a718bc0957d9d57a8",
+    "web-instrument/src/core/platform.ts": "e5b8f0ee5310b7b5dcd1d2bcfb8a40ea0b04c20a3329b1894cdc0c1ed9860914",
+    "web-instrument/src/core/sessionController.ts": "3486ceb406428a3c1ad898050ec92420e1f3bc28dca4addf2fffba7772ceacfd",
+    "web-instrument/src/core/webMcpServer.ts": "dde6b5f273f8ca91da324772f0f564382785d739479b9e168f448357aba6df41",
+    "web-instrument/src/domain/errors.ts": "98fdb6b647d9507f88e7be02052832f5000215ae772bb7719451e8bf5ba1863d",
+    "web-instrument/src/domain/firmwarePackage.ts": "b6e658e4f5f55b2c5f3ca1d4cc8bfb91c22a45047e368dbd9120617edda81a9a",
+    "web-instrument/src/domain/motorIdentity.ts": "431c6a7d5c7660defc70c2200a29060b262f7a88463993913b7c56013432c6b4",
+    "web-instrument/src/domain/schema.ts": "5bf24fc387967cc05549b9718c229820729e538fba3fbf68650fd3874aba58ea",
+    "web-instrument/src/domain/settingFormat.ts": "bb047e466e731aeb6468e43697426463ae3267c3526e826ab1de4c464a3196c8",
+    "web-instrument/src/hooks.ts": "aab645603c95aa7f978c75a57619f008871d7386e6a2c2a43fc9dbbd077813ba",
+    "web-instrument/src/main.ts": "2dfaa4aacf9e20e8ae193eb3ded06aed10123179f04b8bce44afcada3c8b5188",
+    "web-instrument/src/navigation.ts": "ffc53b585357cb5d8dbc4b9a569b09107a1f1ca092a95634aafd55f37fe6a252",
+    "web-instrument/src/types.ts": "512d49a99a353baf7dc132175129788a06400a79f7dc520aa7c205cdd4579b57",
+    "web-instrument/src/vite-env.d.ts": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
+    "web-instrument/usb.js": "da56f4f1af7a070900c36fbc36b7c1b97293e016fcebf8040918b00e425d0c4f",
+    "web-instrument/worker.js": "3d707d08931811bf8bb952c2c3d344411a40451ef5aa1ef262f778b6e57717f3"
+  },
+  "browser_wasm_sha256": "dbd39f7757a78d7c8caf3728738048bdd81c93a89fffdfe240f1e8a7de338f4e",
+  "build": {
+    "rust_toolchain": "1.90.0",
+    "wasm_bindgen": "0.2.129",
+    "target": "wasm32-unknown-unknown",
+    "release": true,
+    "build_paths_remapped": true,
+    "production_asset_check_passed": true
+  },
+  "software_checks": {
+    "repository_verify": {
+      "command": "./tools/verify.sh",
+      "passed": true,
+      "rust_tests": 272,
+      "web_tests_at_run": 52,
+      "format_and_types": true
+    },
+    "final_web_unit_tests": {
+      "command": "npm test",
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0
+    },
+    "final_web_typecheck": {
+      "passed": true
+    },
+    "final_browser_e2e": {
+      "command": "npm run test:e2e",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 2,
+      "skip_reason": "local-stock firmware opt-in tests run separately below"
+    },
+    "production_smoke": {
+      "command": "npm run test:production",
+      "passed": 1,
+      "failed": 0
+    },
+    "firmware_simulator": {
+      "tests": 134,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 39.413,
+      "resident_fixture_enabled": true,
+      "mu_fixture_enabled": true
+    }
+  },
+  "scripted_browser_coverage": [
+    "Mixed inventory: motor, ST lever, front and rear derailleur, BT power unit, MU hub actuator and SC display",
+    "Fresh target identity, exact Rust schema, packed-field preservation, save and restore, durable backups before every SET",
+    "Read-only fields, staged target locks, wrong-model restore rejection and nonmotor firmware guards",
+    "Manual full snapshots remain download-only"
+  ],
+  "stock_production_browser": [
+    {
+      "profile": "sc-em800-4.6.0",
+      "gateway_sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f",
+      "component_sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f",
+      "browser_wasm_sha256": "dbd39f7757a78d7c8caf3728738048bdd81c93a89fffdfe240f1e8a7de338f4e",
+      "browser_module_entry": "/assets/index-D_7oLVLH.js",
+      "browser_module_entry_sha256": "2f5edec052fc93e9a9b505994c69a59db55b9e8a7fda53a2db406a9b029f1245",
+      "saved": {
+        "display-language": 2,
+        "display-brightness": 100
+      },
+      "persisted": {
+        "display-beep": 1,
+        "display-brightness": 100,
+        "display-distance-unit": 0,
+        "display-language": 2
+      },
+      "restored": {
+        "display-beep": 1,
+        "display-brightness": 60,
+        "display-distance-unit": 0,
+        "display-language": 0
+      },
+      "stock_commits_before_cycle": 2,
+      "stock_commits_for_restore": 2,
+      "durable_backups_before_actual_set": 4,
+      "actuator_completion_unconfirmed": null,
+      "final_component_instructions": 45187,
+      "cleanup_confirmed": true,
+      "modeled": [
+        "GATT radio/PIN/notification delivery",
+        "initialized RAM and boot-ready caches",
+        "physical NVM commit and controlled boot hydration",
+        "logical timing"
+      ],
+      "unvalidated": [
+        "physical hardware",
+        "MU actuator completion",
+        "power loss during commit",
+        "full firmware reset/boot"
+      ]
+    },
+    {
+      "profile": "mu-ur500-3.3.1",
+      "gateway_sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f",
+      "component_sha256": "29f137dae1ab9c335ccd313e70f70ee04058c52c08b00236d5872b1beb93bc59",
+      "browser_wasm_sha256": "dbd39f7757a78d7c8caf3728738048bdd81c93a89fffdfe240f1e8a7de338f4e",
+      "browser_module_entry": "/assets/index-D_7oLVLH.js",
+      "browser_module_entry_sha256": "2f5edec052fc93e9a9b505994c69a59db55b9e8a7fda53a2db406a9b029f1245",
+      "saved": {
+        "hub-gear-count": 8
+      },
+      "persisted": {
+        "hub-adjustment": 0,
+        "hub-gear-count": 8
+      },
+      "restored": {
+        "hub-adjustment": 0,
+        "hub-gear-count": 11
+      },
+      "stock_commits_before_cycle": 1,
+      "stock_commits_for_restore": 1,
+      "durable_backups_before_actual_set": 3,
+      "actuator_completion_unconfirmed": {
+        "accepted_sets": 1,
+        "automatic_retries": 0,
+        "firmware_readback_polls_after_ack": 930,
+        "live": 0,
+        "staged": -1,
+        "failure": "save",
+        "phase": "ready"
+      },
+      "final_component_instructions": 909332,
+      "cleanup_confirmed": true,
+      "modeled": [
+        "GATT radio/PIN/notification delivery",
+        "initialized RAM and boot-ready caches",
+        "physical NVM commit and controlled boot hydration",
+        "logical timing"
+      ],
+      "unvalidated": [
+        "physical hardware",
+        "MU actuator completion",
+        "power loss during commit",
+        "full firmware reset/boot"
+      ]
+    }
+  ],
+  "software_fixes": [
+    "Offline component schema queries bypass BLE dispatch in the WASM client",
+    "Named motor selection revalidates live model identity after inventory",
+    "Reconnect restores staged edits only to the same serial, model and stock identity, including duplicate models and slot changes",
+    "Incomplete or mismatched save receipts cannot update displayed values as successful",
+    "WebMCP approval cannot write preexisting, concurrent or automatically derived unreviewed edits"
+  ],
+  "coverage_limits": [
+    "Classic levers, derailleurs, power units and other unprofiled models have source/scripted protocol coverage only",
+    "No physical hardware, RF, pairing, actuator completion, EEPROM power loss or full board boot validation",
+    "The genuine MU fixture deliberately leaves physical adjustment unfinished; browser must report uncertainty without retry",
+    "Broader historical CLI matrices retain their own earlier source and binary hashes in initial_cli_validation"
+  ]
+}

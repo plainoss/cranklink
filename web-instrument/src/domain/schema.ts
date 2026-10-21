@@ -14,7 +14,7 @@ import type {
   EnrichedSetting,
   SettingSectionId,
   SettingPreset,
-  MotorModel,
+  SettingsModel,
 } from "../types.ts";
 import { isModernModel } from "./motorIdentity.ts";
 
@@ -103,6 +103,31 @@ interface SettingAnnotation {
 }
 
 const ANNOTATIONS: Record<string, SettingAnnotation> = {
+  ...Object.fromEntries(["a", "b", "c", "s"].map((channel) => [`switch-${channel}-function`, {
+    label: `Switch ${channel.toUpperCase()} function`, description: "Button assignment for this control.", section: "drivetrain",
+    displayUnit: "", choiceLabels: { 0: "Front shift up", 1: "Front shift down", 2: "Rear shift up", 3: "Rear shift down" },
+  }])),
+  "multi-shift-speed": {
+    label: "Multi-shift speed", description: "How quickly repeated shifts are made while a button is held.", section: "drivetrain", displayUnit: "",
+    choiceLabels: { 0: "Off", 1: "Very slow", 2: "Slow", 3: "Normal", 4: "Fast", 5: "Very fast", 6: "Super fast" },
+  },
+  "synchro-shift-interval": {
+    label: "Synchronized shift interval", description: "Delay between coordinated front and rear shifts.", section: "drivetrain", displayUnit: "",
+    choiceLabels: { 0: "Normal", 1: "Slow", 2: "Very slow" },
+  },
+  ...Object.fromEntries(["up", "down"].map((direction) => [`multi-shift-limit.${direction}`, {
+    label: `Multi-shift ${direction} limit`, description: "Maximum gears shifted while holding the button.", section: "drivetrain", displayUnit: "",
+    choiceLabels: { 2: "2 gears", 3: "3 gears", 255: "Unlimited" },
+  }])),
+  "derailleur-adjustment": { label: "Current derailleur adjustment", description: "Current adjustment reported by the derailleur.", section: "drivetrain", displayUnit: "steps" },
+  "derailleur-adjustment-maximum": { label: "Maximum derailleur adjustment", description: "Adjustment limit reported by the derailleur.", section: "drivetrain", displayUnit: "steps" },
+  "hub-adjustment": { label: "Hub adjustment target", description: "Target adjustment position. Applying the current position also cancels a different pending target.", section: "drivetrain", displayUnit: "steps" },
+  "hub-gear-count": { label: "Hub gear count", description: "Number of gears supported by the connected hub.", section: "drivetrain", displayUnit: "gears" },
+  "display-beep": { label: "Display beep", description: "Audible feedback from the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Off", 1: "On" } },
+  "display-distance-unit": { label: "Distance unit", description: "Units used by the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Kilometres", 1: "Miles" } },
+  "display-language": { label: "Display language", description: "Language used by the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "English", 1: "French", 2: "German", 3: "Dutch", 4: "Italian", 5: "Spanish" } },
+  "display-backlight": { label: "Display backlight", description: "Backlight behavior on the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Off", 1: "On", 2: "Manual" } },
+  "display-brightness": { label: "Display brightness", description: "Cycle-computer screen brightness.", section: "geometry", displayUnit: "%" },
   "tire-circumference": {
     label: "Tire Circumference",
     description: "Distance per wheel revolution, used for speed and odometer.",
@@ -391,7 +416,7 @@ function formatProfileSetting(name: string): {
 
 function enrichSetting(
   spec: SettingSpec,
-  modelSlug: MotorModel = "ep800-crg",
+  modelSlug: SettingsModel = "ep800-crg",
 ): EnrichedSetting {
   const scale = spec.wire_units_per_input || 1.0;
   const userMin = spec.min_raw / scale;
@@ -452,7 +477,7 @@ function enrichSetting(
 
 export function enrichSchema(
   specs: SettingSpec[],
-  modelSlug: MotorModel = "ep800-crg",
+  modelSlug: SettingsModel = "ep800-crg",
 ): EnrichedSetting[] {
   const enriched = specs.map((s) => enrichSetting(s, modelSlug));
   return enriched.sort((a, b) => {

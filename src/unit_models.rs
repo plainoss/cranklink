@@ -1436,7 +1436,7 @@ pub struct ResolvedModel {
 /// supply the stock pair and slot from the same discovery session. Failures are
 /// returned, never retried or turned into a guessed component identity.
 pub fn read_identification(
-    commands: &mut impl crate::device::UnitCommands,
+    commands: &mut (impl crate::device::UnitCommands + ?Sized),
     slot: u8,
     series: u8,
     unit: u8,

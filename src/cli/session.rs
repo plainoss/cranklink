@@ -366,18 +366,30 @@ pub fn run_session(
                     .get("model")
                     .and_then(Value::as_str)
                     .unwrap_or("ep800-crg");
-                let model = super::settings_model_name(model_str);
-                let specs = crate::settings::schema_for_model(model);
-                if let Some(target) = req.params.get("name").and_then(Value::as_str) {
-                    if let Some(spec) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(target)) {
-                        JsonRpcResponse {
-                            jsonrpc: "2.0",
-                            id,
-                            result: Some(serde_json::to_value(spec).unwrap_or_default()),
-                            error: None,
-                        }
-                    } else {
-                        JsonRpcResponse {
+                match super::settings_model_name(model_str) {
+                    Err(error) => JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id,
+                        result: None,
+                        error: Some(JsonRpcError::invalid_params(
+                            error.to_string(),
+                            Some("Use a motor family alias or catalogued component model."),
+                        )),
+                    },
+                    Ok(model) => {
+                        let specs = crate::settings::schema_for_model(model);
+                        if let Some(target) = req.params.get("name").and_then(Value::as_str) {
+                            if let Some(spec) =
+                                specs.iter().find(|s| s.name.eq_ignore_ascii_case(target))
+                            {
+                                JsonRpcResponse {
+                                    jsonrpc: "2.0",
+                                    id,
+                                    result: Some(serde_json::to_value(spec).unwrap_or_default()),
+                                    error: None,
+                                }
+                            } else {
+                                JsonRpcResponse {
                             jsonrpc: "2.0",
                             id,
                             result: None,
@@ -395,13 +407,15 @@ pub fn run_session(
                                 ),
                             }),
                         }
-                    }
-                } else {
-                    JsonRpcResponse {
-                        jsonrpc: "2.0",
-                        id,
-                        result: Some(serde_json::to_value(&specs).unwrap_or_default()),
-                        error: None,
+                            }
+                        } else {
+                            JsonRpcResponse {
+                                jsonrpc: "2.0",
+                                id,
+                                result: Some(serde_json::to_value(&specs).unwrap_or_default()),
+                                error: None,
+                            }
+                        }
                     }
                 }
             }

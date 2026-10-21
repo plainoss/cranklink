@@ -1,9 +1,10 @@
 /**
- * AllSettingsList.tsx - Every setting the drive unit reports, with a generic editor.
+ * AllSettingsList.tsx - Every setting the active component reports, with a generic editor.
  */
 
 import { useEffect, useState } from "react";
-import { Card, Input, NumberField, TextField } from "@heroui/react";
+import { Button, Card, Chip, Input, NumberField, TextField } from "@heroui/react";
+import { RotateCcw } from "lucide-react";
 import { OptionSelect } from "../ui/OptionSelect.tsx";
 import type { EnrichedSetting, InstrumentState } from "../../types.ts";
 import { matchesQuery, useSearchQuery, useSetting } from "./SettingRow.tsx";
@@ -63,6 +64,7 @@ function SettingListItem({ name }: { name: string }) {
     >
       <div className="min-w-0">
         <p className="text-sm font-medium text-stone-900">{setting.label}</p>
+        {setting.spec?.description && <p className="text-xs text-muted mt-0.5">{setting.spec.description}</p>}
         <p className="text-[11px] font-mono text-stone-500 [overflow-wrap:anywhere]">
           {name}
           {setting.unavailable ? (
@@ -71,13 +73,21 @@ function SettingListItem({ name }: { name: string }) {
             <>
               <span className="ml-2">Live: {setting.format(setting.live)}</span>
               {setting.isStaged && (
-                <span className="ml-2 font-semibold text-amber-800">Staged: {setting.format(setting.value)}</span>
+                <>
+                  <span className="ml-2 font-semibold text-amber-800">Staged: {setting.format(setting.value)}</span>
+                  <Button variant="ghost" size="sm" onPress={setting.revert} aria-label={`Undo change to ${setting.label}`} className="ml-1 font-sans">
+                    <RotateCcw size={12} aria-hidden="true" />
+                    Undo
+                  </Button>
+                </>
               )}
             </>
           )}
         </p>
       </div>
-      {!setting.unavailable && setting.spec && <GenericEditor spec={setting.spec} />}
+      {setting.isReadOnly ? (
+        <Chip variant="soft" size="sm" data-testid={`readonly-${name}`} className="justify-self-start sm:justify-self-end">Read only</Chip>
+      ) : !setting.unavailable && setting.spec ? <GenericEditor spec={setting.spec} /> : null}
     </li>
   );
 }
@@ -89,13 +99,15 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
   useEffect(() => setDraft(current), [current]);
 
   const choices = spec.choices.length ? spec.choices : Object.keys(spec.choiceLabels ?? {}).map(Number);
-  if (spec.choiceLabels && choices.length) {
+  if (choices.length) {
     return (
       <OptionSelect
         aria-label={setting.label}
         value={current === "" ? null : current}
         options={choices.map((choice) => ({ id: String(choice), label: setting.format(choice) }))}
         onChange={(id) => setting.stage(Number(id))}
+        isDisabled={setting.isDisabled}
+        data-testid={`setting-select-${spec.name}`}
       />
     );
   }
@@ -109,6 +121,8 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
         maxValue={spec.userMax}
         step={spec.userStep}
         onChange={(next) => Number.isFinite(next) && setting.stage(next)}
+        isDisabled={setting.isDisabled}
+        data-testid={`setting-input-${spec.name}`}
         fullWidth
       >
         <NumberField.Group>
@@ -124,8 +138,8 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
     if (trimmed !== current) setting.stage(trimmed);
   };
   return (
-    <TextField aria-label={setting.label} value={draft} onChange={setDraft} onBlur={commit} fullWidth>
-      <Input className="font-mono" onKeyDown={(event) => event.key === "Enter" && commit()} />
+    <TextField aria-label={setting.label} value={draft} onChange={setDraft} onBlur={commit} isDisabled={setting.isDisabled} fullWidth>
+      <Input className="font-mono" data-testid={`setting-input-${spec.name}`} onKeyDown={(event) => event.key === "Enter" && !event.nativeEvent.isComposing && commit()} />
     </TextField>
   );
 }

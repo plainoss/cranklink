@@ -2,12 +2,12 @@
  * BackupView.tsx - Restore points grouped by the operation that created them.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Archive, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import type { InstrumentState, JournalSnapshot } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { formatSetting, settingLabel } from "../../domain/settingFormat.ts";
-import { Button, Card, Disclosure } from "@heroui/react";
+import { Button, Card, Disclosure, toast } from "@heroui/react";
 import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 interface BackupViewProps {
@@ -39,16 +39,24 @@ function restorePoints(state: InstrumentState): RestorePoint[] {
     groups.set(key, [...(groups.get(key) ?? []), snapshot]);
   }
   return [...groups.entries()].map(([key, files]) => {
-    const restorable = files.filter((file) => file.kind === "setting-backup" || file.kind === "full-snapshot");
+    const restorable = files.filter((file) =>
+      file.kind === "setting-backup"
+      && Boolean(state.identity)
+      && file.serial?.toUpperCase() === state.identity?.serial.toUpperCase()
+      && (file.settingsModel === state.identity?.modelSlug || (state.identity?.isMotor && !file.settingsModel)));
     const lines = restorable.map((file) =>
       file.setting !== undefined
         ? `${settingLabel(state.schema, file.setting)}: ${formatSetting(state.schema, file.setting, file.before)}`
         : file.summary);
     const title = files[0].kind === "firmware"
       ? "Firmware image"
-      : restorable.length === 0
-        ? "Operation log (nothing to restore)"
-        : GROUP_TITLES.find(([pattern]) => pattern.test(key))?.[1] ?? "Stored file";
+      : files.some((file) => file.kind === "full-snapshot")
+        ? "Configuration snapshot (download only)"
+        : restorable.length > 0
+          ? GROUP_TITLES.find(([pattern]) => pattern.test(key))?.[1] ?? "Stored file"
+          : files.some((file) => file.kind === "setting-backup")
+            ? "Backup for another component"
+            : "Operation log (nothing to restore)";
     return {
       key,
       title,
@@ -64,8 +72,9 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", tim
 
 export function BackupView({ state, controller }: BackupViewProps) {
   const [pending, setPending] = useState<RestorePoint | null>(null);
+  useEffect(() => setPending(null), [state.identity?.slot, state.identity?.serial, state.identity?.modelSlug]);
   const points = restorePoints(state);
-  const busy = state.phase !== "ready";
+  const busy = state.phase !== "ready" || state.linkLost || !state.identity;
 
   const restore = async () => {
     if (!pending) return;
@@ -79,9 +88,9 @@ export function BackupView({ state, controller }: BackupViewProps) {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <p className="text-sm text-muted max-w-prose">
           cranklink saves the previous value of every setting before writing it. Restore points are kept in this browser;
-          download them to keep a copy elsewhere.
+          download them to keep a copy elsewhere. Full configuration snapshots are for download; restore uses the backups created before a write. Active component: {state.identity?.model}, serial {state.identity?.serial}.
         </p>
-        <Button isDisabled={busy} onPress={() => controller.captureManualSnapshot().catch(() => {})} data-testid="btn-capture-snapshot" className="shrink-0">
+        <Button isDisabled={busy || state.schema.length === 0} onPress={() => controller.captureManualSnapshot().catch(() => {})} data-testid="btn-capture-snapshot" className="shrink-0">
           <Plus size={16} aria-hidden="true" />
           Back up all settings now
         </Button>
@@ -113,7 +122,10 @@ export function BackupView({ state, controller }: BackupViewProps) {
                     </ul>
                   </div>
                   {point.restorable.length > 0 && (
-                    <Button variant="outline" isDisabled={busy} onPress={() => setPending(point)} data-action="restore-snapshot" className="shrink-0 self-start">
+                    <Button variant="outline" isDisabled={busy} onPress={() => {
+                      toast.clear();
+                      setPending(point);
+                    }} data-action="restore-snapshot" className="shrink-0 self-start">
                       <RotateCcw size={14} aria-hidden="true" />
                       Restore these values
                     </Button>
@@ -161,7 +173,7 @@ export function BackupView({ state, controller }: BackupViewProps) {
       <ConfirmDialog
         isOpen={pending !== null}
         onOpenChange={(open) => !open && setPending(null)}
-        title="Restore these values to the bike?"
+        title={`Restore these values to ${state.identity?.model ?? "the selected component"}?`}
         actions={[{ label: "Restore", onPress: restore, "data-testid": "btn-confirm-restore" }]}
       >
         <p className="text-sm text-muted mb-3">The current values are backed up first, so this can be undone.</p>

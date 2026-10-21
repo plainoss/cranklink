@@ -1,0 +1,362 @@
+{
+  "schema_version": 1,
+  "validation_stage": "initial CLI component implementation, before web integration",
+  "followup_web_validation": "web-component-validation.json",
+  "date": "2026-10-21",
+  "passed_within_declared_scope": true,
+  "base_commit": "0ee1e48c68a4684b93585088f203e01da59c1d0f",
+  "final_client_binary_sha256": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771",
+  "comprehensive_validation_base_commit": "e42dd7490c7de8f1466435d5777249193223cc97",
+  "comprehensive_client_binary_sha256": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
+  "changes_after_comprehensive_validation": [
+    "Upstream 0ee1e48 changes documentation and Rust comments only",
+    "Classic switch meaningful GET prefixes and reserved SET bytes corrected from vendor setter evidence; these classic models lack executable firmware profiles",
+    "Final compiled binary reruns native/BLE hub adjustment and display persistence/lost-ACK cases"
+  ],
+  "execution_cpu_model": "cortex-m3 (modeled execution model, not physical CPU identification)",
+  "hardware_access": false,
+  "scope": "Initial CLI snapshot: source and binary hashes below predate the web integration. Component settings execute unchanged exact-hash firmware; additional upstream software/firmware regressions are included; no physical compatibility certification. Later UI/WASM checks are recorded separately in followup_web_validation.",
+  "source_sha256": {
+    "src/cli.rs": "97bd472981b937607ad1ceeee88bb8a0fa52d63a6b685df853c0181db7678c3d",
+    "src/settings.rs": "7ff33842a60ed85c446f291d3be04be02d54b05eb47e8070e8ae2f2f24796113",
+    "src/settings/components.rs": "0f89691dfc9b85aaca1d4db15f3057f9b738c698aa4147323368dc250c0ede21",
+    "src/settings/components_other.rs": "5049a544703c182b8de90a4d07ffe2f5b715a30d4420855d9ac6536cdae00030",
+    "src/device.rs": "92553d8f09bddcadd677950e4c0568c25d80928e531cdf7d1d77b4ebd2796765",
+    "src/ble.rs": "73ae38c4ac364a511bfd40af65430e47fd12fa38ecb66ee72ab018729a91e72e"
+  },
+  "software_checks": {
+    "repository_verify": {
+      "command": "./tools/verify.sh",
+      "passed": true,
+      "rust_unit_tests": 267,
+      "web_unit_tests": 30,
+      "rust_format": true,
+      "rust_typecheck": true,
+      "web_typecheck": true
+    },
+    "wasm_library_typecheck": {
+      "passed": true,
+      "target": "wasm32-unknown-unknown",
+      "default_features": false
+    },
+    "firmware_simulator_unittests": {
+      "passed": true,
+      "tests": 134,
+      "seconds": 41.927,
+      "skipped": 0,
+      "resident_fixture_enabled": true,
+      "motor_gateway_profiles": 18,
+      "mu_fixture_enabled": true
+    },
+    "resident_fixture": {
+      "profile": "ep800-resident-5.0.6.1",
+      "bytes": 65536,
+      "sha256": "59cc3fc007ca0b3595d8ba8e8207cc5257b05be84da8fd80278303d165488d9f"
+    }
+  },
+  "software_fixes": [
+    "CLI accepts negative numeric setting values without consuming arbitrary options",
+    "Explicit slot and component selectors can be combined and must identify the same live unit",
+    "Hub adjustment sends one SET then polls validated GETs for a three-second completion window",
+    "Hub adjustment applies equal-current targets once to cancel a different pending target",
+    "Missing simulated motor version/product caches are initialized for actual stock consumers",
+    "Classic switch GET filler is ignored and reserved SET bytes are reconstructed as zero"
+  ],
+  "final_binary_checks": {
+    "base_commit": "0ee1e48c68a4684b93585088f203e01da59c1d0f",
+    "binary_sha256": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771",
+    "native_hub_adjustment_cases": 2,
+    "gatt_hub_adjustment_cases": 2,
+    "display_cli_cases": 34,
+    "display_dropped_genuine_set_acks": 2
+  },
+  "motor_and_gateway_regressions": {
+    "base_commit": "e42dd7490c7de8f1466435d5777249193223cc97",
+    "client_binary_sha256": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
+    "execution_cpu_model": "cortex-m3 (modeled execution model, not physical CPU identification)",
+    "python_suite": {
+      "passed": true,
+      "tests": 134,
+      "seconds": 41.927,
+      "skipped": 0,
+      "resident_fixture_enabled": true,
+      "motor_gateway_profiles": 18,
+      "mu_fixture_enabled": true
+    },
+    "packet_matrix": {
+      "passed": true,
+      "pairs": 80,
+      "scenarios": 720
+    },
+    "native": {
+      "passed": true,
+      "groups": 5,
+      "commands": 9,
+      "expected_timeout_cases": 1
+    },
+    "gatt": {
+      "passed": true,
+      "cli_cases": 17,
+      "successful_cases": 14,
+      "expected_error_cases": 3,
+      "successful_pc_start_totals": {
+        "1": 14
+      },
+      "lifecycle_pairs": 60,
+      "lifecycle_gets": 1200,
+      "lifecycle_passed": true
+    },
+    "motor_persistence": {
+      "passed": true,
+      "cli_cases": 13,
+      "stock_setting_sets": 10,
+      "committed_records": 10,
+      "reload_values": {
+        "post-power-cycle-lamp": 1,
+        "post-power-cycle-tire": 2150
+      }
+    },
+    "not_validated": [
+      "physical EEPROM/electrical power loss",
+      "RF/pairing",
+      "full boot or hardware timing",
+      "actual M application execution",
+      "unprofiled component firmware"
+    ],
+    "passed": true
+  },
+  "historical_broad_cli_regressions": {
+    "base_commit": "f55f4478277503ab0e62e1aa44bb3268526b2959",
+    "scope": "Earlier broad CLI coverage; not attributed to the current binary",
+    "native": {
+      "pairs": 80,
+      "commands": 160,
+      "outcomes": {
+        "unsupported-motor-model": 16,
+        "success": 144
+      },
+      "no_unexpected_failures": true,
+      "all_functionality_successful": false,
+      "binary_sha256": "cea58198860f2f2e52f44404bdbb21812a89df6632ef3db2343011c3af7ab6c4"
+    },
+    "gatt": {
+      "pairs": 60,
+      "commands": 240,
+      "outcomes": {
+        "success": 216,
+        "unsupported-motor-model": 18,
+        "unsupported-setting": 6
+      },
+      "no_unexpected_failures": true,
+      "all_functionality_successful": false,
+      "binary_sha256": "cea58198860f2f2e52f44404bdbb21812a89df6632ef3db2343011c3af7ab6c4"
+    }
+  },
+  "mu_ur500": {
+    "profile": {
+      "id": "mu-ur500-3.3.1",
+      "sha256": "29f137dae1ab9c335ccd313e70f70ee04058c52c08b00236d5872b1beb93bc59"
+    },
+    "native_read_guard_cases": 128,
+    "gatt_read_guard_cases": 96,
+    "native_write_restore_batch_cases": 26,
+    "gatt_write_restore_batch_cases": 26,
+    "final_native_adjustment_cases": 2,
+    "final_gatt_adjustment_cases": 2,
+    "binary_sha256": {
+      "read_and_gear_write_suites": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
+      "final_adjustment_native": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771",
+      "final_adjustment_gatt": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771"
+    },
+    "raw_stock_checks": [
+      "27 adjustment/gear seed combinations",
+      "253 invalid gear counts",
+      "247 invalid adjustment values",
+      "9 accepted adjustment targets; nonzero targets stay unfinished without modeled actuation",
+      "gear writes with checksum staging and modeled disk reload",
+      "failed modeled commits cannot acknowledge persistence",
+      "same-current SET replaces a different pending adjustment target"
+    ],
+    "actuation": "No actuator success modeled; pending writes must fail readback safely and retain their backups"
+  },
+  "displays": {
+    "profiles": [
+      {
+        "id": "sc-e6100-4.1.0",
+        "sha256": "8149fe326ddf14e439c83ab09141cfb2b08bd745938b34fbcf603a3fb8e7f71a"
+      },
+      {
+        "id": "sc-e7000-4.1.0",
+        "sha256": "1f3c42ad0cc3e46d2e9affd5f023245f645acbc1c8ee3d68569bfcb25c9c3e79"
+      },
+      {
+        "id": "sc-em800-4.0.0",
+        "sha256": "6239988c78ea734cee44c7c61477a9498dfa79f38e392d6c38db580687482bc8"
+      },
+      {
+        "id": "sc-em800-4.1.0",
+        "sha256": "9a5e8212034c17cb3ce56db59edacf99c69971f952ff13b03fb55ca59e9b3c82"
+      },
+      {
+        "id": "sc-em800-4.3.0",
+        "sha256": "0f2c469d62803df67df6bd09d46fdaa4201c71b8f8d9fec6c84ef964b6415e32"
+      },
+      {
+        "id": "sc-em800-4.4.0",
+        "sha256": "e473f3326615d83cd2e60124ebe7df73541b4e23bb417b3ac8615ca4dd970617"
+      },
+      {
+        "id": "sc-em800-4.5.0",
+        "sha256": "8aa8bbe626c44daefb56b386f616d68146001dfd60fd284c0c2ba6770c17877d"
+      },
+      {
+        "id": "sc-em800-4.6.0",
+        "sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f"
+      }
+    ],
+    "raw_byte_set_get_pairs": 7936,
+    "cli_configurations": 16,
+    "cli_cases": 222,
+    "cli_stock_sets": 140,
+    "cli_backups_observed_before_set": true,
+    "fault_configurations": 2,
+    "fault_cli_cases": 34,
+    "dropped_genuine_set_acks": 2,
+    "binary_sha256": {
+      "all_versions": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
+      "final_fault_checks": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771"
+    },
+    "checks": [
+      "all exposed schema values and every byte input",
+      "mixed-field save and restore",
+      "sibling preservation",
+      "new CPU with modeled disk reload",
+      "failed commits and corrupt checksums cannot ACK",
+      "lost ACK after stock setter/commit reports uncertainty, retains backup and does not retry SET"
+    ]
+  },
+  "remaining_component_coverage": [
+    {
+      "model": "ST-6770",
+      "source_filename": "st6770.3.2.0.dat",
+      "sha256": "d2308d565e6577071e8b174d457da47bc97ee8b1f3d42ad529a525ba4456f849",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "ST-9070",
+      "source_filename": "st9070.3.1.0.dat",
+      "sha256": "c3e27b5073f2eb8f1bcb17dd6c5a860a6da77d1d73f8d19242fd4d4a40e7ec52",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "ST-R9150",
+      "source_filename": "str9150.3.3.0.dat",
+      "sha256": "e7ea13967995c8067dcf768ea4e6d3086a686fcb9d83d17bb5379986753a9484",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "RD-6770",
+      "source_filename": "rd6770.2.0.2.dat",
+      "sha256": "d46a5458afec466b8b7f2b6bd1a6d370e3d33614ef92526b85370e1ce3e168b6",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "RD-9070",
+      "source_filename": "rd9070.3.0.1.dat",
+      "sha256": "741d8e3850eee45104024682ac274d16d29f946a55eac7d9ba5ee1a68109e279",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "RD-M8050",
+      "source_filename": "rdm8050.3.2.0.dat",
+      "sha256": "aac2de549f97aac04114e404c7d5ee1f696b3988194359722af60a0e5f0a2e1a",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "RD-M9050",
+      "source_filename": "rdm9050.3.2.0.dat",
+      "sha256": "e0a9da32eea049f5d0b82036accb7c080b35d518a153c6be62dd628981d0869c",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "RD-R9150",
+      "source_filename": "rdr9150.3.3.0.dat",
+      "sha256": "273c921db0aa9762430a87ca9e46fad2816c86691d52ffe7a01b7567b3661ad2",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "FD-6770",
+      "source_filename": "fd6770.2.0.2.dat",
+      "sha256": "f922d6880601b903a0596378fc932a3619ef6e189ab881eeb8197ff8c005cd91",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "FD-9070",
+      "source_filename": "fd9070.3.0.0.dat",
+      "sha256": "a7d45bd9dad8172132bb830cf3a68d118ed3565a88f03583b6e21565c41a2c72",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "FD-M8070",
+      "source_filename": "fdm8070.3.0.1.dat",
+      "sha256": "236c6e9ad0d83485d7191b2cbb59bf610eb2f7f774e7545f1fbccf5b59a156b4",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "FD-M9050",
+      "source_filename": "fdm9050.3.5.1.dat",
+      "sha256": "7cc7745956365a73be2b9d955bb41ae45c465896c231dfd55175857e80405633",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "FD-R9150",
+      "source_filename": "fdr9150.3.2.1.dat",
+      "sha256": "a67643ec81b542c8dcc39f592e7f6fc568d4feed07b53412b1dad20baf9cde64",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "SM-BMR1",
+      "source_filename": "bmr1.3.0.11.dat",
+      "sha256": "a62524b0d21957299a0b93034e4e0f386a906a69d90877ed09a031801591826b",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "SM-BMR2",
+      "source_filename": "smbmr2.3.0.11.dat",
+      "sha256": "48f19fe3d5af1319519df967c41557f1d2a1c32a35ad40e6ed50206c1148f839",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "BM-DN100",
+      "source_filename": "bmdn100.4.4.4.dat",
+      "sha256": "b9ab7204655a4d049a0b527e7db69a5690cdbd6575a5eb9519eb5cb3c04aae5c",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "BT-DN110",
+      "source_filename": "btdn110.4.5.0.dat",
+      "sha256": "65af4a0e68d52b43bc94660ab3e5d14c97021d59f528ac3846c8f221364c9f3b",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    },
+    {
+      "model": "MU-S705",
+      "source_filename": "mus705.2.5.0.dat",
+      "sha256": "cc7c990ba5718203a194058905d5c9bacf558341219e33eb63550508d92fb66d",
+      "reason": "no exact-hash CPU/mapping/protocol execution profile; do not count catalog/static evidence as firmware simulation"
+    }
+  ],
+  "remaining_component_coverage_note": "Locally inspected examples, not an exhaustive list of unprofiled catalog models or versions",
+  "modeled_boundaries": [
+    "USB adapter or BLE radio/PIN/notification delivery",
+    "discovery announcement delivery",
+    "initial boot/factory/RX/model caches",
+    "logical packet queue acceptance",
+    "physical NVM commit/ready and reload hydration; not allocation/compaction internals"
+  ],
+  "not_validated": [
+    "physical actuator completion",
+    "real EEPROM/RF/timing",
+    "reset-to-main/full board boot",
+    "instruction execution for models/versions outside the explicit exact-hash profile lists, including classic levers, derailleurs, power units, MU-S705/UR510/UR520 and other cycle computers"
+  ]
+}

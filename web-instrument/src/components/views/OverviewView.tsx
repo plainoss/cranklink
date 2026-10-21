@@ -19,6 +19,7 @@ const TRANSPORT_LABELS = { ble: "Bluetooth", usb: "USB", serial: "Serial", sim: 
 
 export function OverviewView({ state, onNavigate }: OverviewViewProps) {
   const identity = state.identity;
+  const isMotor = identity?.isMotor === true;
   const show = (name: string) => {
     const value = state.stagedValues[name] ?? state.liveValues[name]?.value;
     return formatSetting(state.schema, name, value);
@@ -36,11 +37,11 @@ export function OverviewView({ state, onNavigate }: OverviewViewProps) {
     <div className="w-full flex flex-col gap-6">
       <Card aria-labelledby="unit-heading" className="gap-4">
         <Card.Header className="p-0">
-          <Card.Title id="unit-heading" className="text-xl font-bold tracking-tight">{friendlyMotorName(identity)}</Card.Title>
+          <Card.Title id="unit-heading" className="text-xl font-bold tracking-tight">{isMotor ? friendlyMotorName(identity) : identity?.model}</Card.Title>
           <Card.Description className="mt-1 text-xs font-mono flex flex-wrap gap-x-3 gap-y-1">
             <span>SN {identity?.serial}</span>
-            <span>DCAS {identity?.dcasVersion}</span>
-            <span>RX {identity?.rxVersion}</span>
+            {isMotor ? <><span>DCAS {identity?.dcasVersion}</span><span>RX {identity?.rxVersion}</span></> : <span>Firmware {identity?.dcasVersion}</span>}
+            <span>Slot {identity?.slot}</span>
             <span>via {state.transport ? TRANSPORT_LABELS[state.transport] : "—"}</span>
           </Card.Description>
         </Card.Header>
@@ -54,15 +55,34 @@ export function OverviewView({ state, onNavigate }: OverviewViewProps) {
             </Alert.Content>
           </Alert>
         )}
-        <Card.Content className="p-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {isMotor && <Card.Content className="p-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {has("destination") && <Tile label="Region" value={show("destination")} staged={isStaged("destination")} onPress={go("geometry")} />}
           {has("speed-limit") && <Tile label="Assist speed limit" value={show("speed-limit")} staged={isStaged("speed-limit")} onPress={go("geometry")} />}
           {has("tire-circumference") && <Tile label="Tire circumference" value={show("tire-circumference")} staged={isStaged("tire-circumference")} onPress={go("geometry")} />}
           {has("lamp") && <Tile label="Light port" value={show("lamp")} staged={isStaged("lamp")} onPress={go("geometry")} />}
-        </Card.Content>
+        </Card.Content>}
       </Card>
 
-      {hasProfiles && (
+      {!isMotor && (
+        <Card className="gap-4" data-testid="component-overview-settings">
+          <Card.Header className="p-0 flex flex-row items-start justify-between gap-3">
+            <div>
+              <Card.Title className="text-sm font-bold">Component settings</Card.Title>
+              <Card.Description className="text-xs mt-1">
+                {state.schema.length ? `${state.schema.length} supported fields. Read-only values are shown alongside editable settings.` : "This component is catalogued, but does not yet have a verified settings layout."}
+              </Card.Description>
+            </div>
+            {state.schema.length > 0 && <Button variant="outline" size="sm" onPress={go("all")}>View settings<ChevronRight size={14} aria-hidden="true" /></Button>}
+          </Card.Header>
+          {state.schema.length > 0 && (
+            <Card.Content className="p-0 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {state.schema.map((spec) => <Tile key={spec.name} label={spec.label} value={state.unavailableValues[spec.name] ? "Unavailable" : show(spec.name)} staged={isStaged(spec.name)} onPress={go("all")} />)}
+            </Card.Content>
+          )}
+        </Card>
+      )}
+
+      {isMotor && hasProfiles && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {(["profile1", "profile2"] as const).map((profile, index) => {
             const names = ["boost", "trail", "eco"].map((mode) => `${profile}.${mode}.torque`);
@@ -93,7 +113,7 @@ export function OverviewView({ state, onNavigate }: OverviewViewProps) {
         </div>
       )}
 
-      <Card aria-labelledby="drivetrain-heading" className="gap-4 [&:not(:has(button))]:hidden">
+      {isMotor && <Card aria-labelledby="drivetrain-heading" className="gap-4 [&:not(:has(button))]:hidden">
         <Card.Title id="drivetrain-heading" className="text-sm font-bold">Drivetrain & installation</Card.Title>
         <Card.Content className="p-0 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {has("shifting-system") && <Tile label="Shifting" value={show("shifting-system")} staged={isStaged("shifting-system")} onPress={go("drivetrain")} />}
@@ -101,7 +121,7 @@ export function OverviewView({ state, onNavigate }: OverviewViewProps) {
           {has("mounting-angle") && <Tile label="Mounting angle" value={show("mounting-angle")} staged={isStaged("mounting-angle")} onPress={go("geometry")} />}
           {has("walk-assist") && <Tile label="Walk assist" value={show("walk-assist")} staged={isStaged("walk-assist")} onPress={go("geometry")} />}
         </Card.Content>
-      </Card>
+      </Card>}
 
       <Card aria-labelledby="backup-heading" className="gap-4">
         <Card.Title id="backup-heading" className="text-sm font-bold">Backups</Card.Title>

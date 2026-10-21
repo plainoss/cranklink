@@ -1,10 +1,10 @@
 # Offline firmware simulator
 
-The [E-TUBE guide](etube-protocol.md) explains discovery, routing and component-specific operations, with links to the implementation's exact encodings. Packet-matrix success and complete client probe success are separate checks; see the native-verification limitation below.
+The [E-TUBE guide](etube-protocol.md) explains discovery, routing and component-specific operations, with links to the implementation's exact encodings. Packet-matrix success and complete client probe success are separate checks. The simulator initializes explicit missing-M version and model caches for the profiled drive units; stock handlers consume those caches. Clearing the version cache reproduces the `01/2C` rejection that previously blocked some complete client probes. These fixtures do not replace query responses or establish full boot execution.
 
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
-This implementation covers the packet engine, native/Bluetooth transports, a limited persistent-write path and a separate EP800 resident-bootloader regression. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
+This implementation covers the packet engine, native/Bluetooth transports, targeted persistent-write paths and a separate EP800 resident-bootloader regression. Drive-unit writes require the exact EP800 D4.2.0 profile and support lamp and wheel circumference. Separate component fixtures execute cycle-computer settings and MU-UR500 gear-count changes. Complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
 
 ## Verified firmware coverage
 
@@ -193,12 +193,9 @@ Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contai
 
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600, SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. Firmware metadata checks and the virtual endpoint never weaken CLI gates.
 
-The [archived native results](../tools/firmware-sim/native-validation.json) predate the current E6100 probe path: they record an expected model rejection, rather than a successful full E6100 probe. On the current SC-E7000 4.1.0 / E6100 D4.8.0 fixture, `probe` instead reaches `01/2C 00` and receives error `01 2F 39 00 FF FF`. `verify_native.py` does not accept this version-query rejection, so a manifest containing that pair makes it exit nonzero before writing its summary. The pair still passes the normal handshake/read/cleanup packet matrix. Treat this as an unresolved client/fixture compatibility gap; do not use the archived report as evidence that the current native verifier passes.
+The [archived native results](../tools/firmware-sim/native-validation.json) predate the explicit version/model-cache fixtures: they record an expected model rejection. Earlier bare-D SC-E7000 4.1.0 / E6100 D4.8.0 probes reached `01/2C 00` and received `01 2F 39 00 FF FF`, causing `verify_native.py` to fail despite a passing packet matrix. Queries with selectors 0–3 reproduced that rejection while `01/84 00` returned `01 86 48 00 00 00` (4.8.0.0).
 
-Bounded queries on that motor image reject `01/2C` selectors 0–3 with the same
-error. `01/84 00` instead returns `01 86 48 00 00 00` (4.8.0.0), differing from
-the newer dual-MCU selector convention. These observations identify the gap;
-they do not establish a complete replacement probe sequence.
+The current exact-hash profiles initialize the missing M/RX version cache consumed by the stock handler. Normal `01/2C` queries and the native verifier now pass, including SC-E7000/E6100; clearing that cache reproduces the earlier rejection. The latest five native verifier groups, including the expected dropped-reply timeout, pass against the recorded CLI binary. See [current validation](../tools/firmware-sim/component-validation.json) for the base commit, binary hashes and results. Cache initialization remains a modeled boundary rather than execution of M firmware or complete boot.
 
 ## EP800 resident bootloader and Key 2 recovery
 
@@ -233,6 +230,59 @@ The real RAM initializer, FIFO parser, key validators, SPI polling/checksum and 
 Execution now selects a named Unicorn CPU model instead of relying on an implicit default. Existing application profiles use `cortex-m3` unless their `cpu` field specifies another supported model; `resident --cpu` accepts `cortex-m0`, `cortex-m3` and `cortex-m4`. These are execution settings, not identification of the physical processor.
 
 Selecting Cortex-M0 in Unicorn 2.1.4 still permits the Thumb-2 `MOVW` sequence `41 f2 70 70`. A successful emulation therefore does **not** prove ARMv6-M instruction compatibility or that a modified binary boots on hardware. Check instruction encodings separately when changing firmware, and keep hardware boot verification distinct from a simulator pass.
+
+## Component settings execution
+
+The component fixtures run a separate stock target CPU behind the existing stock gateway. Their native and modeled-GATT endpoints admit only each fixture's explicit identity, PC-link and setting command set. They do not install a motor RX-version peer or grant drive-unit authorization. Exact coverage and aggregate results are recorded in [component validation](../tools/firmware-sim/component-validation.json); the older archived native report above predates the explicit version/model-cache fixtures.
+
+| Target | Executable firmware | Settings exercised |
+| --- | --- | --- |
+| MU-UR500 | 3.3.1 | Signed adjustment GET, gear-count GET/SET, invalid values, record checksums and modeled persistence |
+| SC-EM800 | 4.0.0, 4.1.0, 4.3.0, 4.4.0, 4.5.0, 4.6.0 | Beep, distance unit, language, brightness |
+| SC-E6100 | 4.1.0 | Beep, distance unit, language, backlight |
+| SC-E7000 | 4.1.0 | Beep, distance unit, language |
+
+Component parsing, identity/version/serial replies, all five PC-link keys, settings validation, logical EEPROM-record staging/checksums, cache changes, schedulers and reply construction execute unchanged firmware instructions. Physical storage service/ready, initial factory caches and reload hydration are explicit models; flash allocation/compaction, complete boot and physical EEPROM behavior are not executed. Display checks include every byte value for every exposed setting, mixed-field changes, sibling preservation, restore, rejected/normalized values and failed modeled commits. The CLI runs additionally check complete backups before each SET, batch ordering, new-CPU disk reloads and uncertain outcomes after a dropped SET acknowledgment.
+
+MU adjustment is asynchronous: firmware can acknowledge acceptance while GET still reports the old position. The fixture deliberately leaves the actuator unfinished. The actual CLI must send one SET, poll for completion, then retain its backup and report an uncertain outcome if completion never arrives. Firmware execution also verifies that setting the already-reported current value replaces a different pending target; Cranklink therefore applies a hub-adjustment target once even when its `changed` receipt is false. No actuator success is fabricated.
+
+The current web UI and WASM also run against unchanged SC-EM800 4.6.0 and MU-UR500 3.3.1 through `component_browser_peer.py`. The opt-in browser suite clicks schema controls and save/restore confirmations, checks fresh durable IndexedDB backups before every actual SET, observes stock commits, creates a new firmware machine after a controlled power cycle, and verifies values by firmware GET before restoring them. It also checks that unfinished MU adjustment sends one SET, retains the staged value and backup, and reports uncertainty. GATT radio delivery, initial caches and physical NVM services remain modeled. See [browser test setup](../web-instrument/README.md#test) and [web validation results](../tools/firmware-sim/web-component-validation.json), which identify exact firmware, source and browser WASM hashes separately from the earlier CLI validation.
+
+Most locally inspected classic lever, derailleur and power-unit images, plus MU-S705, still lack a verified CPU/mapping/execution profile. Their catalog schemas retain source and scripted-protocol coverage, but these images are **not** counted as firmware-simulated. Other catalogued models and versions outside the explicit profile lists also remain unverified by instruction execution, including MU-UR510/UR520 and other cycle computers. Modern Thumb images cannot stand in for a different classic model.
+
+```sh
+# Existing gateway/motor manifest: profile ID -> absolute local image path.
+# Component manifest additionally maps mu-ur500-3.3.1 to its decoded image.
+CRANKLINK_SIM_FIXTURES=/tmp/firmware-fixtures.json \
+CRANKLINK_COMPONENT_FIXTURES=/tmp/component-fixtures.json \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+    -s tools/firmware-sim -p 'test_*.py'
+
+# Current CLI, genuine MU target; use --transport gatt for the BLE client.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_components.py \
+  --fixtures /tmp/firmware-fixtures.json \
+  --component-image /path/to/MUUR500.3.3.1.dat.decoded.bin \
+  --binary target/debug/cranklink --transport native --write-tests \
+  --gateway-id sc-em800-4.6.0 --output /tmp/mu-cli-validation.json
+
+# All executable display targets, native and BLE, through this gateway.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_display_settings.py \
+  --fixtures /tmp/firmware-fixtures.json --binary target/debug/cranklink \
+  --gateway-id sc-em800-4.6.0 --output /tmp/display-cli-validation.json
+
+# Drop a genuine ACK after the stock setter and modeled commit have run.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_display_settings.py \
+  --fixtures /tmp/firmware-fixtures.json --binary target/debug/cranklink \
+  --gateway-id sc-em800-4.6.0 --target-id sc-em800-4.6.0 --fault-tests \
+  --output /tmp/display-uncertain-write-validation.json
+
+# Current CLI motor writes, real regulation authentication, restore and reboot.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_settings_writes.py \
+  --fixtures /tmp/firmware-fixtures.json --binary target/debug/cranklink \
+  --output /tmp/current-cli-persistent-writes.json
+```
+
+MU `--gateway-id` is repeatable; omit it for all admitted gateways. `--case` permits focused independent read/guard checks; sequence-dependent write/restore plans must run together. Display `--target-id` filters executable target profiles. Display configurations use separate processes: per-instruction Python hooks in threaded emulators can contend for one interpreter and exceed unchanged client response deadlines. Reports keep simulator scheduling failures separate from firmware rejection or client bugs.
 
 ## Execution boundaries and remaining work
 

@@ -1,10 +1,10 @@
 //! Exclusive transport session. Commands are serialized and full frames journaled.
 //!
 //! `Session::units` discovers arbitrary catalogued component types and refines
-//! their stock identities without motor PC-link startup. Motor `probe` and
-//! settings startup require `UnitIdentity::require_motor`; firmware paths apply
-//! their own application/boot identity and image checks. A resolved Di2 name
-//! does not grant these operations. Normal routed requests carry
+//! their stock identities without motor PC-link startup. Explicit component
+//! probes and settings require a unique catalogued identity; default startup
+//! and firmware paths retain their motor gates and application/boot checks.
+//! A resolved name alone does not grant every operation. Normal routed requests carry
 //! the target slot, while control-0x48 replies carry this session's PC slot.
 use crate::protocol::{self, Decoder, Frame};
 use crate::{
@@ -27,11 +27,13 @@ pub struct PowerInfo {
 #[derive(Debug, Serialize, Clone)]
 pub struct Identity {
     pub slot: u8,
+    /// Motor attribute discriminator, or the resolved model for other components.
     pub cargo: String,
+    /// Application firmware version (the historical DCAS field for motors).
     pub dcas_version: String,
     pub rx_version: String,
 }
-/// Stock identity is readable before entering a motor PC-link session.
+/// Stock identity is readable before entering a component PC-link session.
 #[derive(Debug, Serialize)]
 pub struct UnitIdentity {
     pub slot: u8,
@@ -68,6 +70,34 @@ impl UnitIdentity {
         self.model_candidates = resolved.model_candidates;
         self.part = resolved.part;
         self.model_params = resolved.model_params;
+        Ok(())
+    }
+    /// Motors retain their existing admission rules. Other components require
+    /// explicit selection and a unique catalogue identity before PC-link start.
+    pub(crate) fn prepare_session(
+        &mut self,
+        commands: &mut impl UnitCommands,
+        allow_component: bool,
+    ) -> Result<()> {
+        if self.is_motor() {
+            return Ok(());
+        }
+        if !allow_component {
+            return self.require_motor();
+        }
+        ensure!(
+            !self.model_candidates.is_empty(),
+            "slot {} is not a catalogued component (series {:02X}, unit {:02X}); inspect units before starting a settings session",
+            self.slot, self.model_series, self.model_unit
+        );
+        if self.model.is_none() {
+            self.resolve_name(commands)?;
+        }
+        ensure!(
+            self.model.is_some(),
+            "slot {} component model remains unresolved; candidates {:?}; inspect units before starting a settings session",
+            self.slot, self.model_candidates
+        );
         Ok(())
     }
     pub fn from_reply(slot: u8, reply: Vec<u8>) -> Result<Self> {
@@ -138,10 +168,10 @@ pub trait UnitCommands {
     ) -> Result<Vec<u8>>;
 }
 impl UnitCommands for Session {
-    /// Read the motor directly: SM-PCE02 does not answer the BLE gateway query.
+    /// Read the component directly: SM-PCE02 does not answer the BLE gateway query.
     fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
         let stock = self.command(slot, 1, 0x1c, &[0], 0x1e)?;
-        ensure!(stock.len() >= 2, "truncated motor stock identity");
+        ensure!(stock.len() >= 2, "truncated component stock identity");
         Ok(vec![slot, stock[0], stock[1]])
     }
     fn command(
@@ -162,6 +192,7 @@ pub struct Session {
     trace: Option<File>,
     pc_slot: u8,
     normal_slot: Option<u8>,
+    normal_is_motor: bool,
     target_slot: Option<u8>,
     adapter_supply: bool,
     unit_auth_attempted: bool,
@@ -179,6 +210,7 @@ impl Session {
             trace: Some(trace),
             pc_slot: 0,
             normal_slot: None,
+            normal_is_motor: false,
             target_slot: Some(31),
             adapter_supply: true,
             unit_auth_attempted: false,
@@ -197,6 +229,7 @@ impl Session {
             trace,
             pc_slot: 0,
             normal_slot: None,
+            normal_is_motor: false,
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
@@ -406,7 +439,7 @@ impl Session {
         })?;
         ensure!(
             r.payload[2] == response_cmd,
-            "motor rejected group {group:02X} command {command:02X}: {}",
+            "unit rejected group {group:02X} command {command:02X}: {}",
             hex::encode(&r.payload)
         );
         Ok(r.payload[3..].to_vec())
@@ -464,39 +497,44 @@ impl Session {
         })
     }
     pub fn normal_start(&mut self, slot: Option<u8>) -> Result<Identity> {
-        self.normal_start_inner(slot, true, None)
+        self.normal_start_inner(slot, true, None, false)
     }
     /// Start PC linking at a motor selected from the current discovery map.
     /// The caller must not run PnP between selecting its identity and this call:
     /// another discovery can reassign slots on a multi-component bike.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn normal_start_discovered(&mut self, slot: u8) -> Result<Identity> {
-        self.normal_start_selected(slot, true)
+        self.normal_start_selected(slot, true, None, false)
     }
     pub fn normal_start_component(
         &mut self,
         slot: Option<u8>,
         component: Option<&str>,
     ) -> Result<Identity> {
-        self.normal_start_inner(slot, true, component)
+        self.normal_start_inner(slot, true, component, slot.is_some() || component.is_some())
     }
     /// Explicit RX recovery entry: DCAS must be alive and identifiable, while
     /// the interrupted RX application can make both application version reads
     /// unavailable. This entry requires cargo; its caller must independently
     /// validate the DCAS bootloader identity before any firmware write.
-    /// Ordinary probe/verification always requires both application versions.
+    /// Ordinary motor probe/verification requires both application versions.
     pub fn normal_start_for_rx_recovery(&mut self, slot: Option<u8>) -> Result<Identity> {
-        self.normal_start_inner(slot, false, None)
+        self.normal_start_inner(slot, false, None, false)
     }
     fn normal_start_inner(
         &mut self,
         slot: Option<u8>,
         require_versions: bool,
         component: Option<&str>,
+        allow_component: bool,
     ) -> Result<Identity> {
         let slots = self.discover()?;
         let slot = if let Some(component) = component {
-            let mut units = self.inventory_slots(&slots)?;
+            let named_slots = match slot {
+                Some(slot) => vec![select_motor_slot(&slots, Some(slot))?],
+                None => slots.clone(),
+            };
+            let mut units = self.inventory_slots(&named_slots)?;
             for unit in &mut units {
                 if unit
                     .model_candidates
@@ -515,20 +553,37 @@ impl Session {
                 None => select_current_motor(&self.inventory_slots(&slots)?)?,
             }
         };
-        self.normal_start_selected(slot, require_versions)
+        self.normal_start_selected(slot, require_versions, component, allow_component)
     }
     /// Start 32/10 with the current PC source, send all five ordered 32/30 keys,
     /// and require 32/12 start receipt before further service queries. The keys
     /// establish PC-link, independently of protected-setting authorization.
     /// Wait 300 ms after start on adapter supply, otherwise 1 s, then 100 ms
     /// between keys. Repeating start is not a keepalive for an active session.
-    fn normal_start_selected(&mut self, slot: u8, require_versions: bool) -> Result<Identity> {
+    fn normal_start_selected(
+        &mut self,
+        slot: u8,
+        require_versions: bool,
+        component: Option<&str>,
+        allow_component: bool,
+    ) -> Result<Identity> {
         self.target(slot)?;
-        let motor = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
-        motor.require_motor()?;
+        let mut unit = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
+        unit.prepare_session(self, allow_component)?;
+        if let Some(component) = component {
+            if unit.model.is_none() {
+                unit.resolve_name(self)?;
+            }
+            ensure!(
+                unit.model
+                    .is_some_and(|model| crate::unit_models::name_matches(component, model)),
+                "component {component:?} no longer matches slot {slot}"
+            );
+        }
         let p = self.adapter(4, &[], 0x24)?;
         self.pc_slot = p.first().copied().context("short protocol reply")? & 0x1f;
         self.normal_slot = Some(slot);
+        self.normal_is_motor = unit.is_motor();
         self.send(0x48, &[slot, 0x32, 0x10, 1, self.pc_slot, 0, 0])?;
         sleep(Duration::from_millis(if self.adapter_supply {
             300
@@ -556,9 +611,17 @@ impl Session {
         })?;
         self.normal_slot = Some(slot);
         sleep(Duration::from_millis(30));
-        let cargo = crate::motor_support::read_params(self, slot, motor.model_series)?;
+        if !unit.is_motor() {
+            return Ok(Identity {
+                slot,
+                cargo: unit.model.context("unresolved component model")?.to_owned(),
+                dcas_version: version(&self.command(slot, 1, 0x2c, &[0], 0x2e)?)?,
+                rx_version: "not applicable".to_owned(),
+            });
+        }
+        let cargo = crate::motor_support::read_params(self, slot, unit.model_series)?;
         ensure!(
-            motor.model_series == 0x08 || cargo.len() >= 7,
+            unit.model_series == 0x08 || cargo.len() >= 7,
             "truncated cargo attribute reply: {}",
             hex::encode(&cargo)
         );
@@ -602,6 +665,7 @@ impl Session {
         );
         let model = self.model_identity(slot)?;
         ensure!(model.len() >= 3, "invalid motor stock identity");
+        UnitIdentity::from_reply(slot, model.clone())?.require_motor()?;
         let cargo = crate::motor_support::read_params(self, slot, model[1])?;
         let firmware = version(&self.command(slot, 1, 0x2c, &[0], 0x2e)?)?;
         ensure!(model.len() >= 3, "invalid motor stock identity");
@@ -735,6 +799,7 @@ impl Session {
                 hex::encode(reply)
             );
             self.normal_slot = None;
+            self.normal_is_motor = false;
         }
         Ok(())
     }
@@ -743,7 +808,7 @@ impl Session {
     /// the discovered slot; this implementation handles one motor exclusively.
     pub fn fast_prepare(&mut self, slot: u8) -> Result<u8> {
         ensure!(
-            self.normal_slot == Some(slot),
+            self.normal_slot == Some(slot) && self.normal_is_motor,
             "fast preparation requires the active discovered motor"
         );
         self.set_protocol(0x40)?;
@@ -766,6 +831,7 @@ impl Session {
             }
         }
         self.normal_slot = None;
+        self.normal_is_motor = false;
         // DCASX-specific second pass in sendStartUpdateForConnectedUnits:
         // wait at least 1000 ms after key5 dispatch, then repeat key5 and require
         // its bootloader acknowledgment at the explicitly retained slot.
@@ -868,6 +934,10 @@ impl Session {
             [0x33, 0x83, 0x27],
         ];
         let initial_slot = if from_application {
+            ensure!(
+                self.normal_is_motor,
+                "application bootloader entry requires an active motor session"
+            );
             self.normal_slot
                 .context("application transition requires a discovered normal session")?
         } else {
@@ -894,6 +964,7 @@ impl Session {
             })?;
         }
         self.normal_slot = None;
+        self.normal_is_motor = false;
         self.boot_identity()
     }
     fn boot_query(
@@ -1066,6 +1137,7 @@ mod tests {
             trace: None,
             pc_slot: 0,
             normal_slot: None,
+            normal_is_motor: false,
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
@@ -1077,6 +1149,198 @@ mod tests {
             control,
             payload: payload.to_vec(),
         }
+    }
+    fn discovery_steps(slots: &[u8]) -> Vec<(Frame, Frame)> {
+        let mut bitmap = [0; 4];
+        for &slot in slots {
+            bitmap[usize::from(slot) / 8] |= 1 << (slot % 8);
+        }
+        vec![
+            (frame(3, &[0x20]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+            (frame(0x1d, &[0]), frame(0x3d, &[0, 0])),
+            (frame(0x1b, &[]), frame(0x3b, &bitmap)),
+        ]
+    }
+    fn stock_step(slot: u8, series: u8, unit: u8) -> (Frame, Frame) {
+        (
+            frame(0x48, &[slot, 1, 0x1c, 0]),
+            frame(0x48, &[0, 1, 0x1e, series, unit]),
+        )
+    }
+    fn component_start_steps(slot: u8) -> Vec<(Frame, Frame)> {
+        let mut steps = vec![
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+            (
+                frame(0x48, &[slot, 0x32, 0x10, 1, 0, 0, 0]),
+                frame(0x48, &[0, 0x32, 0x12, 1]),
+            ),
+        ];
+        for [a, b] in [
+            [0xa2, 0x2b],
+            [0x30, 0x0e],
+            [0x7a, 0x4d],
+            [0x62, 0x2b],
+            [0x85, 0xb4],
+        ] {
+            steps.push((
+                frame(0x48, &[slot, 0x32, 0x30, a, b, 0, 0]),
+                frame(0x48, &[0]),
+            ));
+        }
+        steps.push((
+            frame(0x48, &[slot, 1, 0x2c, 0]),
+            frame(0x48, &[0, 1, 0x2e, 0x31, 2, 3]),
+        ));
+        steps
+    }
+    fn check_component_slot_start(series: u8, unit: u8, model: &str) {
+        let mut commands = discovery_steps(&[4]);
+        commands.push((frame(6, &[4]), frame(0x26, &[0])));
+        commands.push(stock_step(4, series, unit));
+        commands.extend(component_start_steps(4));
+        let (mut session, steps) = scripted(commands);
+        let identity = session.normal_start_component(Some(4), None).unwrap();
+        assert_eq!(identity.cargo, model);
+        assert_eq!(identity.dcas_version, "3.1.2.3");
+        assert_eq!(identity.rx_version, "not applicable");
+        assert_eq!(session.normal_slot, Some(4));
+        assert!(!session.normal_is_motor);
+        assert!(session
+            .boot_start(true)
+            .unwrap_err()
+            .to_string()
+            .contains("requires an active motor session"));
+        assert!(session.fast_prepare(4).is_err());
+        // The script admits no motor discriminator or RX-version requests.
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
+    fn explicit_derailleur_session_uses_generic_handshake_and_application_version() {
+        check_component_slot_start(2, 4, "RD-6770");
+    }
+    #[test]
+    fn explicit_power_unit_session_uses_generic_handshake_and_application_version() {
+        check_component_slot_start(2, 0, "SM-BMR1");
+    }
+    #[test]
+    fn explicit_hub_actuator_session_uses_generic_handshake_and_application_version() {
+        check_component_slot_start(6, 4, "MU-S705");
+    }
+    #[test]
+    fn named_lever_probe_resolves_part_before_generic_handshake() {
+        let part = (frame(0x48, &[4, 4, 0x0c, 0]), frame(0x48, &[0, 4, 0x0e, 1]));
+        let mut commands = discovery_steps(&[4]);
+        commands.extend([
+            (frame(6, &[4]), frame(0x26, &[0])),
+            stock_step(4, 2, 1),
+            (frame(6, &[4]), frame(0x26, &[0])),
+            part.clone(),
+            (frame(6, &[4]), frame(0x26, &[0])),
+            stock_step(4, 2, 1),
+            part,
+        ]);
+        commands.extend(component_start_steps(4));
+        commands.extend([
+            (
+                frame(0x48, &[4, 1, 0x3c, 0]),
+                frame(0x48, &[0, 1, 0x3e, 1, 2, 3, 4, 5, 6]),
+            ),
+            stock_step(4, 2, 1),
+        ]);
+        let (mut session, steps) = scripted(commands);
+        let probe = session.probe_component(None, Some("ST-6770-L")).unwrap();
+        assert_eq!(probe.identity.cargo, "ST-6770-L");
+        assert_eq!(probe.identity.rx_version, "not applicable");
+        assert_eq!(probe.serial, "010203040506");
+        assert_eq!((probe.model_series, probe.model_unit), (2, 1));
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
+    fn component_name_and_slot_must_select_the_same_current_unit() {
+        let mut commands = discovery_steps(&[4, 13]);
+        commands.extend([(frame(6, &[4]), frame(0x26, &[0])), stock_step(4, 0x23, 2)]);
+        let (mut session, steps) = scripted(commands);
+        assert!(session
+            .normal_start_component(Some(4), Some("RD-6770"))
+            .unwrap_err()
+            .to_string()
+            .contains("matching slots []"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn named_motor_is_rechecked_after_inventory_before_pc_link() {
+        let model_params = (
+            frame(0x48, &[13, 0x16, 0x7c, 0]),
+            frame(
+                0x48,
+                &[0, 0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0],
+            ),
+        );
+        let mut commands = discovery_steps(&[13]);
+        commands.extend([
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x23, 0),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            model_params.clone(),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x30, 0),
+            model_params,
+        ]);
+        let (mut session, steps) = scripted(commands);
+        let error = session
+            .normal_start_component(Some(13), Some("DU-EP800-CRG"))
+            .unwrap_err();
+        assert!(error.to_string().contains("no longer matches slot 13"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn motor_only_entry_rejects_known_nonmotor_before_pc_link() {
+        let mut commands = discovery_steps(&[4]);
+        commands.extend([(frame(6, &[4]), frame(0x26, &[0])), stock_step(4, 2, 4)]);
+        let (mut session, steps) = scripted(commands);
+        assert!(session
+            .normal_start(Some(4))
+            .unwrap_err()
+            .to_string()
+            .contains("not a recognized motor"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn explicit_unknown_component_is_rejected_before_pc_link() {
+        let mut commands = discovery_steps(&[4]);
+        commands.extend([(frame(6, &[4]), frame(0x26, &[0])), stock_step(4, 0x99, 2)]);
+        let (mut session, steps) = scripted(commands);
+        assert!(session
+            .normal_start_component(Some(4), None)
+            .unwrap_err()
+            .to_string()
+            .contains("not a catalogued component"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn unresolved_lever_part_is_rejected_before_pc_link() {
+        let mut commands = discovery_steps(&[4]);
+        commands.extend([
+            (frame(6, &[4]), frame(0x26, &[0])),
+            stock_step(4, 2, 1),
+            (
+                frame(0x48, &[4, 4, 0x0c, 0]),
+                frame(0x48, &[0, 4, 0x0e, 0xff]),
+            ),
+        ]);
+        let (mut session, steps) = scripted(commands);
+        assert!(session
+            .normal_start_component(Some(4), None)
+            .unwrap_err()
+            .to_string()
+            .contains("component model remains unresolved"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
     }
     #[test]
     fn initialize_waits_for_capacitor_and_ready_state_before_discharge() {
@@ -1236,8 +1500,10 @@ mod tests {
         assert_eq!(identity.cargo, "00-CRG");
         assert_eq!(identity.dcas_version, "4.2.0.0");
         assert_eq!(identity.rx_version, "4.1.11.0");
+        assert!(session.normal_is_motor);
         session.normal_stop().unwrap();
         assert!(session.normal_slot.is_none());
+        assert!(!session.normal_is_motor);
         assert!(steps.borrow().is_empty());
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -1252,6 +1518,7 @@ mod tests {
         ]);
         assert!(session.normal_start_discovered(13).is_err());
         assert!(session.normal_slot.is_none());
+        assert!(!session.normal_is_motor);
         assert!(steps.borrow().is_empty());
     }
     #[test]
