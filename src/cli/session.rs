@@ -19,7 +19,7 @@ pub struct JsonRpcRequest {
 #[derive(Debug, Serialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// JSON-RPC 2.0 requires `id`, as null when the request's id is unknown.
     pub id: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
@@ -131,7 +131,7 @@ pub fn run_session(
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
     let mut stdout = std::io::stdout();
-    let mut line = String::new();
+    let mut line = Vec::new();
 
     let mut session: Option<crate::device::Session> = None;
     let mut active_port = default_port.unwrap_or_else(|| "auto".to_string());
@@ -152,11 +152,13 @@ pub fn run_session(
 
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        if reader.read_until(b'\n', &mut line)? == 0 {
             break; // EOF
         }
 
-        let trimmed = line.trim();
+        // Invalid UTF-8 becomes a parse error for this line, not a fatal one.
+        let text = String::from_utf8_lossy(&line);
+        let trimmed = text.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -201,11 +203,24 @@ pub fn run_session(
                 break;
             }
             "session.connect" | "connect" => {
+                if let Some(ser) = req.params.get("expect_serial").and_then(Value::as_str) {
+                    match super::sanitize_serial(ser) {
+                        Ok(serial) => active_serial = Some(serial),
+                        Err(e) => {
+                            let err_resp = JsonRpcResponse {
+                                jsonrpc: "2.0",
+                                id,
+                                result: None,
+                                error: Some(JsonRpcError::invalid_params(format!("{e:#}"), None)),
+                            };
+                            writeln!(stdout, "{}", serde_json::to_string(&err_resp)?)?;
+                            stdout.flush()?;
+                            continue;
+                        }
+                    }
+                }
                 if let Some(port_param) = req.params.get("port").and_then(Value::as_str) {
                     active_port = port_param.to_string();
-                }
-                if let Some(ser) = req.params.get("expect_serial").and_then(Value::as_str) {
-                    active_serial = Some(ser.to_string());
                 }
 
                 // If existing session, close it cleanly first
@@ -510,6 +525,10 @@ pub fn run_session(
         stdout.flush()?;
     }
 
+    // EOF ends the session like `exit`: release an open PC-link.
+    if let Some(mut s) = session.take() {
+        let _ = s.normal_stop();
+    }
     Ok(())
 }
 
