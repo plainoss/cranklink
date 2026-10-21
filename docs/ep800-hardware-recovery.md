@@ -5,8 +5,8 @@ but stalls before the second, repeatedly sending empty `0x70` responses. The
 bridge lets its bootloader—the motor's recovery program—accept the connection
 and restore the original firmware through E-TUBE. **D** is the Shimano
 communication processor; **M** is the Renesas motor-control processor. This
-procedure restores D only, leaving M firmware and settings unchanged. Try the [normal recovery CLI](../README.md#recover-a-motor-stuck-in-bootloader-mode)
-first.
+procedure restores D only, leaving M firmware and settings unchanged. Try the
+[normal recovery CLI](../README.md#recover-a-motor-stuck-in-bootloader-mode) first.
 
 This worked on one **DU-EP800-CRG, board 1, series `23`, unit `00`, bootloader
 5.0.6.1**, using an **SM-PCE02 and macOS native USB**. The public tools below were
@@ -15,8 +15,8 @@ not been rerun on hardware. Other board revisions and platforms remain untested.
 
 ## Why the bridge helps
 
-We read the bootloader—the recovery program—from a working EP800-CRG with the
-same bootloader version and ran that code in the firmware simulator. The tests
+We read the bootloader from a working EP800-CRG with the same bootloader
+version and ran that code in the firmware simulator. The tests
 showed how repeated empty replies on SPI, the internal link between the two
 processors, could keep the bootloader busy sending `0x70` responses instead of
 processing the second E-TUBE connection key.
@@ -35,10 +35,6 @@ bootloader or flash the donor's code.
 ## Find the connector board
 
 Disconnect the battery and USB before opening or handling the motor.
-These views help identify the opened motor and both sides of the connector
-board; they are not a complete disassembly guide.
-Only the backgrounds have been removed; the board details and chip labels
-are unchanged.
 
 ![Opened motor showing gears and the power board](images/ep800-recovery/opened-motor-cleaned.png)
 
@@ -52,14 +48,12 @@ and the smaller square SHIMANO chip (D). This is the side needed for the bridge.
 
 ![Reverse of the connector board, showing its board-to-board connector](images/ep800-recovery/connector-board-reverse-cleaned.png)
 
-The reverse side has the large connector linking the two boards. The exact
-bridge contacts are marked in the original close-up below.
+The large connector on the reverse side links the two boards.
 
 ## 1. Connect the marked points
 
-Disconnect battery and USB before positioning the contacts. Use the connector
-board shown below, which holds the E-TUBE sockets and both processors. No battery
-was needed for the successful recovery.
+With battery and USB disconnected, position the contacts on the connector
+board. The adaptor supplies power for recovery; no battery is needed.
 
 ![Power and signal points for the temporary 20 ohm bridge](images/ep800-recovery/bridge-location-labelled.png)
 
@@ -83,7 +77,6 @@ insulated, secure connection that can stay in place for the entire transfer.
 
 ![E-TUBE contact connections on the connector board](images/ep800-recovery/etube-wiring-cleaned.png)
 
-Close-up of the original E-TUBE connections, with the background removed.
 For the breakout used in this recovery:
 
 | Viewing direction | E-TUBE inner conductor | E-TUBE outer conductor |
@@ -111,7 +104,6 @@ but is not flashed; its live version cannot be checked before restoring D.
 |---|---|
 | Stock D container | `35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543` |
 | Stock M container | `94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44` |
-| Decoded D, checked internally | `f2f2d18441b7651620a0aacfd4f9f31b2a97b6397bf0f03b2171ff9652cf2551` |
 
 From the repository root, build the tools:
 
@@ -167,9 +159,7 @@ cargo build --locked --bin cranklink
 ```
 
 Check the original serial and cargo identity, D **4.2.0.0**, and M **4.1.11.0**.
-Compare the settings' raw and decoded values with your original backup. Read the
-settings to compare them; a `settings read --output` snapshot is not a restore
-input.
+Compare the settings with your original backup.
 
 The successful recovery verified normal communication and **74/74 original
 settings** after removing the resistor. A full flash-byte readback and physical
@@ -184,14 +174,7 @@ directory. The successful case needed a fresh connection and full rewrite after
 an interrupted first attempt.
 
 Connection-only retries do not erase firmware, but may reset or cycle adaptor
-power. Once the restore starts, hold the bridge steady until its final result.
-
-## Checks before flashing
-
-The tools check the firmware files, complete the five connection keys and verify
-that the motor's identity matches before erasing anything. They retry failed
-connections, but never automatically retry an interrupted flash. Keep the output
-and journal if a restore fails.
+power.
 
 The dedicated recovery tools use the connection sequence that worked on this
 motor. The ordinary CLI's `--recovery` setup differs. Developers can find the
