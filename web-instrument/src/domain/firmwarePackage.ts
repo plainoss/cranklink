@@ -13,8 +13,9 @@ export function classifyFirmwareRole(
   filename: string,
   metadata?: FirmwareMetadata | null,
 ): "dcas" | "rx" | "unknown" {
-  if (metadata?.kind === "DcasX") return "dcas";
-  if (metadata?.kind === "Renesas") return "rx";
+  // Rust serializes FirmwareKind in kebab-case.
+  if (metadata?.kind === "dcas-x" || metadata?.kind === "dcas2i" || metadata?.kind === "dcas2") return "dcas";
+  if (metadata?.kind === "renesas") return "rx";
   const upper = filename.toUpperCase();
   if (upper.includes("-D.") || upper.includes("_D.") || upper.includes("DCAS")) {
     return "dcas";

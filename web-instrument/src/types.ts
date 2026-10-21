@@ -108,7 +108,7 @@ export interface JournalSnapshot {
 }
 
 export interface FirmwareMetadata {
-  kind: "DcasX" | "Renesas" | string;
+  kind: "dcas-x" | "dcas2i" | "dcas2" | "renesas";
   series: number;
   unit: number;
   board?: number | null;

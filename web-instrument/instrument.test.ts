@@ -66,6 +66,11 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
   it("classifies DCAS (-D) and RX (-M) images and validates companion match", () => {
     assert.equal(classifyFirmwareRole("DUEP800-D.4.2.0.dat"), "dcas");
     assert.equal(classifyFirmwareRole("DUEP800-M.4.1.11.dat"), "rx");
+    // Metadata from the WASM core wins over the filename.
+    const meta = { series: 0x23, unit: 0, version: "4.2.0.0", source_sha256: "" };
+    assert.equal(classifyFirmwareRole("motor.bin", { ...meta, kind: "dcas-x" }), "dcas");
+    assert.equal(classifyFirmwareRole("motor.bin", { ...meta, kind: "dcas2i" }), "dcas");
+    assert.equal(classifyFirmwareRole("motor-D.bin", { ...meta, kind: "renesas" }), "rx");
 
     const dcasFile = {
       filename: "DUEP800-D.4.2.0.dat",
@@ -73,7 +78,7 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
       sha256: "35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543",
       role: "dcas" as const,
       metadata: {
-        kind: "DcasX",
+        kind: "dcas-x" as const,
         series: 0x23,
         unit: 0,
         board: 1,
@@ -89,7 +94,7 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
       sha256: "94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44",
       role: "rx" as const,
       metadata: {
-        kind: "Renesas",
+        kind: "renesas" as const,
         series: 0x23,
         unit: 0,
         version: "4.1.11.0",
