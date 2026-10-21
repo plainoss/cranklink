@@ -2,7 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "**/production.spec.ts",
+  // Both have dedicated configs: built assets, and serial stock-firmware runs.
+  testIgnore: ["**/production.spec.ts", "**/stock-components.spec.ts"],
   timeout: 45_000,
   expect: {
     timeout: 15_000,
