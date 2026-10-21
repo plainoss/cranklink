@@ -4,11 +4,20 @@ Revision: 2026-10-21. Scope: component integration, service traffic, identity,
 settings and update transport. Hexadecimal byte strings omit `0x`; quantities
 and times are decimal unless explicitly marked. `||` means concatenation.
 `LE16/LE32` mean unsigned little-endian integers. Preserve unknown bytes.
+Indices and slices are zero-based. In the settings table, "original bytes"
+refer to GET reply parameters after removing route, group and opcode headers.
 
 This is an implementation reference, not a complete specification of every
 released Shimano product. The strongest coverage is the normal service path
 between gateways and drive units. Product recognition, command support, firmware
 execution, electrical interoperability and riding behavior are separate claims.
+
+Jump to [USB framing](#2-sm-pce02-host-stream), [identity](#3-addressing-discovery-and-identity),
+[PC-link](#4-normal-motor-pc-link-lifecycle), [Bluetooth](#5-bluetooth-service-and-routing),
+[authorization](#6-protected-drive-unit-settings-authentication),
+[settings](#7-settings-wire-dictionary), [updates](#8-firmwareupdate-traffic-recognition),
+[bus fragments](#9-external-packet-fragments-and-missing-physical-specification),
+[coverage](#10-product-and-simulator-coverage) and [decoding](#11-traffic-decoding-and-implementation-checklist).
 
 ## 1. Layers and integration boundaries
 
@@ -144,6 +153,18 @@ uses `15/00`. The current client catalog includes historical shared-`08` aliases
 do not treat those aliases as an authoritative live-wire identity map. Older
 motor product attributes can be binary; decoding all such replies as text loses
 information. An unknown identity is not permission to use another model's writes.
+
+### Bounded EP800 memory-read service
+
+Normal `32/8C → 32/8E` reads 1–3 bytes on the working EP800-CRG application
+profiles admitted by [the resident-dump reader](../src/bootloader_dump.rs).
+Request parameters are `[addr_hi,addr_lo,addr_mid,count,00]`, where the three
+address bytes form a 24-bit address in the unusual high/low/middle order.
+Reply parameters echo `[addr_hi,addr_lo,addr_mid,data…]`; validate that echo
+and the six-byte record (or seven with reserved final `FF`). This read does
+not enter boot mode. The reader restricts model, board, D/M versions, fixed
+64 KiB resident range and reviewed application sample windows. It is not a
+universal memory-read capability of every E-TUBE node.
 
 ## 4. Normal motor PC-link lifecycle
 
@@ -305,19 +326,19 @@ selectors and padding. Check the model schema before reusing a layout.
 | Assist speed | `16` | `B0 / B4` | GET `01`; SET LE16 km/h×100,`01 FF` |
 | Assist tuple | `16` | `F8 / FC` | GET profile,mode; SET profile,mode,torque,character,start,`00 00` |
 | Assist labels | `17` | `28 / 2C` | GET profile; SET profile,label,`00 00` |
-| Profile name | `17` | `20 / 24` | Five-character chunks; selectors `50/51`, `60/61` |
+| Profile name | `17` | `20 / 24` | GET selector; reply selector,ASCII5; legacy SET selector,ASCII5,`00`; selectors `50/51`, `60/61` |
 | OEM torque bounds | `17` | `18 / 1C` | Minimum,maximum,`00 00` |
-| Maximum power | `17` | `10 / 14` | Mode,LE16 watts,`00` |
+| Maximum power | `17` | `10 / 14` | GET mode `01/02/03`; reply mode,LE16 watts; SET mode,LE16 watts,`00` |
 | Display speed adjustment | `16` | `D0 / D4` | Signed byte, 0.1%; valid steps 5 raw units |
 | Shift system / gears | `0B` | `80 / 84` | System,gear count,`00 00` |
 | Front teeth | `0A` | `48 / 4C` | Front gear count,teeth,`00 00` |
 | Rear teeth | `0B` | `48 / 4C` | Gear selector,teeth,`00` |
 | Rear pattern | `0B` | `B0 / B4` | LE16 index,`FF FF` |
-| Start mode | `0B` | `88 / 8C` | Start gear; preserve siblings |
+| Start mode | `0B` | `88 / 8C` | SET start gear,original byte 1,`00 00` |
 | Auto shift mode | `0B` | `00 / 04` | Byte |
-| Auto cadence | `0B` | `90 / 94` | LE16 rpm×10; preserve siblings |
+| Auto cadence | `0B` | `90 / 94` | SET LE16 rpm×10,original bytes 2–5,`00` (7 bytes) |
 | Shift advice | `0B` | `D8 / DC` | Byte |
-| Shift limits | `0B` | `60 / 64` | Up,down; 255 unlimited; preserve siblings |
+| Shift limits | `0B` | `60 / 64` | SET up,down,original bytes 2–3; 255 unlimited |
 | Maintenance alert | `48` | `40 / 44` | Boolean byte |
 | Maintenance distance | `48` | `48 / 4C` | LE32 km; all `FF` means unset |
 | Maintenance date | `48` | `50 / 54` | Year−2000,month,day,reserved; all `FF` unset |
@@ -328,6 +349,7 @@ character 0–9 and start 0–4. Torque is not restricted to a five-Nm lattice;
 factory values can be 27 Nm. OEM torque-bound controls have their own steps.
 Labels 0/1 select ECO-NORMAL-HIGH / ECO-TRAIL-BOOST. Profile names allow up to
 ten printable ASCII characters and need D4.1.4 or later in the legacy schema.
+Each name chunk carries five text bytes, zero-filled for shorter names.
 
 EP800 ranges include wheel 1300–3000 mm, mounting 0–60°, light output
 135–2700 raw hundredths W and reserve 0–180 min. Destinations 0/3/4 permit
@@ -337,8 +359,10 @@ describe service settings, not an electrical power-stage specification.
 
 Modern basic-mode assist tuples retain a sixth meaningful byte containing
 carry-over/cutoff data; preserve it when editing another field. Modern names
-use six-byte chunks, and label SET has only profile and label. Modern character
-ranges differ by mode (ECO 0–9, TRAIL 0–14, BOOST 4–14). Fine-tune profiles and
+use `[selector,ASCII5]` SET parameters, omitting the legacy trailing `00`;
+both layouts still carry five text bytes per chunk. Modern label SET has only
+profile and label. Modern character ranges differ by mode (ECO 0–9, TRAIL
+0–14, BOOST 4–14). Fine-tune profiles and
 free-shift are not implemented by this dictionary. E5100 and older E-series
 expose narrower schemas; older lamp is 0/1 and mounting SET can be two bytes.
 E6000 common wheel range is 2000–2400 mm, angle 0–45°.
@@ -417,22 +441,36 @@ and bus bytes are therefore not necessarily identical.
 
 Fast RX request body starts `[slot,60,F0,05,00,cmd,p0,p1,p2,…]` and reply starts
 `[slot,70,F2,…]`. Legacy RX instead uses outer `48`, request
-`[00,F0,00,cmd,p0,p1,p2]`, reply `[route,F2,capability,reply,…]`.
+`[slot,F0,00,cmd,p0,p1,p2]`, reply `[route,F2,capability,reply,…]`.
 Do not parse either as an ordinary group/opcode setting.
 
 RX boot query `41 → 51` reports capability and version. The M image base is
 `0xFC0000`; legacy address command `24` uses three little-endian address bytes.
-Ordinary RX streaming sends `48 [00,F8,sequence,data4]`, sequence increments
-modulo 8 starting at 1, then command `25` checks the window and `26` advances.
+The ordinary application relay streams `48 [slot,F8,sequence,data4]`; sequence
+increments modulo 8 starting at 1, then command `25` checks the window and `26` advances.
 Windows are 1024 bytes from boot 2.0.2, otherwise 64; final data ends at the
-last padded 64-byte packet, not a full artificial 1024-byte tail. RX retry-mode
-adapter packet IDs wrap modulo 255 (never 255), unlike DCAS IDs. Unsupported
+last padded 64-byte packet, not a full artificial 1024-byte tail. The internal
+`FirmwareIo` records use an address placeholder of `00`; the normal USB bridge
+and BLE FREE relay replace it with the selected motor slot before dispatch.
+RX retry-mode adapter packet IDs wrap modulo 255 (never 255), unlike DCAS IDs. Unsupported
 retry capabilities must be rejected before erase. Finish/reset/return-to-app
 and fresh D/M version reads are separate outcomes.
 
+SM-PCE02 fast RX instead buffers **60 data bytes** with outer control `11` and
+payload `[packet,11,sequence,F8,slot,data60,FF,FF,FF,FF]`. Within each checksum
+block, sequence is `(fragment_index mod 43) × 6` (decimal). Load receipt `91`,
+transfer-start acceptance `83` and completion `C0` are separate. Transfer start
+uses `[next_packet,03,data_packet]`; `83` correlates the transfer packet ID,
+whereas `C0` correlates the data packet ID. Replies retain slot and status;
+require status `00`. Fast checksum windows are 1080 bytes, or 2100 for the
+explicitly enabled retry-capable path. The checksum includes final 60-byte
+FF padding and excludes the extra four adapter-padding bytes. Command `25`
+verifies each window, `26` advances it, and retry-capable blocks reselect the
+address. These sizes and envelopes differ from the ordinary 4-byte relay.
+
 BLE D motor update relay uses PCE, not the gateway's own BOOT characteristic;
 the legacy RX `F0/F8` envelopes use FREE with the selected motor slot.
-Large PCE records repeat control after a sequence byte: offset `fragment*20`,
+Large PCE records repeat control after a sequence byte: offset `fragment_index * 0x20`,
 bit `80` when more fragments follow, up to 18 payload bytes per fragment.
 Here `20` is hexadecimal (32 decimal). Payload lengths 18/36/54 retain an
 empty terminal record `[sequence,control]` after the full data fragments.
@@ -441,7 +479,13 @@ offering only acknowledged writes use those with the same relay receipts.
 Exact terminal-record behavior is part of that codec;
 see [firmware transport implementation](../src/ble/firmware.rs). Gateway radio
 DFU is a different update family. The normal firmware simulator does not
-execute resident flash erase/program protocols.
+execute resident flash erase/program protocols. A separate hash-pinned EP800
+resident regression executes key-entry and SPI/UART routines: repeated zero
+SPI input stalls Key 2 and produces empty `70` replies, while an `FF` first
+SPI byte lets the queued key advance. That interpretation is bounded to the
+exact resident image and modeled state; it is not a generic meaning for every
+`70` frame. It does not execute erase/program/reset or full boot. See
+[resident regression setup](firmware-simulator.md#ep800-resident-bootloader-and-key-2-recovery).
 
 ## 9. External packet fragments and missing physical specification
 
@@ -479,6 +523,7 @@ message catalog.
 | SC-EM800 4.0.0/4.1.0/4.3.0/4.4.0/4.5.0/4.6.0 | Gateway packet routing and reassembly | Six exact firmware profiles; BLE model too |
 | SC-E6100 4.1.0; SC-E7000 4.1.0 | Wired packet gateway | Exact profiles; not claimed BLE coverage |
 | EP800 D4.1.10/4.1.11/4.2.0 | Normal D packet handlers | Exact profiles; D4.2.0 has narrow persistent lamp/wheel fixture |
+| EP800 resident 5.0.6.1 | Five-key entry and SPI/UART service | Separate exact 64 KiB hash profile; five bounded scenarios, no erase/program/reset or full boot |
 | EP600 D4.4.1/4.6.0; EP500 D4.1.0/4.1.1 | Normal D packet handlers | Exact profiles; no blanket persistent-write claim |
 | E5000 D4.5.0; E5100 D4.1.0; E6100 D4.8.0 | Normal D packet handlers | Exact profiles; model/schema gates remain separate |
 | EP801 | Identity and modern service implementation | Not separately proven by executing an EP600 image |
@@ -542,3 +587,23 @@ The escaping fixture is codec data, not a valid component command. A cargo
 reply example `BB 48 0D 16 7E 30 30 2D 43 52 47 00 AE BB` illustrates parsing;
 its route byte must be interpreted in the capture's session context, not copied
 as the expected recipient for every USB session.
+
+### Reproduce the checks
+
+With the [simulator environment and local firmware manifest](firmware-simulator.md)
+prepared, run from the repository root:
+
+```sh
+python tools/firmware-sim/sim.py matrix \
+  --fixtures /absolute/path/firmware-fixtures.json --output /tmp/etube-matrix.json
+CRANKLINK_SIM_FIXTURES=/absolute/path/firmware-fixtures.json \
+  python -m unittest discover -s tools/firmware-sim -p 'test_*.py'
+```
+
+Stock-image tests skip if their manifest is absent. Resident tests separately
+require `CRANKLINK_RESIDENT_IMAGE`; no resident dump is bundled or auto-pulled.
+The native and GATT client verifiers and their topology limits are documented
+in the simulator guide. A nonzero verifier exit remains a failure even when
+other matrix scenarios pass; the E6100 version-query limitation above is one
+such case. The codec golden vectors and all serial split boundaries are also
+covered by `cargo test --locked --lib protocol::`.
