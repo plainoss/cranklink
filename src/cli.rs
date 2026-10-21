@@ -837,6 +837,34 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     }
 }
 
+/// The exact command to resume an interrupted write on the same adapter and slot.
+fn recovery_command(
+    target: &str,
+    port: Option<&str>,
+    slot: Option<u8>,
+    serial: &str,
+    file: &Path,
+    companion: &Path,
+    allow_unverified_model: bool,
+) -> String {
+    let mut command = String::from("cranklink");
+    if let Some(port) = port {
+        command.push_str(&format!(" --port {port}"));
+    }
+    if let Some(slot) = slot {
+        command.push_str(&format!(" --slot {slot}"));
+    }
+    command.push_str(&format!(
+        " -s {serial} firmware flash {target} {} --companion {} --recovery --write",
+        file.display(),
+        companion.display()
+    ));
+    if allow_unverified_model {
+        command.push_str(" --allow-unverified-model");
+    }
+    command
+}
+
 fn execute_firmware_command(
     port: Option<&str>,
     trace: Option<&std::path::Path>,
@@ -1160,11 +1188,19 @@ fn execute_firmware_command(
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
                         err_println!("Journal preserved at: {}", journal_path.display());
                         err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash dcas {} --companion {} --recovery --write{}",
-                            serial_str,
-                            file.display(),
-                            companion.display(),
-                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
+                        // The bootloader keeps the slot it was entered at; 31 is the recovery default.
+                        err_println!(
+                            "  {}",
+                            recovery_command(
+                                "dcas",
+                                port,
+                                Some(boot.slot).filter(|slot| *slot != 31),
+                                serial_str,
+                                &file,
+                                &companion,
+                                allow_unverified_model
+                            )
+                        );
                         err_println!("================================================================================\n");
                         return Err(e);
                     }
@@ -1312,11 +1348,18 @@ fn execute_firmware_command(
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
                         err_println!("Journal preserved at: {}", journal_path.display());
                         err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash rx {} --companion {} --recovery --write{}",
-                            serial_str,
-                            file.display(),
-                            companion.display(),
-                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
+                        err_println!(
+                            "  {}",
+                            recovery_command(
+                                "rx",
+                                port,
+                                slot,
+                                serial_str,
+                                &file,
+                                &companion,
+                                allow_unverified_model
+                            )
+                        );
                         err_println!("================================================================================\n");
                         return Err(e);
                     }
@@ -2947,6 +2990,24 @@ mod cli_tests {
         assert_eq!(sanitize_serial("A1B2C3D4E5F6").unwrap(), "a1b2c3d4e5f6");
         assert!(sanitize_serial("short").is_err());
         assert!(sanitize_serial("01020304050G").is_err());
+    }
+
+    #[test]
+    fn recovery_command_keeps_the_failing_port_and_slot() {
+        let (d, m) = (Path::new("D.dat"), Path::new("M.dat"));
+        assert_eq!(
+            recovery_command("dcas", Some("COM3"), Some(13), "010203040506", d, m, true),
+            "cranklink --port COM3 --slot 13 -s 010203040506 firmware flash dcas D.dat \
+             --companion M.dat --recovery --write --allow-unverified-model"
+        );
+        let command = recovery_command("rx", None, None, "010203040506", m, d, false);
+        assert_eq!(
+            command,
+            "cranklink -s 010203040506 firmware flash rx M.dat --companion D.dat --recovery --write"
+        );
+        // The hint must parse as the command it describes.
+        let args = command.split(' ').collect::<Vec<_>>();
+        assert!(Cli::try_parse_from(args).is_ok());
     }
 
     #[test]
