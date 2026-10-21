@@ -4,7 +4,7 @@
 
 ## Component settings
 
-Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior. Component `set` and batches containing a `set` also require `-s <SERIAL>` (from `probe`), because sibling components such as left and right levers share a schema; restores are bound to the serial in their backup.
+Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior. As for drive units, `set` and batches containing a `set` require `-s <SERIAL>` (from `probe`); sibling components such as left and right levers share a schema, so a slot or model name alone does not identify the unit.
 
 Component sessions use the stock identity and, where necessary, a part discriminator to select an exact catalog model. They read the component application version without issuing motor cargo/RX queries. Unknown or unresolved identities are rejected. A catalog entry does not automatically grant a settings layout: components without an implemented schema return no fields and `capabilities.settings_available: false` in full snapshots.
 
@@ -53,6 +53,7 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 
 ## Backups and restore
 
+- `set` and batches containing a `set` require `-s <SERIAL>`, checked before connecting; `--dry-run`, reads and restores do not.
 - Every `set` writes a new backup file (component serial, original value, planned value) before sending, then verifies by readback. Component backups also record the settings model. Backup files are never overwritten.
 - `restore` takes such a backup, checks the serial, and writes a new backup of the current value first.
 - Component restores also require the same catalog model in the backup; shared fields changed since the backup are preserved. Existing motor backups remain compatible.

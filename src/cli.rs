@@ -612,6 +612,8 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         _ => {}
     }
 
+    require_write_serial(&cli.command, cli.expect_serial.as_deref())?;
+
     // `ble scan` is the documented spelling of `scan --ble`; neither needs a port.
     if let Command::Ble {
         command: BleCommand::Scan { seconds, all },
@@ -799,7 +801,6 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
 
                     let model = resolve_settings_model(&mut s, &id)?;
-                    require_component_write_serial(&command, model, expect_serial.as_deref())?;
                     validate_settings_preflight(&command, model, &motor_serial)?;
                     if command_requires_unit_auth(&command, model, unit_auth) {
                         ensure!(
@@ -1596,7 +1597,6 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     cli.expect_serial.as_deref(),
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
-                require_component_write_serial(&command, model, cli.expect_serial.as_deref())?;
                 validate_settings_preflight(&command, model, &serial)?;
                 if command_requires_unit_auth(&command, model, cli.unit_auth) {
                     ensure!(
@@ -2281,25 +2281,24 @@ fn command_requires_unit_auth(
     }
 }
 
-/// Sibling components share schemas, so a slot or model name alone cannot tell
-/// two physical units apart. Restores are already bound to the backup serial.
-fn require_component_write_serial(
-    command: &SettingsCommand,
-    model: crate::settings::SettingsModel,
-    expect_serial: Option<&str>,
-) -> Result<()> {
+/// Settings writes are bound to the unit the user named: auto-selection, a slot
+/// or a model name cannot tell two bikes, or sibling components, apart.
+/// Restores are already bound to the serial in their backup.
+fn require_write_serial(command: &Command, expect_serial: Option<&str>) -> Result<()> {
     let writes = match command {
-        SettingsCommand::Set { dry_run, .. } => !dry_run,
-        SettingsCommand::Batch { operations, .. } => operations
+        Command::Settings {
+            command: SettingsCommand::Set { dry_run, .. },
+        } => !dry_run,
+        Command::Settings {
+            command: SettingsCommand::Batch { operations, .. },
+        } => operations
             .iter()
             .any(|op| matches!(op, crate::settings::batch::Operation::Set { .. })),
         _ => false,
     };
     ensure!(
-        !writes
-            || expect_serial.is_some()
-            || !matches!(model, crate::settings::SettingsModel::Component(_)),
-        "component settings writes require -s/--expect-serial; read the serial with probe first"
+        !writes || expect_serial.is_some(),
+        "settings writes require -s/--expect-serial <SERIAL>; read the serial with probe first"
     );
     Ok(())
 }
@@ -3031,38 +3030,60 @@ mod cli_tests {
     }
 
     #[test]
-    fn component_writes_require_an_expected_serial() {
+    fn settings_writes_require_an_expected_serial() {
         use crate::settings::batch::Operation;
-        use crate::settings::SettingsModel;
-        let settings = |args: &[&str]| {
-            let mut full = vec!["cranklink", "settings"];
+        let command = |args: &[&str]| {
+            let mut full = vec!["cranklink"];
             full.extend_from_slice(args);
-            match Cli::try_parse_from(full).unwrap().command {
-                Command::Settings { command } => command,
-                _ => unreachable!(),
-            }
+            Cli::try_parse_from(full).unwrap().command
         };
-        let lever = SettingsModel::Component("ST-6870-L");
-        let set = settings(&["set", "switch-a-function", "1"]);
-        assert!(require_component_write_serial(&set, lever, None).is_err());
-        assert!(require_component_write_serial(&set, lever, Some("010203040506")).is_ok());
-        assert!(require_component_write_serial(&set, SettingsModel::Ep800Crg, None).is_ok());
-        let dry = settings(&["set", "switch-a-function", "1", "--dry-run"]);
-        assert!(require_component_write_serial(&dry, lever, None).is_ok());
-        let read = settings(&["read"]);
-        assert!(require_component_write_serial(&read, lever, None).is_ok());
-        let batch = |operations| SettingsCommand::Batch {
-            plan: PathBuf::from("plan.json"),
-            operations,
-            backup_prefix: None,
+        let set = command(&["settings", "set", "switch-a-function", "1"]);
+        assert!(require_write_serial(&set, None).is_err());
+        assert!(require_write_serial(&set, Some("010203040506")).is_ok());
+        for args in [
+            &["settings", "set", "lamp", "1", "--dry-run"][..],
+            &["settings", "read"],
+            &["settings", "restore", "backup.json"],
+            &["probe"],
+        ] {
+            assert!(
+                require_write_serial(&command(args), None).is_ok(),
+                "{args:?}"
+            );
+        }
+        let batch = |operations| Command::Settings {
+            command: SettingsCommand::Batch {
+                plan: PathBuf::from("plan.json"),
+                operations,
+                backup_prefix: None,
+            },
         };
         let reads = batch(vec![Operation::Read { name: None }]);
-        assert!(require_component_write_serial(&reads, lever, None).is_ok());
+        assert!(require_write_serial(&reads, None).is_ok());
         let writes = batch(vec![Operation::Set {
-            name: "switch-a-function".into(),
+            name: "lamp".into(),
             value: "1".into(),
         }]);
-        assert!(require_component_write_serial(&writes, lever, None).is_err());
+        assert!(require_write_serial(&writes, None).is_err());
+        // Rejected offline, before any transport opens.
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                "sim:/nonexistent",
+                "settings",
+                "set",
+                "lamp",
+                "1",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("--expect-serial"),
+            "{error:#}"
+        );
     }
 
     #[test]

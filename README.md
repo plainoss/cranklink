@@ -89,7 +89,7 @@ Drive Unit Probe:
   Renesas (M): v4.1.11.0
 ```
 
-Settings writes and ordinary firmware flashing take `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial. Bridge recovery can read and bind the serial automatically after connecting.
+Settings writes (`set` and batches that set) and ordinary firmware flashing require `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial; restores are bound to the serial in their backup. Bridge recovery can read and bind the serial automatically after connecting.
 
 ### Read and change settings
 
