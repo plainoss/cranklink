@@ -20,6 +20,8 @@ CLI_PATTERNS = [
     "Cargo.lock",
     "build.rs",
     "tools/firmware-sim/**",
+    "tools/patch_motor_speed.py",
+    "tools/patch_ep800_speed.py",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
 ]

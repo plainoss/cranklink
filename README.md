@@ -130,6 +130,7 @@ For bootloader research on a working, powered EP800-CRG, `firmware dump-bootload
 - [Settings](docs/settings.md): protected writes, backups, batch plans.
 - [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
 - [Firmware simulator](docs/firmware-simulator.md): offline application tests and `sim.py resident` bootloader regressions.
+- [Firmware patcher](docs/ep800-speed-limit-patcher.md): create and check supported motor images offline with `tools/patch_motor_speed.py`.
 - [Web app development](web-instrument/README.md): build, test, deploy.
 
 ## License
