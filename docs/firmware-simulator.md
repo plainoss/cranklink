@@ -1,5 +1,7 @@
 # Offline firmware simulator
 
+The [E-TUBE protocol reference](etube-protocol.md) describes the packet formats, routing and integration boundaries exercised here. Packet-matrix success and complete client probe success are separate checks; in particular, an SC-E7000/E6100 D4.8.0 native probe can reject the `01/2C` version query despite passing the normal packet scenarios.
+
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
 This implementation covers the packet engine, native/Bluetooth transports, a limited persistent-write path and a separate EP800 resident-bootloader regression. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.

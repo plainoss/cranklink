@@ -37,6 +37,8 @@ Firmware images are not bundled.
 
 All families support component discovery and identification. Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
+For byte layouts, routing, session lifecycles, settings commands and verified coverage boundaries, see the [E-TUBE protocol reference](docs/etube-protocol.md).
+
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 
 ## Command line
