@@ -177,6 +177,24 @@ Full reset-to-main boot, complete MMIO/interrupt timing, general NVM/settings su
 
 ## BLE firmware streaming speed model
 
+The [D transfer speed investigation](ble-d-transfer-speed.md) analyzes an
+existing hardware trace and includes a separate offline D relay experiment:
+`verify_d_speed.py` runs stock Nordic PCE fragment assembly and SC-EM800
+4.4.0/4.6.0 relay dispatch against the actual Rust sender. Motor bootloader
+replies remain modeled; no RF or physical speed is validated. It tests early
+transfer-start, ordered fragment batches, receipt faults, packet wrap, buffer
+overwrite and queue backpressure. See that guide for local fixtures and
+reproduction. The trace analyzer itself needs no firmware images or Bluetooth
+connection. The M model below does not validate D transfer behavior.
+
+The D runner now executes the production prefetch implementation against a
+sequential baseline that includes the same stale-receipt fix. Its virtual clock
+uses mean phase latencies from the saved D hardware trace and varies the
+unmeasured acknowledged-write return delay (0, 30 and 60 ms). Reported speedups
+are model outputs, not emulator wall time or radio measurements. Zero-time
+notification drains never advance virtual time. Prefetched upload faults and
+packet-wrap receipt loss must abort both modes without retry or another erase.
+
 `tools/firmware-sim/bench_ble_speed.py /path/to/DUEP800-M.4.1.11.dat` streams a full 128,192-byte M image through the modeled GATT endpoint at several queue widths (`BleSession::set_queue_width`, default 1) and connection intervals. The endpoint models the M bootloader relay (`F0` control, `F8` data), checking modulo-8 sequence order (a gap returns error 2), each 1 KiB window checksum, the whole-image checksum and reset.
 
 Timing is a **link-layer model**, not a measurement: each write or batch costs `ceil(packets / packets_per_interval)` connection intervals (`CRANKLINK_SIM_BLE_CI`, `CRANKLINK_SIM_BLE_PPI` or the `configure_link` request). The M bootloader and gateway timing are not executed firmware. The baseline (queue 1, 60 ms) reproduces the physical ~66 B/s; faster rows depend on the assumed packets per interval and must be confirmed with the read-only `examples/ble_ack_queue_bench.rs` on hardware before queued firmware writes are used.

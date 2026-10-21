@@ -8,6 +8,18 @@ use anyhow::{ensure, Context, Result};
 use std::{borrow::Cow, time::Duration};
 
 pub(crate) trait FirmwareIo {
+    /// Only transports validated with two alternating DCASX upload buffers opt in.
+    fn supports_dcas_upload_prefetch(&self) -> bool {
+        false
+    }
+    fn prepare_dcas_upload(&mut self) -> Result<()> {
+        self.discard_matching(|f| dcas_gateway_receipt(f, 0x82));
+        Ok(())
+    }
+    fn prepare_dcas_transfer(&mut self) -> Result<()> {
+        self.discard_matching(stale_dcas_transfer_receipt);
+        Ok(())
+    }
     fn pace(&mut self, duration: Duration) {
         sleep(duration);
     }
@@ -35,6 +47,24 @@ pub(crate) trait FirmwareIo {
         self.send(control, payload)?;
         self.wait(timeout, check)
     }
+}
+fn dcas_gateway_receipt(frame: &Frame, command: u8) -> bool {
+    frame.control & 0x0b == 0x0b && frame.payload.len() >= 3 && frame.payload[1] == command
+}
+pub(crate) fn stale_dcas_transfer_receipt(frame: &Frame) -> bool {
+    dcas_gateway_receipt(frame, 0x83)
+        || dcas_gateway_receipt(frame, 0xc0)
+        || (frame.control & 0x88 == 0x88 && frame.payload.first() == Some(&0x31))
+}
+fn dcas_receipt(frame: &Frame, command: u8, packet: u8) -> bool {
+    dcas_gateway_receipt(frame, command) && frame.payload[2] == packet
+}
+
+fn dcas_upload(packet: u8, index: u16, chunk: &[u8]) -> Vec<u8> {
+    let mut block = [0xff; 64];
+    block[..chunk.len()].copy_from_slice(chunk);
+    let sum = block.iter().fold(0u8, |a, &b| a.wrapping_add(b));
+    crate::device::dcas_buffer_packet(packet, index, &block, sum)
 }
 pub(crate) fn boot_query(
     link: &mut impl FirmwareIo,
@@ -179,6 +209,9 @@ pub(crate) fn flash_dcas_with_user_info(
     boot_query(link, &[0x24, 0, 0x40, 0], 0x31, 1, 1200)?;
 
     let is_dcas2i = dcas_ver >= 3;
+    // Legacy/unindexed formats and wired adapters retain sequential uploads.
+    let prefetch = dcas_ver == 4 && link.supports_dcas_upload_prefetch();
+    let mut uploaded = false;
     let mut packet = 255u8;
     for (i, chunk) in payload.chunks(64).enumerate() {
         let index = (i + 1) as u16;
@@ -186,41 +219,47 @@ pub(crate) fn flash_dcas_with_user_info(
             boot_query(link, &[0x0a, 1, 0, 0], 0x31, 1, 1200)?;
             boot_query(link, &[0x24, 0, 0x40, 0], 0x31, 1, 1200)?;
         }
-        let mut block = [0xff; 64];
-        block[..chunk.len()].copy_from_slice(chunk);
-        let sum = block.iter().fold(0u8, |a, &b| a.wrapping_add(b));
         packet = packet.wrapping_add(1);
         let packet_index = if is_dcas2i { index } else { 0 };
-        let p = crate::device::dcas_buffer_packet(packet, packet_index, &block, sum);
-        link.exchange(0x0b, &p, Duration::from_secs(3), |f| {
-            f.control & 0x0b == 0x0b
-                && f.payload.len() >= 4
-                && f.payload[1] == 0x82
-                && f.payload[2] == packet
-                && f.payload[3] == 0
+        if !uploaded {
+            link.prepare_dcas_upload()?;
+            link.send(0x0b, &dcas_upload(packet, packet_index, chunk))
+                .with_context(|| format!("buffer dispatch block {index}; outcome uncertain"))?;
+        }
+        // A prefetched82 may already be queued: never purge it after dispatch.
+        link.wait(Duration::from_secs(3), |f| {
+            dcas_receipt(f, 0x82, packet) && f.payload.get(3) == Some(&0)
         })
         .with_context(|| format!("buffer block {index}; outcome uncertain"))?;
         let data_packet = packet;
         packet = packet.wrapping_add(1);
         let transfer_packet = packet;
-        link.exchange(
-            0x0b,
-            &[packet, 3, data_packet],
-            Duration::from_secs(25),
-            |f| {
-                f.control & 0x0b == 0x0b
-                    && f.payload.len() >= 4
-                    && f.payload[1] == 0x83
-                    && f.payload[2] == transfer_packet
-                    && f.payload[3] == 0
-            },
-        )
+        // C0 has only an 8-bit packet number. There is no preceding transfer
+        // outstanding here, so all old transfer/checksum receipts can be
+        // removed BEFORE dispatch, without deleting a prefetched upload's82.
+        link.prepare_dcas_transfer()?;
+        link.send(0x0b, &[packet, 3, data_packet])
+            .with_context(|| format!("transfer dispatch block {index}; outcome uncertain"))?;
+        uploaded = false;
+        if prefetch {
+            let offset = (i + 1) * 64;
+            if offset < payload.len() {
+                let next_packet = packet.wrapping_add(1);
+                let next = &payload[offset..(offset + 64).min(payload.len())];
+                link.prepare_dcas_upload()?;
+                link.send(0x0b, &dcas_upload(next_packet, index + 1, next))
+                    .with_context(|| format!("prefetch block {}; outcome uncertain", index + 1))?;
+                uploaded = true;
+            }
+        }
+        // There is still only one programming transfer outstanding. Uploading
+        // its successor never skips any current receipt or the successor's82.
+        link.wait(Duration::from_secs(25), |f| {
+            dcas_receipt(f, 0x83, transfer_packet) && f.payload.get(3) == Some(&0)
+        })
         .with_context(|| format!("transfer start block {index}; outcome uncertain"))?;
         link.wait(Duration::from_secs(25), |f| {
-            f.control & 0x0b == 0x0b
-                && f.payload.len() >= 3
-                && f.payload[1] == 0xc0
-                && f.payload[2] == data_packet
+            dcas_receipt(f, 0xc0, data_packet)
         })
         .with_context(|| format!("transfer completion block {index}; outcome uncertain"))?;
         if is_dcas2i {
@@ -266,6 +305,10 @@ mod tests {
         wrong_serial: bool,
         dcas_ver: u8,
         expected_user_info: Option<[u8; 2]>,
+        prefetch: bool,
+        missing_completion_at: Option<usize>,
+        duplicate_first_completion: bool,
+        uploads_before_current_completion: usize,
     }
     fn frame(control: u8, payload: Vec<u8>) -> Frame {
         Frame { control, payload }
@@ -314,6 +357,10 @@ mod tests {
                 wrong_serial: false,
                 dcas_ver: 4,
                 expected_user_info: None,
+                prefetch: false,
+                missing_completion_at: None,
+                duplicate_first_completion: false,
+                uploads_before_current_completion: 0,
             }
         }
         fn new_dcas2(n: usize, dcas_ver: u8, identity: BootIdentity) -> Self {
@@ -339,6 +386,10 @@ mod tests {
                 wrong_serial: false,
                 dcas_ver,
                 expected_user_info: None,
+                prefetch: false,
+                missing_completion_at: None,
+                duplicate_first_completion: false,
+                uploads_before_current_completion: 0,
             }
         }
         fn push(&mut self, control: u8, payload: Vec<u8>) {
@@ -346,6 +397,9 @@ mod tests {
         }
     }
     impl FirmwareIo for Replay {
+        fn supports_dcas_upload_prefetch(&self) -> bool {
+            self.prefetch
+        }
         fn send(&mut self, control: u8, p: &[u8]) -> Result<()> {
             self.sent.push(frame(control, p.to_vec()));
             if control == 0x88 {
@@ -403,6 +457,9 @@ mod tests {
                 };
                 self.push(0x88, r);
             } else if p[1] == 2 {
+                if self.incoming.iter().any(|f| dcas_gateway_receipt(f, 0xc0)) {
+                    self.uploads_before_current_completion += 1;
+                }
                 let index = self.blocks + 1;
                 assert_eq!(p.len(), 70);
                 assert_eq!(p[0], ((index - 1) * 2 % 256) as u8);
@@ -436,8 +493,11 @@ mod tests {
                 } else {
                     self.push(0x88, vec![0x31, 0, 0]);
                 }
-                if !self.fail_completion {
+                if !self.fail_completion && self.missing_completion_at != Some(self.blocks) {
                     self.push(0x0b, vec![0, 0xc0, id]);
+                    if self.blocks == 1 && self.duplicate_first_completion {
+                        self.push(0x0b, vec![0, 0xc0, id]);
+                    }
                 }
                 self.push(0x0b, vec![0, 0x83, p[0], 0]);
             }
@@ -465,6 +525,7 @@ mod tests {
         assert_eq!(r.bytes, image.len());
         assert!(r.finish_acknowledged && r.reset_acknowledged);
         assert!(link.incoming.is_empty());
+        assert_eq!(link.uploads_before_current_completion, 0);
         assert_eq!(
             link.sent
                 .iter()
@@ -506,15 +567,53 @@ mod tests {
         );
     }
     #[test]
+    fn dcas_prefetch_uploads_once_and_keeps_one_programming_transfer() {
+        let mut link = Replay::new(64 * 130 + 13);
+        link.prefetch = true;
+        let image = link.image.clone();
+        flash_dcas(&mut link, &image, &identity(), |_, _| {}).unwrap();
+        let frames: Vec<_> = link.sent.iter().filter(|f| f.control == 0x0b).collect();
+        assert_eq!(frames.len(), image.len().div_ceil(64) * 2);
+        assert_eq!(
+            link.uploads_before_current_completion,
+            image.len().div_ceil(64) - 1
+        );
+        // Dispatch stays upload1, transfer1, upload2, transfer2: acceptance and
+        // programming receipts, rather than extra transfers, are overlapped.
+        assert!(frames
+            .chunks_exact(2)
+            .all(|pair| pair[0].payload[1] == 2 && pair[1].payload[1] == 3));
+        assert!(link.incoming.is_empty());
+    }
+    #[test]
+    fn old_completion_cannot_replace_missing_receipt_at_packet_wrap() {
+        for prefetch in [false, true] {
+            let mut link = Replay::new(64 * 131);
+            link.prefetch = prefetch;
+            link.duplicate_first_completion = true;
+            link.missing_completion_at = Some(129);
+            let image = link.image.clone();
+            let error = flash_dcas(&mut link, &image, &identity(), |_, _| {}).unwrap_err();
+            assert!(error.to_string().contains("transfer completion block 129"));
+            assert_eq!(link.blocks, 129);
+            assert!(!link
+                .sent
+                .iter()
+                .any(|f| f.control == 0x88 && matches!(f.payload[0], 0x27 | 0x28)));
+        }
+    }
+    #[test]
     fn dcas2i_flashing_uses_coarse_erase_and_indexed_packets() {
         let id = identity_dcas2i();
         let mut link = Replay::new_dcas2(70000, 3, id.clone());
+        link.prefetch = true; // Format3 must still reject the transport capability.
         let image = link.image.clone();
         let mut progress = 0;
         let r = flash_dcas(&mut link, &image, &id, |n, _| progress = n).unwrap();
         assert_eq!(progress, image.len());
         assert_eq!(r.bytes, image.len());
         assert!(r.finish_acknowledged && r.reset_acknowledged);
+        assert_eq!(link.uploads_before_current_completion, 0);
 
         // Verify coarse erase code 2 for >64K image:
         assert_eq!(
@@ -547,12 +646,14 @@ mod tests {
     fn dcas2_flashing_patches_user_info_switches_pages_and_uses_unindexed_packets() {
         let id = identity_dcas2();
         let mut link = Replay::new_dcas2(65600, 2, id.clone());
+        link.prefetch = true; // Unindexed/page-switched DCAS2 stays sequential.
         let image = link.image.clone();
         let mut progress = 0;
         let r = flash_dcas(&mut link, &image, &id, |n, _| progress = n).unwrap();
         assert_eq!(progress, image.len());
         assert_eq!(r.bytes, image.len());
         assert!(r.finish_acknowledged && r.reset_acknowledged);
+        assert_eq!(link.uploads_before_current_completion, 0);
 
         // Verify erase code 2 for >64K image:
         assert_eq!(

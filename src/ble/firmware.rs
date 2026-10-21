@@ -7,6 +7,10 @@ use crate::{
 };
 use std::collections::VecDeque;
 
+#[cfg(all(test, unix))]
+#[path = "d_relay_offline_tests.rs"]
+mod d_relay_offline_tests;
+
 /// Holds exclusive ownership of logical update traffic until application return.
 pub struct MotorFirmware<'a> {
     session: &'a mut BleSession,
@@ -462,6 +466,20 @@ impl MotorFirmware<'_> {
     }
 }
 impl FirmwareIo for MotorFirmware<'_> {
+    fn supports_dcas_upload_prefetch(&self) -> bool {
+        self.dcas_mode && !self.rx_mode
+    }
+    fn prepare_dcas_upload(&mut self) -> Result<()> {
+        self.drain_firmware()?;
+        // The preceding upload was accepted before its transfer started.
+        self.discard_matching(|f| f.control & 0x0b == 0x0b && f.payload.get(1) == Some(&0x82));
+        Ok(())
+    }
+    fn prepare_dcas_transfer(&mut self) -> Result<()> {
+        self.drain_firmware()?;
+        self.discard_matching(firmware_io::stale_dcas_transfer_receipt);
+        Ok(())
+    }
     fn exchange(
         &mut self,
         control: u8,

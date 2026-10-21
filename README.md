@@ -262,6 +262,14 @@ cranklink session --json
 
 ## Hardware compatibility & notes
 
+For measured D / DCAS BLE bottlenecks and offline stock-firmware experiments,
+see the [D transfer speed investigation](docs/ble-d-transfer-speed.md).
+BLE DCASX flashing prefetches one next upload while the current block completes,
+retaining buffer acceptance, transfer and motor checksum receipts. Stale transfer
+receipts are cleared before dispatch to prevent reuse after packet-number wrap.
+Wired and older DCAS formats retain sequential uploads; physical speed gains
+remain unmeasured.
+
 - **EP800 (DU-EP800)**: Full diagnostics, settings read/write, offline firmware inspection, and bootloader recovery.
 - **EP801 / EP600**: Component discovery, diagnostics, and dedicated settings schemas. Flashing is not enabled.
 - **EP500**: Named settings and flashing are unsupported.
