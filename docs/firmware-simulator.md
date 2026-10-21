@@ -241,3 +241,27 @@ Each machine retains RAM and CPU state between bounded function calls. Firmware 
 SC-E7000 additionally needs UART initialization and completion. The simulator runs its stock UART initializer and service routine, saves/restores the interrupted CPU context, and resumes at the same busy-poll instruction. The model supplies ready-status memory semantics; it does not reproduce interrupt timing or the radio. Combined instruction limits include this service work.
 
 Full reset-to-main boot, complete MMIO/interrupt timing, general NVM/settings support, authorization for other images/families, actual motor M execution, BLE radio/SoftDevice and physical E-TUBE arbitration remain later stages. Runtime persistence has no additional cryptography dependency: stock motor AES executes in Unicorn and the browser client uses its existing Rust code. `requirements-test.txt` additionally pins PyCryptodome `4.0.0` only for independent host proof calculations in regression tests. Plain mapped MMIO and synthetic RAM cannot establish hardware timing or firmware boot acceptance. Keep these boundaries visible when adding profiles or interpreting a passing report.
+
+## BLE firmware streaming speed model
+
+The [D transfer speed investigation](ble-d-transfer-speed.md) analyzes an
+existing hardware trace and includes a separate offline D relay experiment:
+`verify_d_speed.py` runs stock Nordic PCE fragment assembly and SC-EM800
+4.4.0/4.6.0 relay dispatch against the actual Rust sender. Motor bootloader
+replies remain modeled; no RF or physical speed is validated. It tests early
+transfer-start, ordered fragment batches, receipt faults, packet wrap, buffer
+overwrite and queue backpressure. See that guide for local fixtures and
+reproduction. The trace analyzer itself needs no firmware images or Bluetooth
+connection. The M model below does not validate D transfer behavior.
+
+The D runner now executes the production prefetch implementation against a
+sequential baseline that includes the same stale-receipt fix. Its virtual clock
+uses mean phase latencies from the saved D hardware trace and varies the
+unmeasured acknowledged-write return delay (0, 30 and 60 ms). Reported speedups
+are model outputs, not emulator wall time or radio measurements. Zero-time
+notification drains never advance virtual time. Prefetched upload faults and
+packet-wrap receipt loss must abort both modes without retry or another erase.
+
+`tools/firmware-sim/bench_ble_speed.py /path/to/decoded-M.bin` streams a full 128,192-byte decoded M image through the modeled GATT endpoint at several queue widths (`BleSession::set_queue_width`, default 4; CLI `--m-queue-width`) and connection intervals. Supply decoded bytes, not an encrypted `.dat` container. The endpoint models the M bootloader relay (`F0` control, `F8` data), checking modulo-8 sequence order (a gap returns error 2), each 1 KiB window checksum, the whole-image checksum and reset.
+
+Timing is a **link-layer model**, not a measurement: each write or batch costs `ceil(packets / packets_per_interval)` connection intervals (`CRANKLINK_SIM_BLE_CI`, `CRANKLINK_SIM_BLE_PPI` or the `configure_link` request). The M bootloader and gateway timing are not executed firmware. The baseline (queue 1, 60 ms) reproduces the physical ~66 B/s; faster rows depend on the assumed packets per interval and must be confirmed with the read-only `examples/ble_ack_queue_bench.rs` on hardware before queued firmware writes are used.

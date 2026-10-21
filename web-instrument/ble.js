@@ -323,6 +323,38 @@ export class WebBleGatt {
       }
       return new Uint8Array();
     }
+    if (op === "ble.write-batch") {
+      if (
+        ![0x2af3, 0x2afa, 0x2afe, 0x2aff].includes(p.id) ||
+        !Array.isArray(p.batch) ||
+        p.batch.length > 32 ||
+        !p.batch.every(
+          (b) =>
+            Array.isArray(b) &&
+            b.length <= 20 &&
+            b.every((x) => Number.isInteger(x) && x >= 0 && x <= 255)
+        )
+      )
+        throw new Error("Unsupported BLE write batch");
+      if (p.withoutResponse) {
+        if (!c.properties.writeWithoutResponse)
+          throw new Error("BLE write without response unavailable");
+        for (const raw of p.batch) {
+          const value = Uint8Array.from(raw);
+          await this.bounded(() => c.writeValueWithoutResponse(value));
+        }
+      } else {
+        if (!c.properties.write)
+          throw new Error("BLE write with response unavailable");
+        await Promise.all(
+          p.batch.map((raw) => {
+            const value = Uint8Array.from(raw);
+            return this.bounded(() => c.writeValueWithResponse(value));
+          })
+        );
+      }
+      return new Uint8Array();
+    }
     throw new Error("Unsupported Bluetooth host operation");
   }
 }

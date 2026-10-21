@@ -576,15 +576,14 @@ fn transfer_ordinary(
         // image. Only that packet is padded, never the rest of a 1 KiB window.
         let packet_bytes = (data.len() - offset).min(window_len).div_ceil(64) * 64;
         let window = padded_window(data, offset, packet_bytes);
+        let mut batch = Vec::new();
         for bytes in window.chunks_exact(4) {
             sequence = (sequence + 1) % 8;
-            session.send(
-                0x48,
-                &[0, 0xf8, sequence, bytes[0], bytes[1], bytes[2], bytes[3]],
-            )?;
-            // Conservative adapter pacing also applies to pre-speedup BLs.
-            session.pace(Duration::from_millis(2));
+            batch.push(vec![
+                0, 0xf8, sequence, bytes[0], bytes[1], bytes[2], bytes[3],
+            ]);
         }
+        session.send_batch(0x48, &batch)?;
         legacy(session, 0x25, [sum(&window), 0, 0], 0x31, 2).with_context(|| {
             format!("RX window at {offset} unverified; do not restart erase automatically")
         })?;

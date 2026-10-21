@@ -130,6 +130,72 @@ class GattProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'master'):
             write(e,FREE_COMMAND,b'\x0d\x16\xac\1')
 
+    def test_rx_bootloader_flow_and_window_checksum(self):
+        e = self.endpoint
+        authenticate(e)
+        e.master = True
+        slot = 13
+        # 1. Read bootloader version
+        write(e, FREE_COMMAND, bytes([slot, 0, 0xf0, 0, 0x41, 0, 0, 0]))
+        reply = e.request(dict(op='receive'))['notification']
+        self.assertEqual(reply['characteristic'], FREE_RESPONSE)
+        self.assertEqual(reply['value'][:4], [slot, 0xf2, 1, 0x51])
+
+        # 2. Erase
+        write(e, FREE_COMMAND, bytes([slot, 0, 0xf0, 0, 0x21, 0, 0x0e, 0]))
+        reply = e.request(dict(op='receive'))['notification']
+        self.assertEqual(reply['value'][:4], [slot, 0xf2, 0, 0x31])
+
+        # 3. Stream 64 bytes (16 packets of 4 bytes)
+        seq = 0
+        window_bytes = []
+        for i in range(16):
+            seq = (seq + 1) % 8
+            data = [i * 4 + j for j in range(4)]
+            window_bytes.extend(data)
+            write(e, FREE_COMMAND, bytes([slot, 0, 0xf8, seq] + data))
+
+        # 4. Checksum verification
+        expected_sum = sum(window_bytes) & 0xff
+        write(e, FREE_COMMAND, bytes([slot, 0, 0xf0, 0, 0x25, expected_sum, 0, 0]))
+        reply = e.request(dict(op='receive'))['notification']
+        self.assertEqual(reply['value'][:4], [slot, 0xf2, 0, 0x31])
+
+        stats = e.request(dict(op='stats'))
+        self.assertTrue(stats['ok'])
+        self.assertEqual(stats['rx_total_bytes'], 64)
+        self.assertEqual(stats['rx_windows_verified'], 1)
+
+    def test_rx_sequence_error_rejected(self):
+        e = self.endpoint
+        authenticate(e)
+        e.master = True
+        slot = 13
+        write(e, FREE_COMMAND, bytes([slot, 0, 0xf0, 0, 0x21, 0, 0x0e, 0]))
+        e.request(dict(op='receive'))
+        # Sequence 1 is expected, send sequence 2 directly
+        write(e, FREE_COMMAND, bytes([slot, 0, 0xf8, 2, 1, 2, 3, 4]))
+        reply = e.request(dict(op='receive'))['notification']
+        self.assertEqual(reply['value'][:5], [slot, 0xf2, 0, 0x32, 0x02])
+
+    def test_write_batch_timing_acceleration(self):
+        e = self.endpoint
+        authenticate(e)
+        e.master = True
+        e.request(dict(op='configure_link', ci=0.015, ppi=4))
+        # Case A: 4 individual writes take 4 * 15ms = 60ms
+        t0 = e.simulated_time
+        for i in range(4):
+            e.request(dict(op='write', id=FREE_COMMAND, bytes=[13, 0, 0xf8, (i + 1) % 8, 1, 2, 3, 4]))
+        self.assertAlmostEqual(e.simulated_time - t0, 0.060, places=3)
+
+        # Case B: Batch of 4 writes takes (4 + 3)//4 * 15ms = 15ms (4x faster!)
+        t1 = e.simulated_time
+        batch = [[13, 0, 0xf8, (i + 5) % 8, 1, 2, 3, 4] for i in range(4)]
+        e.request(dict(op='write_batch', id=FREE_COMMAND, packets=batch))
+        self.assertAlmostEqual(e.simulated_time - t1, 0.015, places=3)
+
+
 
 class StockGattTests(unittest.TestCase):
     @classmethod

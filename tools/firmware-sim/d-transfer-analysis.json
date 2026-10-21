@@ -1,0 +1,51 @@
+{
+  "trace": "wire.jsonl",
+  "observed_blocks": 2443,
+  "complete_indexed_blocks": 2443,
+  "padded_bytes": 156352,
+  "stream_ms": 331022,
+  "padded_bytes_per_second": 472.331,
+  "phases": {
+    "first_to_last_fragment": {
+      "count": 2443,
+      "mean_ms": 1.018,
+      "median_ms": 1,
+      "p95_ms": 3,
+      "max_ms": 23,
+      "total_ms": 2486
+    },
+    "last_fragment_to_buffer_ack": {
+      "count": 2443,
+      "mean_ms": 63.72,
+      "median_ms": 57,
+      "p95_ms": 88,
+      "max_ms": 148,
+      "total_ms": 155669
+    },
+    "buffer_ack_to_transfer_dispatch": {
+      "count": 2443,
+      "mean_ms": 0.47,
+      "median_ms": 0,
+      "p95_ms": 1,
+      "max_ms": 13,
+      "total_ms": 1147
+    },
+    "transfer_dispatch_to_all_receipts": {
+      "count": 2443,
+      "mean_ms": 70.003,
+      "median_ms": 63,
+      "p95_ms": 93,
+      "max_ms": 128,
+      "total_ms": 171017
+    },
+    "block_total": {
+      "count": 2443,
+      "mean_ms": 135.21,
+      "median_ms": 123,
+      "p95_ms": 177,
+      "max_ms": 212,
+      "total_ms": 330319
+    }
+  },
+  "caveat": "Host log timestamps; receive time is consumption time, not radio arrival. No ATT write-mode metadata."
+}

@@ -470,6 +470,18 @@ enum FlashCommand {
         /// Full settings backup path (auto-generated if omitted)
         #[arg(long)]
         backup: Option<PathBuf>,
+        /// Flash only D; requires the installed M version to match the companion image
+        #[arg(long)]
+        d_only: bool,
+        /// D upload schedule (prefetch overlaps one next upload; still waits for acceptance)
+        #[arg(long, default_value = "prefetch", value_parser = ["sequential", "prefetch"])]
+        d_upload: String,
+        /// Dispatch each D upload's four fragments in one ordered host batch
+        #[arg(long)]
+        d_fragment_batch: bool,
+        /// Maximum queued M streaming writes; 1 restores sequential dispatch
+        #[arg(long, default_value = "4", value_parser = ["1", "2", "4", "8"])]
+        m_queue_width: String,
         /// Commit destructive programming (default: safe dry-run)
         #[arg(long)]
         write: bool,
@@ -1603,6 +1615,10 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
                         expect_rx_sha256,
                         journal,
                         backup,
+                        d_only,
+                        d_upload,
+                        d_fragment_batch,
+                        m_queue_width,
                         write,
                     },
             },
@@ -1680,7 +1696,11 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             "rx": m.metadata,
             "write": write,
             "serial": serial_str,
-            "transport": "ble"
+            "transport": "ble",
+            "d_only": d_only,
+            "d_upload": d_upload,
+            "d_fragment_batch": d_fragment_batch,
+            "m_queue_width": m_queue_width.parse::<usize>()?
         }),
     )?;
 
@@ -1694,6 +1714,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         Some(session) => session,
         None => crate::ble::open(cli.port.as_deref().unwrap(), cli.trace.as_deref(), passkey)?,
     };
+    session.set_queue_width(m_queue_width.parse()?)?;
+    session.set_dcas_speed(d_upload == "prefetch", *d_fragment_batch)?;
     if !reused {
         session.set_master_routing(true)?;
     }
@@ -1707,6 +1729,10 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         }
         let (before, _) = ble_checked_start(&mut session, cli.slot, None, Some(serial_str))?;
         ensure!(
+            !*d_only || before.rx_version == m.metadata.version.to_string(),
+            "--d-only requires installed M to match the companion version; no erase attempted"
+        );
+        ensure!(
             parse_version(&before.dcas_version)? <= d.metadata.version
                 && parse_version(&before.rx_version)? <= m.metadata.version,
             "flash ble-pair only permits upgrades, not downgrades"
@@ -1718,18 +1744,23 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             &serde_json::json!({"path": backup_path, "serial": serial_str}),
         )?;
 
-        let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
-        let rx_boot = link.enter_rx()?;
-        jnl.record("rx-boot-before", &rx_boot)?;
-        link.reset_rx()?;
-        link.application_return()?;
-        let (checked, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
-        ensure!(
-            checked.cargo == before.cargo
-                && checked.dcas_version == before.dcas_version
-                && checked.rx_version == before.rx_version,
-            "RX probe did not restore the unchanged application"
-        );
+        let rx_boot = if !*d_only {
+            let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
+            let rx_boot = link.enter_rx()?;
+            jnl.record("rx-boot-before", &rx_boot)?;
+            link.reset_rx()?;
+            link.application_return()?;
+            let (checked, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+            ensure!(
+                checked.cargo == before.cargo
+                    && checked.dcas_version == before.dcas_version
+                    && checked.rx_version == before.rx_version,
+                "RX probe did not restore the unchanged application"
+            );
+            Some(rx_boot)
+        } else {
+            None
+        };
 
         let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
         let boot = link.enter_dcas()?;
@@ -1760,7 +1791,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             jnl.record("dry-run-complete", &boot)?;
             out_println!("\n[DRY RUN - VALIDATION ONLY]");
             out_println!(
-                "- DCAS & RX Bootloader Handshakes: Verified ({})",
+                "- {} Bootloader Handshake(s): Verified ({})",
+                if *d_only { "DCAS" } else { "DCAS & RX" },
                 profile.family_name
             );
             out_println!("- Motor Serial: Verified ({})", serial_str);
@@ -1779,6 +1811,10 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
                 "write": false,
                 "serial": serial_str,
                 "dry_run": true,
+                "d_only": d_only,
+                "d_upload": d_upload,
+                "d_fragment_batch": d_fragment_batch,
+                "m_queue_width": m_queue_width.parse::<usize>()?,
             }));
         }
 
@@ -1801,21 +1837,24 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             jnl.record("application-between", &middle)?;
         }
 
-        let mut link = if incomplete_pair {
-            session.continue_pair_rx(&serial, &d, &m, &journal_path)?
-        } else {
-            session.motor_firmware_with_policy(&serial, allow_model)?
-        };
-        let boot = link.enter_rx()?;
-        ensure!(
-            boot.version == rx_boot.version
-                && boot.capability_sequence == rx_boot.capability_sequence,
-            "RX boot capability changed before erase"
-        );
-        jnl.record("rx-destructive-start", &m.metadata)?;
-        let receipt = link.flash_rx(&m, boot, progress_reporter())?;
-        jnl.record("rx-finish-and-reset", &receipt)?;
-        link.application_return()?;
+        if !*d_only {
+            let rx_boot = rx_boot.context("missing preflight M boot identity")?;
+            let mut link = if incomplete_pair {
+                session.continue_pair_rx(&serial, &d, &m, &journal_path)?
+            } else {
+                session.motor_firmware_with_policy(&serial, allow_model)?
+            };
+            let boot = link.enter_rx()?;
+            ensure!(
+                boot.version == rx_boot.version
+                    && boot.capability_sequence == rx_boot.capability_sequence,
+                "RX boot capability changed before erase"
+            );
+            jnl.record("rx-destructive-start", &m.metadata)?;
+            let receipt = link.flash_rx(&m, boot, progress_reporter())?;
+            jnl.record("rx-finish-and-reset", &receipt)?;
+            link.application_return()?;
+        }
 
         let (after, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
         ensure!(
@@ -1851,7 +1890,11 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             "serial": serial_str,
             "application_before": before,
             "application_after": after,
-            "settings_unchanged": true
+            "settings_unchanged": true,
+            "d_only": d_only,
+            "d_upload": d_upload,
+            "d_fragment_batch": d_fragment_batch,
+            "m_queue_width": m_queue_width.parse::<usize>()?
         }))
     })();
 
@@ -1869,7 +1912,13 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     if is_json {
         out_println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
-        out_println!("BLE firmware pair flashed successfully:");
+        if !*write {
+            return Ok(());
+        }
+        out_println!(
+            "BLE firmware {} flashed successfully:",
+            if *d_only { "D" } else { "pair" }
+        );
         let app = value.get("application_after");
         let cargo = app
             .and_then(|a| a.get("cargo"))
@@ -2956,6 +3005,62 @@ mod cli_tests {
         }
     }
 
+    #[test]
+    fn ble_speed_options_are_validated_before_connection_and_default_to_dry_run() {
+        let args = [
+            "cranklink",
+            "firmware",
+            "flash",
+            "ble-pair",
+            "--dcas",
+            "d.dat",
+            "--rx",
+            "m.dat",
+        ];
+        let mut selected = args.to_vec();
+        selected.extend([
+            "--d-only",
+            "--d-upload",
+            "sequential",
+            "--d-fragment-batch",
+            "--m-queue-width",
+            "1",
+        ]);
+        let cli = Cli::try_parse_from(selected).unwrap();
+        match cli.command {
+            Command::Firmware {
+                command:
+                    FirmwareCommand::Flash {
+                        command:
+                            FlashCommand::BlePair {
+                                d_only,
+                                d_upload,
+                                d_fragment_batch,
+                                m_queue_width,
+                                write,
+                                ..
+                            },
+                        ..
+                    },
+            } => {
+                assert!(d_only && d_fragment_batch);
+                assert_eq!(d_upload, "sequential");
+                assert_eq!(m_queue_width, "1");
+                assert!(!write);
+            }
+            _ => panic!("expected BLE firmware command"),
+        }
+        for extra in [
+            ["--m-queue-width", "0"],
+            ["--m-queue-width", "3"],
+            ["--m-queue-width", "9"],
+            ["--d-upload", "early-start"],
+        ] {
+            let mut invalid = args.to_vec();
+            invalid.extend(extra);
+            assert!(Cli::try_parse_from(invalid).is_err());
+        }
+    }
     #[test]
     fn firmware_flash_auto_sha_and_optional_journal() {
         let cli = Cli::try_parse_from([

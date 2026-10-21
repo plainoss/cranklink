@@ -7,6 +7,10 @@ use crate::{
 };
 use std::collections::VecDeque;
 
+#[cfg(all(test, unix))]
+#[path = "d_relay_offline_tests.rs"]
+mod d_relay_offline_tests;
+
 /// Holds exclusive ownership of logical update traffic until application return.
 pub struct MotorFirmware<'a> {
     session: &'a mut BleSession,
@@ -462,6 +466,20 @@ impl MotorFirmware<'_> {
     }
 }
 impl FirmwareIo for MotorFirmware<'_> {
+    fn supports_dcas_upload_prefetch(&self) -> bool {
+        self.dcas_mode && !self.rx_mode && self.session.dcas_prefetch
+    }
+    fn prepare_dcas_upload(&mut self) -> Result<()> {
+        self.drain_firmware()?;
+        // The preceding upload was accepted before its transfer started.
+        self.discard_matching(|f| f.control & 0x0b == 0x0b && f.payload.get(1) == Some(&0x82));
+        Ok(())
+    }
+    fn prepare_dcas_transfer(&mut self) -> Result<()> {
+        self.drain_firmware()?;
+        self.discard_matching(firmware_io::stale_dcas_transfer_receipt);
+        Ok(())
+    }
     fn exchange(
         &mut self,
         control: u8,
@@ -518,12 +536,78 @@ impl FirmwareIo for MotorFirmware<'_> {
             .get(&PCE_COMMAND)
             .context("missing motor relay characteristic")?;
         let without_response = (fragmented && c.write_without_response) || !c.write;
+        if fragmented && self.session.dcas_fragment_batch {
+            self.session
+                .log("tx-ordered-batch-start", PCE_COMMAND, &[])?;
+            for value in &fragments {
+                self.session.log("tx", PCE_COMMAND, value)?;
+            }
+            if let Err(e) =
+                self.session
+                    .io
+                    .write_ordered_batch(PCE_COMMAND, &fragments, without_response)
+            {
+                self.session.poisoned = true;
+                return Err(e).context("motor relay ordered batch uncertain; no automatic retry");
+            }
+            self.session
+                .log("tx-ordered-batch-complete", PCE_COMMAND, &[])?;
+            return Ok(());
+        }
         for value in fragments {
             self.session.log("tx", PCE_COMMAND, &value)?;
             if let Err(e) = self.session.io.write(PCE_COMMAND, &value, without_response) {
                 self.session.poisoned = true;
                 return Err(e).context("motor relay dispatch uncertain; no automatic retry");
             }
+            self.session.log("tx-complete", PCE_COMMAND, &value)?;
+        }
+        Ok(())
+    }
+    fn send_batch(&mut self, control: u8, payloads: &[Vec<u8>]) -> Result<()> {
+        ensure!(
+            !self.session.poisoned && self.session.firmware_active,
+            "BLE firmware session is fenced"
+        );
+        if control == 0x48 && self.rx_mode {
+            let width = self.session.queue_width.clamp(1, 8);
+            let (write_without_response, write) = {
+                let c = self
+                    .session
+                    .chars
+                    .get(&FREE_COMMAND)
+                    .context("missing RX relay characteristic")?;
+                (c.write_without_response, c.write)
+            };
+            for chunk in payloads.chunks(width) {
+                let mut batch = Vec::with_capacity(chunk.len());
+                for p in chunk {
+                    ensure!(
+                        p.len() == 7 && matches!(p[1], 0xf0 | 0xf8),
+                        "invalid RX bridge request"
+                    );
+                    let mut value = p.clone();
+                    value[0] = self.slot;
+                    let streaming = p[1] == 0xf8;
+                    let without_response = (streaming && write_without_response) || !write;
+                    self.session.log("tx", FREE_COMMAND, &value)?;
+                    batch.push((value, without_response));
+                }
+                // Group contiguous packets by their without_response flag
+                let values: Vec<Vec<u8>> = batch.iter().map(|(v, _)| v.clone()).collect();
+                let without = batch[0].1;
+                self.session.log("tx-batch-start", FREE_COMMAND, &[])?;
+                if let Err(e) = self.session.io.write_batch(FREE_COMMAND, &values, without) {
+                    self.session.poisoned = true;
+                    return Err(e).context("RX bridge batch dispatch uncertain");
+                }
+                self.session.log("tx-batch-complete", FREE_COMMAND, &[])?;
+            }
+            return Ok(());
+        }
+        for payload in payloads {
+            self.send(control, payload)?;
+            self.pace(Duration::from_millis(2));
         }
         Ok(())
     }
@@ -694,6 +778,36 @@ mod transport_tests {
             .all(|(id, b, wwr)| *id == PCE_COMMAND && b[1] == 0x0b && *wwr));
     }
     #[test]
+    fn ordered_d_batch_stops_at_failed_fragment_and_fences_session() {
+        for failure in [None, Some(2)] {
+            let state = Rc::new(RefCell::new(State {
+                fail_at: failure,
+                ..State::default()
+            }));
+            let mut session = session(state.clone());
+            // Set the option before entry, as the CLI does.
+            session.firmware_active = false;
+            session.set_dcas_speed(true, true).unwrap();
+            session.firmware_active = true;
+            let mut link = link(&mut session, false);
+            let result = link.send(0x0b, &[0x55; 70]);
+            assert_eq!(result.is_err(), failure.is_some());
+            if failure.is_some() {
+                assert!(link.send(0x88, &[0x27, 0, 0, 0]).is_err());
+            }
+            let s = state.borrow();
+            let headers: Vec<_> = s.writes.iter().map(|(_, b, _)| b[0]).collect();
+            assert_eq!(
+                headers,
+                if failure.is_some() {
+                    vec![0x80, 0xa0]
+                } else {
+                    vec![0x80, 0xa0, 0xc0, 0x60]
+                }
+            );
+        }
+    }
+    #[test]
     fn response_only_gateway_preserves_firmware_records_and_order() {
         let state = Rc::new(RefCell::new(State::default()));
         let mut session = session(state.clone());
@@ -716,6 +830,27 @@ mod transport_tests {
         );
         assert_eq!(s.writes[4].0, FREE_COMMAND);
         assert_eq!(s.writes[4].1, [13, 0xf8, 0, 1, 2, 3, 4]);
+    }
+    #[test]
+    fn send_batch_respects_queue_width_and_batches_free_writes() {
+        let state = Rc::new(RefCell::new(State::default()));
+        let mut session = session(state.clone());
+        session.set_queue_width(4).unwrap();
+        let mut link = link(&mut session, true);
+        let payloads = vec![
+            vec![0, 0xf8, 1, 10, 11, 12, 13],
+            vec![0, 0xf8, 2, 14, 15, 16, 17],
+            vec![0, 0xf8, 3, 18, 19, 20, 21],
+            vec![0, 0xf8, 4, 22, 23, 24, 25],
+            vec![0, 0xf8, 5, 26, 27, 28, 29],
+        ];
+        link.send_batch(0x48, &payloads).unwrap();
+        let s = state.borrow();
+        assert_eq!(s.writes.len(), 5);
+        for (i, p) in payloads.iter().enumerate() {
+            assert_eq!(s.writes[i].0, FREE_COMMAND);
+            assert_eq!(s.writes[i].1, [13, 0xf8, p[2], p[3], p[4], p[5], p[6]]);
+        }
     }
     #[test]
     fn stale_ack_cannot_verify_finish_and_timeout_fences_dispatch() {

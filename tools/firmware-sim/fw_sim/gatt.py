@@ -101,6 +101,17 @@ class GattEndpoint:
         self.auth_stage, self.access, self.closed = 0,False,False
         self.master = False
         self.events = []
+        self.connection_interval_s = float(os.environ.get('CRANKLINK_SIM_BLE_CI', '0.015'))
+        self.packets_per_interval = int(os.environ.get('CRANKLINK_SIM_BLE_PPI', '4'))
+        self.simulated_time = 0.0
+        self.rx_state = 'idle'
+        self.rx_sequence = 0
+        self.rx_window_sum = 0
+        self.rx_window_bytes = 0
+        self.rx_total_bytes = 0
+        self.rx_image_sum = 0
+        self.rx_windows_verified = 0
+        self.rx_stream_packets = 0
         self.device.connections += 1
         self.connection_id = self.device.connections
         self.device.active_endpoint = self
@@ -221,6 +232,9 @@ class GattEndpoint:
                     'only PC owner zero start/stop is supported')
         elif payload[:2] == b'\x32\x30':
             require(len(payload) == 6 and payload[4:] == b'\0\0', 'invalid PC-link key packet')
+        elif payload[0] == 0 and payload[1] in (0xf0, 0xf8):
+            self._handle_rx_relay(slot, payload)
+            return
         else:
             allowed_save = getattr(self.motor,'storage',None) is not None and tuple(payload[:2]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
             require(payload[1] & 7 == 4 or allowed_save,
@@ -244,6 +258,82 @@ class GattEndpoint:
                             owner=self.motor.byte(self.motor.profile['owner_ram']),
                             regulation_auth=self.motor.byte(self.motor.profile['auth_ram']))
 
+    def _handle_rx_relay(self, slot, payload):
+        mode = payload[1]
+        if mode == 0xf0:
+            require(len(payload) >= 7, 'truncated RX control request')
+            cmd = payload[3]
+            params = payload[4:7]
+            self._lifecycle('rx-control', cmd=hex(cmd), params=params.hex())
+            if cmd == 0x41:  # Read legacy bootloader version
+                # Bootloader 2.0.2.0, capability 0
+                reply = bytes([slot, 0xf2, 1, 0x51, 0x02, 0x00, 0x02, 0x00])
+                self._notify_free(reply)
+            elif cmd == 0x21:  # Erase
+                self.rx_state = 'erased'
+                self.rx_sequence = 0
+                self.rx_window_sum = 0
+                self.rx_window_bytes = 0
+                self.rx_total_bytes = 0
+                self.rx_image_sum = 0
+                self.rx_windows_verified = 0
+                self.rx_stream_packets = 0
+                self._notify_free(bytes([slot, 0xf2, 0, 0x31, 0x02, 0x00]))
+            elif cmd in (0x24, 0x26):  # Address set or status query
+                self._notify_free(bytes([slot, 0xf2, 0, 0x31, 0x02, 0x00]))
+            elif cmd == 0x25:  # Window checksum verification
+                expected_sum = params[0]
+                if self.rx_window_sum == expected_sum:
+                    self.rx_windows_verified += 1
+                    self.rx_window_sum = 0
+                    self.rx_window_bytes = 0
+                    self._notify_free(bytes([slot, 0xf2, 0, 0x31, 0x02, 0x00]))
+                else:
+                    self._notify_free(bytes([slot, 0xf2, 0, 0x32, 0x01, 0x00]))
+            elif cmd == 0x27:  # Full image checksum verification
+                expected_sum = params[0]
+                if self.rx_image_sum == expected_sum:
+                    self._notify_free(bytes([slot, 0xf2, 0, 0x31, 0x02, 0x00]))
+                else:
+                    self._notify_free(bytes([slot, 0xf2, 0, 0x32, 0x01, 0x00]))
+            elif cmd == 0x28:  # Reset legacy bootloader
+                self.rx_state = 'reset'
+                self._notify_free(bytes([slot, 0xf2, 0, 0x31, 0x02, 0x00]))
+            else:
+                raise RuntimeError(f'unsupported RX bootloader command {hex(cmd)}')
+        elif mode == 0xf8:
+            require(len(payload) == 7, 'RX streaming packet must be exactly 7 bytes')
+            seq = payload[2]
+            expected_seq = (self.rx_sequence + 1) % 8
+            if seq != expected_seq:
+                # Sequence error! Renesas Error 2 (NON_SEQUENTIAL_SEQUENCE_NO)
+                self._notify_free(bytes([slot, 0xf2, 0, 0x32, 0x02, 0x00]))
+                return
+            self.rx_sequence = seq
+            data_bytes = payload[3:7]
+            self.rx_total_bytes += len(data_bytes)
+            self.rx_window_bytes += len(data_bytes)
+            self.rx_window_sum = (self.rx_window_sum + sum(data_bytes)) & 0xff
+            self.rx_image_sum = (self.rx_image_sum + sum(data_bytes)) & 0xff
+            self.rx_stream_packets += 1
+
+    def _handle_write_packet(self, characteristic, data, without_response):
+        if characteristic == AUTH_CONTROL:
+            require(not without_response, 'authentication requires write response')
+            expected = USER_PROOF if self.auth_stage == 0 else APP_PROOF if self.auth_stage == 1 else None
+            require(expected is not None and data == expected, 'synthetic BLE challenge rejected; simulator PIN is 000000')
+            self.auth_stage += 1
+            self._lifecycle('synthetic-auth-stage',stage=self.auth_stage)
+            self.notify(AUTH_CONTROL, bytes([self.auth_stage,0]))
+        elif characteristic == FEATURE:
+            require(self.auth_stage == 2 and data == b'\xff\0', 'feature write rejected; reset/update is disabled')
+            self.access = True
+        else:
+            require(self.access, 'authenticate the modeled GATT peer first')
+            if characteristic == PCE_COMMAND: self.pce(data)
+            elif characteristic == FREE_COMMAND: self.free(data)
+            else: raise RuntimeError('characteristic is not writable')
+
     def request(self, request):
         require(isinstance(request, dict), 'GATT request must be an object')
         operation = request.get('op')
@@ -251,6 +341,17 @@ class GattEndpoint:
             self.close()
             return dict(ok=True)
         require(not self.closed, 'GATT session is closed')
+        if operation == 'configure_link':
+            if 'ci' in request: self.connection_interval_s = float(request['ci'])
+            if 'ppi' in request: self.packets_per_interval = int(request['ppi'])
+            return dict(ok=True)
+        if operation == 'stats':
+            return dict(ok=True,
+                        simulated_seconds=round(self.simulated_time, 4),
+                        rx_total_bytes=self.rx_total_bytes,
+                        rx_windows_verified=self.rx_windows_verified,
+                        rx_stream_packets=self.rx_stream_packets,
+                        throughput_bps=round(self.rx_total_bytes / self.simulated_time, 2) if self.simulated_time > 0 else 0)
         if operation == 'receive':
             timeout = request.get('timeout_ms', 0)
             require(type(timeout) is int and 0 <= timeout <= 60000, 'invalid receive timeout')
@@ -267,26 +368,25 @@ class GattEndpoint:
             require(characteristic in (AUTH_NONCE,AUTH_CONTROL,FEATURE), 'characteristic cannot be read')
             value = NONCE if characteristic == AUTH_NONCE else bytes([self.auth_stage]) if characteristic == AUTH_CONTROL else b'\xff\0'
             return dict(ok=True, bytes=list(value))
+        if operation == 'write_batch':
+            packets = request.get('packets')
+            require(isinstance(packets, list), 'invalid write_batch packets')
+            without_response = request.get('without_response', False)
+            for pkt in packets:
+                require(isinstance(pkt, list) and len(pkt) <= 20 and all(type(v) is int and 0 <= v <= 255 for v in pkt),
+                        'invalid GATT write_batch packet bytes')
+                self._handle_write_packet(characteristic, bytes(pkt), without_response)
+            intervals = (len(packets) + self.packets_per_interval - 1) // self.packets_per_interval
+            self.simulated_time += intervals * self.connection_interval_s
+            return dict(ok=True)
         require(operation == 'write', 'unknown GATT operation')
         raw = request.get('bytes')
         require(isinstance(raw,list) and len(raw) <= 20 and all(type(v) is int and 0 <= v <= 255 for v in raw),
                 'invalid GATT write bytes')
         data = bytes(raw)
-        if characteristic == AUTH_CONTROL:
-            require(not request.get('without_response',False), 'authentication requires write response')
-            expected = USER_PROOF if self.auth_stage == 0 else APP_PROOF if self.auth_stage == 1 else None
-            require(expected is not None and data == expected, 'synthetic BLE challenge rejected; simulator PIN is 000000')
-            self.auth_stage += 1
-            self._lifecycle('synthetic-auth-stage',stage=self.auth_stage)
-            self.notify(AUTH_CONTROL, bytes([self.auth_stage,0]))
-        elif characteristic == FEATURE:
-            require(self.auth_stage == 2 and data == b'\xff\0', 'feature write rejected; reset/update is disabled')
-            self.access = True
-        else:
-            require(self.access, 'authenticate the modeled GATT peer first')
-            if characteristic == PCE_COMMAND: self.pce(data)
-            elif characteristic == FREE_COMMAND: self.free(data)
-            else: raise RuntimeError('characteristic is not writable')
+        without_response = request.get('without_response', False)
+        self._handle_write_packet(characteristic, data, without_response)
+        self.simulated_time += self.connection_interval_s
         return dict(ok=True)
 
     def close(self):
