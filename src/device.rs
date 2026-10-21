@@ -247,6 +247,17 @@ impl Session {
         }
         Ok(())
     }
+    /// Wire tracing is diagnostic: a failed trace write must not abort a
+    /// transfer mid-sequence (for example after an erase) or drop bytes already
+    /// read. Disable the trace once and continue.
+    fn trace_wire(&mut self, direction: &str, bytes: &[u8]) {
+        if let Err(error) = self.log(direction, bytes) {
+            self.trace = None;
+            platform::notice(&format!(
+                "Wire trace disabled after a write failure: {error:#}"
+            ));
+        }
+    }
     pub(crate) fn normal_pc_slot(&self) -> u8 {
         self.pc_slot
     }
@@ -255,7 +266,7 @@ impl Session {
     /// callers must still match the operation's protocol response.
     pub fn send(&mut self, control: u8, payload: &[u8]) -> Result<()> {
         let bytes = protocol::encode(control, payload);
-        self.log("tx", &bytes)?;
+        self.trace_wire("tx", &bytes);
         self.port.set_timeout(Duration::from_millis(500))?;
         self.port
             .write_all(&bytes)
@@ -277,13 +288,13 @@ impl Session {
             match self.port.read(&mut b) {
                 Ok(0) => {}
                 Ok(n) => {
-                    self.log("rx", &b[..n])?;
+                    self.trace_wire("rx", &b[..n]);
                     for frame in self.decoder.feed(&b[..n]) {
                         match frame {
                             Ok(f) if fast_idle_frame(&f) => {}
                             Ok(f) => self.incoming.push_back(f),
                             Err(e) => {
-                                self.log("decode-error", e.as_bytes())?;
+                                self.trace_wire("decode-error", e.as_bytes());
                             }
                         }
                     }
@@ -1168,6 +1179,20 @@ pub(crate) mod tests {
             frame(0x48, &[slot, 1, 0x1c, 0]),
             frame(0x48, &[0, 1, 0x1e, series, unit]),
         )
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_trace_writes_disable_the_trace_without_failing_the_exchange() {
+        let (mut session, steps) = scripted(vec![(frame(4, &[]), frame(0x24, &[0xa0]))]);
+        // Every write to /dev/full fails with ENOSPC.
+        session.trace = Some(OpenOptions::new().append(true).open("/dev/full").unwrap());
+        session.send(4, &[]).unwrap();
+        assert!(session.trace.is_none());
+        let reply = session
+            .wait(Duration::from_secs(1), |f| f.control == 0x24)
+            .unwrap();
+        assert_eq!(reply.payload, [0xa0]);
+        assert!(steps.borrow().is_empty());
     }
     fn component_start_steps(slot: u8) -> Vec<(Frame, Frame)> {
         let mut steps = vec![
