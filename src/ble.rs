@@ -84,6 +84,18 @@ pub trait Gatt {
         }
         Ok(())
     }
+    /// Fragment batches must complete each write in order; never enqueue them concurrently.
+    fn write_ordered_batch(
+        &mut self,
+        id: u16,
+        batch: &[Vec<u8>],
+        without_response: bool,
+    ) -> Result<()> {
+        for bytes in batch {
+            self.write(id, bytes, without_response)?;
+        }
+        Ok(())
+    }
     fn close(&mut self) -> Result<()>;
 }
 
@@ -204,6 +216,8 @@ pub struct BleSession {
     master_pc_start_receipts: BTreeMap<u8, Vec<u8>>,
     firmware_active: bool,
     queue_width: usize,
+    dcas_prefetch: bool,
+    dcas_fragment_batch: bool,
 }
 /// Acknowledged writes kept in flight while streaming M firmware (native and
 /// browser). 4 is the burst depth checked offline against the Motor D relay and
@@ -237,6 +251,8 @@ impl BleSession {
             master_pc_start_receipts: BTreeMap::new(),
             firmware_active: false,
             queue_width: DEFAULT_QUEUE_WIDTH,
+            dcas_prefetch: true,
+            dcas_fragment_batch: false,
         })
     }
     /// Select stock normal/master routing before component discovery.
@@ -266,6 +282,16 @@ impl BleSession {
     }
     pub fn queue_width(&self) -> usize {
         self.queue_width
+    }
+    /// Configure D scheduling before entering update mode. Wired writers are unaffected.
+    pub fn set_dcas_speed(&mut self, prefetch: bool, fragment_batch: bool) -> Result<()> {
+        ensure!(
+            !self.firmware_active,
+            "configure D speed before firmware entry"
+        );
+        self.dcas_prefetch = prefetch;
+        self.dcas_fragment_batch = fragment_batch;
+        Ok(())
     }
     /// Non-erasing model-read queueing benchmark: compare sequential and prequeued acknowledged GETs.
     pub fn benchmark_acknowledged_reads(&mut self) -> Result<serde_json::Value> {

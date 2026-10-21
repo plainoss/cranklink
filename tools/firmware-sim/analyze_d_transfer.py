@@ -14,6 +14,8 @@ from pathlib import Path
 def analyze(path):
     blocks = []
     current = None
+    by_packet = {}
+    by_index = {}
     for line in Path(path).read_text().splitlines():
         record = json.loads(line)
         value = bytes.fromhex(record.get("bytes", ""))
@@ -21,28 +23,38 @@ def analyze(path):
         now = record["time_ms"]
         if record.get("direction") == "tx" and characteristic == "00002afa":
             if value[:2] == b"\x80\x0b":
-                if current:
-                    blocks.append(current)
                 current = {"start": now, "fragments": [], "packet": value[2]}
-            if current and len(value) >= 2 and value[1] == 0x0b:
+                old = by_packet.get(value[2])
+                if old and not all(k in old for k in ("buffer_ack", "transfer_ack", "completion", "motor_ack")):
+                    raise ValueError("packet number reused before all prior receipts")
+                blocks.append(current)
+                by_packet[value[2]] = current
+            if len(value) == 5 and value[:2] == b"\0\x0b" and value[3] == 3:
+                block = by_packet.get(value[4])
+                if block:
+                    block["transfer"] = now
+            elif current and len(value) >= 2 and value[1] == 0x0b:
                 if value[0] in (0x80, 0xa0, 0xc0, 0x60):
                     current["fragments"].append((now, value))
-                elif len(value) == 5 and value[0] == 0 and value[3] == 3:
-                    current["transfer"] = now
-        elif current and record.get("direction") == "rx" and characteristic == "00002af9":
-            if len(value) >= 5 and value[0] & 0x0b == 0x0b:
-                if value[2] == 0x82 and value[3] == current["packet"] and value[4] == 0:
-                    current.setdefault("buffer_ack", now)
-                elif value[2] == 0x83 and value[3] == (current["packet"] + 1) % 256 and value[4] == 0:
-                    current.setdefault("transfer_ack", now)
-                elif value[2] == 0xc0 and value[3] == current["packet"]:
-                    current.setdefault("completion", now)
+                    if value[0] == 0x60:
+                        payload = b"".join(v[2:] for _, v in current["fragments"])
+                        if len(payload) == 70:
+                            by_index[int.from_bytes(payload[68:70], "little")] = current
+        elif record.get("direction") == "rx" and characteristic == "00002af9":
+            if len(value) >= 4 and value[0] & 0x0b == 0x0b:
+                packet = (value[3] - 1) % 256 if value[2] == 0x83 else value[3]
+                block = by_packet.get(packet)
+                if block:
+                    if value[2] == 0x82 and len(value) >= 5 and value[4] == 0:
+                        block.setdefault("buffer_ack", now)
+                    elif value[2] == 0x83 and len(value) >= 5 and value[4] == 0:
+                        block.setdefault("transfer_ack", now)
+                    elif value[2] == 0xc0:
+                        block.setdefault("completion", now)
             elif len(value) >= 4 and value[:2] == b"\x88\x31":
                 index = int.from_bytes(value[2:4], "little")
-                if index == len(blocks) + 1:
-                    current.setdefault("motor_ack", now)
-    if current:
-        blocks.append(current)
+                if index in by_index:
+                    by_index[index].setdefault("motor_ack", now)
 
     required = ("buffer_ack", "transfer", "transfer_ack", "completion", "motor_ack")
     complete = [b for b in blocks if all(k in b for k in required) and len(b["fragments"]) == 4]

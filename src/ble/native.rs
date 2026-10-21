@@ -274,6 +274,34 @@ impl Gatt for NativeGatt {
         });
         self.finish(result)
     }
+    fn write_ordered_batch(
+        &mut self,
+        id: u16,
+        batch: &[Vec<u8>],
+        without_response: bool,
+    ) -> Result<()> {
+        let c = self.characteristic(id)?;
+        let write_type = if without_response {
+            ensure!(
+                c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE),
+                "characteristic does not support write without response"
+            );
+            WriteType::WithoutResponse
+        } else {
+            ensure!(
+                c.properties.contains(CharPropFlags::WRITE),
+                "characteristic does not support write with response"
+            );
+            WriteType::WithResponse
+        };
+        let result = self.rt.block_on(async {
+            for bytes in batch {
+                bounded(self.peripheral.write(&c, bytes, write_type)).await?;
+            }
+            Ok(())
+        });
+        self.finish(result)
+    }
     fn receive(&mut self, duration: Duration) -> Result<Option<Notification>> {
         self.ready()?;
         ensure!(

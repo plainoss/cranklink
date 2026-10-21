@@ -1,6 +1,6 @@
 # D / DCAS BLE transfer speed investigation
 
-**Implementation update, 2026-10-18:** BLE DCASX upload prefetch is now in the
+**Implementation update, 2026-10-21:** BLE DCASX upload prefetch is now in the
 production sender. Old transfer/completion/checksum receipts are purged before
 each transfer, including in sequential mode. The sections below retain the
 original investigation; the implementation and current simulation results are
@@ -275,7 +275,9 @@ this experiment is explicitly ignored until requested with its fixtures.
 `src/firmware_io.rs` now owns the prefetch schedule. BLE's `MotorFirmware`
 advertises support for it; the shared sender enables it only for DCASX
 format 4. Wired transports and DCAS2/2i remain sequential, including the legacy
-page switch. There are no new CLI options or changes to M queue width.
+page switch. The CLI now exposes `--d-upload sequential|prefetch`, ordered
+`--d-fragment-batch`, `--m-queue-width 1|2|4|8`, and a guarded `--d-only` path.
+See the [manual CLI testing guide](ble-firmware-speed-testing.md).
 
 The first block is uploaded and its 82 acceptance consumed. The client then
 starts that block's transfer, uploads at most one successor, and waits for the
@@ -295,10 +297,10 @@ otherwise successful blocks. The sequential path receives the same fix.
 Arbitrarily late old C0 arriving after cleanup remains indistinguishable on the
 wire because C0 contains no block index; this change does not add a protocol epoch.
 
-The ignored stock-firmware Rust matrix now overrides only whether prefetch is
-enabled for the baseline comparison. It no longer implements an alternate
-schedule in test code: both modes execute the production block loop and BLE
-sender. Tests include lost/rejected prefetched 82, a disconnect during successor
+The ignored stock-firmware Rust matrix configures the production session's
+prefetch and fragment-batch options. It implements no alternate schedule in test
+code: all four combinations execute the production block loop and BLE sender.
+Tests include lost/rejected prefetched 82, a disconnect during successor
 upload, successor data corruption, sustained duplicates across wrap, and the
 old duplicated-C0/missing-C0 case. Both modes must now reject that last case.
 
@@ -337,11 +339,13 @@ simulations, which retain the initial upload and distinguish host write-return
 latency. They still cannot choose the correct write-return duration from the old
 trace; hardware write start/end instrumentation is needed for that.
 
-The updated report contains **76 production-sender scenarios**, including eight
+The updated report contains **152 production-sender scenarios**, including sixteen
 complete 156,300-byte image runs. Both schedules now stop at block 129 in the
 duplicated-old-C0/missing-new-C0 regression, with no finish/reset. Prefetch also
 rejects missing/rejected successor acceptance, disconnects and corrupt successor
-data without another programming transfer. Thirteen Python stock-code/clock
-tests pass. Broader checks pass: 199 ordinary Rust tests, 27 web tests, the WASM
-library check, and 54 Python tests with six unrelated optional stock-image tests
-skipped. The ignored Rust matrix is run explicitly by the reproduction command.
+data without another programming transfer. Ordered fragment batching is checked
+with each schedule and the same faults; it uses sequential physical writes,
+not concurrent fragment dispatch. Broader checks include ordinary Rust and web
+tests, the Python suite, and the WASM library check. Optional firmware-dependent
+tests require their local fixtures. The ignored Rust matrix is run explicitly
+by the reproduction command.

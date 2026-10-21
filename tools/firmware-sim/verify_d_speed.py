@@ -34,7 +34,7 @@ def main():
     cases = []
     declared_cases = 0
     for command in commands:
-        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=1200)
         combined = result.stdout + result.stderr
         declared = re.search(r'D relay matrix: (\d+) cases passed', combined)
         if declared:
@@ -46,11 +46,11 @@ def main():
             check['diagnostic'] = combined[-6000:]
         checks.append(check)
         for line in combined.splitlines():
-            match = re.match(r'D relay gateway=(".*") prefetch=(true|false) ack_ms=(\d+) fault=(\S+) length=(\d+): (\{.*\})', line)
+            match = re.match(r'D relay gateway=(".*") prefetch=(true|false) fragment_batch=(true|false) ack_ms=(\d+) fault=(\S+) length=(\d+): (\{.*\})', line)
             if match:
-                path, prefetch, ack_ms, fault, length, stats = match.groups()
+                path, prefetch, fragment_batch, ack_ms, fault, length, stats = match.groups()
                 path = json.loads(path)
-                cases.append(dict(gateway=profiles[path]['id'], prefetch=prefetch == 'true', ack_write_ms=int(ack_ms), fault=fault, image_bytes=int(length),
+                cases.append(dict(gateway=profiles[path]['id'], prefetch=prefetch == 'true', fragment_batch=fragment_batch == 'true', ack_write_ms=int(ack_ms), fault=fault, image_bytes=int(length),
                                   stats=json.loads(stats)))
         print(json.dumps(dict(check=command[1] if command[0] == sys.executable else command[0],
                               passed=check['passed'])), flush=True)
@@ -59,16 +59,16 @@ def main():
         if baseline['fault'] != 'none' or baseline['prefetch']:
             continue
         candidate = next((c for c in cases if c['gateway'] == baseline['gateway'] and c['fault'] == 'none'
-                          and c['prefetch'] and c['ack_write_ms'] == baseline['ack_write_ms']), None)
+                          and c['prefetch'] and c['fragment_batch'] == baseline['fragment_batch'] and c['ack_write_ms'] == baseline['ack_write_ms']), None)
         if candidate:
             old, new = baseline['stats']['stream_seconds'], candidate['stats']['stream_seconds']
             timings.append(dict(gateway=baseline['gateway'], image_bytes=baseline['image_bytes'],
-                                ack_write_ms=baseline['ack_write_ms'], sequential_seconds=old,
+                                ack_write_ms=baseline['ack_write_ms'], fragment_batch=baseline['fragment_batch'], sequential_seconds=old,
                                 prefetch_seconds=new, speedup=old / new, time_saved_percent=100 * (old - new) / old))
     calibration = (Path(__file__).parent / 'd-transfer-analysis.json').read_bytes()
     report = dict(schema_version=2, passed=all(c['passed'] for c in checks) and len(cases) == declared_cases > 0 and bool(timings),
                   hardware_access=False, production_d_schedule_changed=True,
-                  production_behavior='BLE DCASX uses one-upload prefetch; wired and older formats stay sequential. Both paths purge stale83/C0 before transfer dispatch.',
+                  production_behavior='CLI selects sequential/prefetched BLE DCASX and optional ordered fragment batching; wired and older formats stay sequential. All paths purge stale83/C0 before transfer dispatch.',
                   timing_model='Trace-calibrated mean upload and transfer phases; virtual events, not emulator wall time. ACK write return duration is assumed, not measured.',
                   timing_calibration_sha256=hashlib.sha256(calibration).hexdigest(),
                   timings=timings,

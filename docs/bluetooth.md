@@ -15,3 +15,15 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically; `--ble-master` overrides the policy.
 
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware.
+
+For manual CLI speed testing, `firmware flash ble-pair` supports `--d-only`,
+`--d-upload sequential|prefetch` (default: prefetch), `--d-fragment-batch`
+(default: off), and `--m-queue-width 1|2|4|8` (default: 4). D prefetch keeps one
+programming transfer outstanding and requires all receipts. Fragment batches
+await each write in order; M streaming queues acknowledged writes when the
+gateway requires them. Every M window and the complete image remain checked.
+Cached stale D completion receipts are cleared before each transfer.
+
+See the [manual testing guide](ble-firmware-speed-testing.md) for build commands,
+baseline comparisons, trace timing, and the distinction between a dry run and
+an actual transfer. Speed gains remain hardware-unverified.
