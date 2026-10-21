@@ -131,17 +131,6 @@ pub const MOTOR_FLASH_PROFILES: &[MotorFlashProfile] = &[
         verification_tier: VerificationTier::ProtocolVerified,
     },
     MotorFlashProfile {
-        family_name: "DU-EP600",
-        live_series: 0x37,
-        live_unit: 0x00,
-        fw_series: 0x30,
-        fw_unit: 0x00,
-        dcas_kind: FirmwareKind::DcasX,
-        allowed_boards: &[1],
-        min_dcas_bootloader: Version([5, 0, 0, 0]),
-        verification_tier: VerificationTier::ProtocolVerified,
-    },
-    MotorFlashProfile {
         family_name: "DU-EP500",
         live_series: 0x37,
         live_unit: 0x00,
@@ -953,6 +942,59 @@ mod tests {
         assert!(is_allowed_motor_board(1));
         assert!(is_allowed_motor_board(2));
         assert!(!is_allowed_motor_board(3));
+    }
+
+    #[test]
+    fn ep500_rejects_ep600_distribution_images() {
+        // Live 37/00 is EP500 only; EP600/EP801 images (fw 30/00) must not pass.
+        let mut ep600_buf = image(FirmwareKind::DcasX);
+        ep600_buf[40] = 0x30;
+        let ep600_fw = Firmware::from_bytes(&ep600_buf).unwrap();
+        assert!(ep600_fw
+            .validate_target_with_policy(0x37, 0, 1, Version([5, 0, 6, 1]), true)
+            .is_err());
+        assert!(find_motor_profile(0x37, 0, 0x30, 0).is_none());
+    }
+
+    #[test]
+    fn flash_profiles_agree_with_unit_models() {
+        // DCAS2 bootloader identities with no stock unit model entry; keep any
+        // addition here deliberate.
+        const UNMODELLED_LIVE: &[(u8, u8)] = &[(0x0a, 0), (0x0c, 0), (0x15, 0)];
+        for profile in MOTOR_FLASH_PROFILES {
+            let live = (profile.live_series, profile.live_unit);
+            let names = crate::unit_models::candidates(live.0, live.1, None, None)
+                .into_iter()
+                .filter(|name| name.starts_with("DU-"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names.is_empty(),
+                UNMODELLED_LIVE.contains(&live),
+                "live {:02x}/{:02x} unit models {names:?}",
+                live.0,
+                live.1
+            );
+            assert!(
+                names.is_empty()
+                    || names
+                        .iter()
+                        .any(|name| name.starts_with(profile.family_name)),
+                "{} for live {:02x}/{:02x} is not among unit models {names:?}",
+                profile.family_name,
+                profile.live_series,
+                profile.live_unit
+            );
+            for other in MOTOR_FLASH_PROFILES {
+                if other.live_series == profile.live_series && other.live_unit == profile.live_unit
+                {
+                    assert_eq!(
+                        other.family_name, profile.family_name,
+                        "live {:02x}/{:02x} maps to two families",
+                        profile.live_series, profile.live_unit
+                    );
+                }
+            }
+        }
     }
 
     #[test]
