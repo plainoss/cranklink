@@ -1,6 +1,6 @@
 //! Persistent JSON-RPC 2.0 session driver for autonomous agents, CI runners, and scripts.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -65,7 +65,7 @@ impl JsonRpcError {
             name: "METHOD_NOT_FOUND".into(),
             message: format!("Unknown method '{method}'"),
             data: None,
-            hint: Some("Supported: session.connect, session.disconnect, session.status, probe, units, settings.schema, settings.read, settings.set, settings.restore, settings.batch, firmware.inspect, exit".into()),
+            hint: Some("Supported: session.connect, session.disconnect, session.status, probe, units, settings.schema, firmware.inspect, exit".into()),
         }
     }
 
@@ -108,6 +108,18 @@ impl JsonRpcError {
             data: None,
             hint: hint.map(str::to_string),
         }
+    }
+}
+
+/// An absent or null slot selects automatically; anything else must be a bus slot.
+fn probe_slot(params: &Value) -> std::result::Result<Option<u8>, String> {
+    match params.get("slot") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|slot| *slot < 32)
+            .map(|slot| Some(slot as u8))
+            .ok_or_else(|| format!("slot must be an integer 0..31, got {value}")),
     }
 }
 
@@ -283,14 +295,29 @@ pub fn run_session(
                     }
                 };
 
-                let slot = req
-                    .params
-                    .get("slot")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u8);
+                let slot = match probe_slot(&req.params) {
+                    Ok(slot) => slot,
+                    Err(message) => {
+                        let err_resp = JsonRpcResponse {
+                            jsonrpc: "2.0",
+                            id,
+                            result: None,
+                            error: Some(JsonRpcError::invalid_params(message, None)),
+                        };
+                        writeln!(stdout, "{}", serde_json::to_string(&err_resp)?)?;
+                        stdout.flush()?;
+                        continue;
+                    }
+                };
                 let comp = req.params.get("component").and_then(Value::as_str);
 
-                match s.probe_component(slot, comp) {
+                // Probe is read-only: release the PC-link it opened on every path.
+                let probed = s.probe_component(slot, comp);
+                let stopped = s.normal_stop();
+                match super::finish_operation(
+                    probed,
+                    stopped.context("PC-link Stop acknowledgement"),
+                ) {
                     Ok(probe_id) => {
                         if let Some(exp) = &active_serial {
                             if !probe_id.serial.eq_ignore_ascii_case(exp) {
@@ -511,6 +538,16 @@ mod tests {
             JsonRpcError::hardware_error(anyhow::anyhow!("challenge authentication failed"));
         assert_eq!(auth_err.code, 4003);
         assert_eq!(auth_err.name, "AUTH_FAILED");
+    }
+
+    #[test]
+    fn probe_slot_rejects_values_that_are_not_bus_slots() {
+        assert_eq!(probe_slot(&json!({})), Ok(None));
+        assert_eq!(probe_slot(&json!({"slot": null})), Ok(None));
+        assert_eq!(probe_slot(&json!({"slot": 13})), Ok(Some(13)));
+        for slot in [json!(32), json!(269), json!(-1), json!("13"), json!(1.5)] {
+            assert!(probe_slot(&json!({ "slot": slot })).is_err(), "{slot}");
+        }
     }
 
     #[test]
