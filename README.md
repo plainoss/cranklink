@@ -39,6 +39,8 @@ All families support component discovery and identification. Field availability 
 
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 
+For byte layouts, routing, session lifecycles, settings commands and verified coverage boundaries, see the [E-TUBE protocol reference](docs/etube-protocol.md).
+
 ## Command line
 
 ### Install
