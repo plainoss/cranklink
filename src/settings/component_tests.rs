@@ -70,6 +70,7 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
         reads: usize,
         writes: usize,
         bad_maximum: bool,
+        stuck: bool,
         target: u8,
     }
     impl UnitCommands for Hub {
@@ -91,7 +92,8 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
                     if self.bad_maximum {
                         return Ok(vec![0, 5]);
                     }
-                    Ok(vec![if self.reads >= 3 { self.target } else { 0 }, 4])
+                    let done = self.reads >= 3 && !self.stuck;
+                    Ok(vec![if done { self.target } else { 0 }, 4])
                 }
                 (0x0b, 0x10) => {
                     assert_eq!(params, [self.target, 4, 0, 0]);
@@ -102,13 +104,19 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
             }
         }
     }
-    for (bad_maximum, target) in [(false, 2), (true, 2), (false, 0)] {
+    for (bad_maximum, stuck, target) in [
+        (false, false, 2),
+        (true, false, 2),
+        (false, false, 0),
+        (false, true, 2),
+    ] {
         let files = Files::new();
         let backup = files.backup("hub.json");
         let mut hub = Hub {
             reads: 0,
             writes: 0,
             bad_maximum,
+            stuck,
             target,
         };
         let result = set_for_model(
@@ -125,6 +133,14 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
                 .to_string()
                 .contains("invalid setting readback"));
             assert_eq!(hub.reads, 2);
+        } else if stuck {
+            // An unfinished actuator is an uncertain outcome: no second SET.
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("actuator completion unconfirmed"), "{error}");
+            assert!(hub.reads > 3, "polled {} times", hub.reads);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
+            assert_eq!(saved["original_parameters"], "0004");
         } else {
             let receipt = result.unwrap();
             assert_eq!(receipt.after, target);
