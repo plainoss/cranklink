@@ -1179,16 +1179,23 @@ pub fn set_for_model(
                 "shared setting bits changed unexpectedly"
             );
         }
+        // Unsetting any calendar component clears the whole date tuple.
+        let calendar_unset = unset && s.group == 0x48 && s.set == 0x50;
+        if calendar_unset {
+            ensure!(
+                got.len() >= payload.len() && got[..payload.len()].iter().all(|&b| b == 0xff),
+                "maintenance calendar did not clear; original preserved in {}",
+                backup_path.display()
+            );
+        }
         for i in 0..s.offset {
             ensure!(
-                got.get(i) == original.get(i),
+                calendar_unset || got.get(i) == original.get(i),
                 "shared setting prefix changed unexpectedly"
             );
         }
         for i in s.offset + s.width..meaningful_len(&s).min(original.len()) {
-            if (s.name.starts_with("speed-limit") && i >= 2)
-                || (unset && s.group == 0x48 && s.set == 0x50)
-            {
+            if (s.name.starts_with("speed-limit") && i >= 2) || calendar_unset {
                 continue;
             }
             ensure!(
@@ -2179,6 +2186,54 @@ mod tests {
             .unwrap()
             .raw_value("10")
             .is_err());
+    }
+    #[test]
+    fn unsetting_any_calendar_component_clears_the_date() {
+        struct Calendar {
+            date: Vec<u8>,
+        }
+        impl UnitCommands for Calendar {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x48, 0x50) => {
+                        self.date = params.to_vec();
+                        vec![]
+                    }
+                    (0x48, _) => self.date.clone(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        for name in ["maintenance-year", "maintenance-month", "maintenance-day"] {
+            let mut calendar = Calendar {
+                date: vec![24, 5, 10, 0],
+            };
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-calendar-{name}-{}-{}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let receipt = set_for_model(
+                &mut calendar,
+                13,
+                name,
+                "unset",
+                &backup,
+                SettingsModel::Ep800Crg,
+            )
+            .unwrap();
+            assert_eq!(receipt.after, Value::Null, "{name}");
+            assert_eq!(calendar.date, [255; 4], "{name}");
+            std::fs::remove_file(backup).unwrap();
+        }
     }
     #[test]
     fn date_validated() {
