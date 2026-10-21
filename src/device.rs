@@ -571,13 +571,14 @@ impl Session {
         let mut unit = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         unit.prepare_session(self, allow_component)?;
         if let Some(component) = component {
-            if !unit.is_motor() {
-                ensure!(
-                    unit.model
-                        .is_some_and(|model| crate::unit_models::name_matches(component, model)),
-                    "component {component:?} no longer matches slot {slot}"
-                );
+            if unit.model.is_none() {
+                unit.resolve_name(self)?;
             }
+            ensure!(
+                unit.model
+                    .is_some_and(|model| crate::unit_models::name_matches(component, model)),
+                "component {component:?} no longer matches slot {slot}"
+            );
         }
         let p = self.adapter(4, &[], 0x24)?;
         self.pc_slot = p.first().copied().context("short protocol reply")? & 0x1f;
@@ -1265,6 +1266,33 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("matching slots []"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn named_motor_is_rechecked_after_inventory_before_pc_link() {
+        let model_params = (
+            frame(0x48, &[13, 0x16, 0x7c, 0]),
+            frame(
+                0x48,
+                &[0, 0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0],
+            ),
+        );
+        let mut commands = discovery_steps(&[13]);
+        commands.extend([
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x23, 0),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            model_params.clone(),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x30, 0),
+            model_params,
+        ]);
+        let (mut session, steps) = scripted(commands);
+        let error = session
+            .normal_start_component(Some(13), Some("DU-EP800-CRG"))
+            .unwrap_err();
+        assert!(error.to_string().contains("no longer matches slot 13"));
         assert!(steps.borrow().is_empty());
         assert!(session.normal_slot.is_none());
     }

@@ -9,7 +9,7 @@ import type { SessionController } from "./sessionController.ts";
 export const MCP_TOOLS = [
   {
     name: "cranklink_probe",
-    description: "Read e-bike drive unit identity, serial number, and dual MCU firmware versions.",
+    description: "Read the active component identity, serial number, and available firmware versions.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -17,7 +17,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "cranklink_get_schema",
-    description: "Return the active drive unit setting schema with valid ranges, units, and categories.",
+    description: "Return the active component setting schema, including ranges, choices and read-only fields.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -25,7 +25,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "cranklink_read_settings",
-    description: "Read all live parameter values from the connected drive unit.",
+    description: "Read all live parameter values from the selected component.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -45,7 +45,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "cranklink_batch_settings",
-    description: "Stage and apply multiple setting changes in a single atomic session with human confirmation.",
+    description: "Stage and apply multiple setting changes in one session with human confirmation and pre-write backups.",
     inputSchema: {
       type: "object",
       properties: {
@@ -59,11 +59,21 @@ export const MCP_TOOLS = [
   },
   {
     name: "cranklink_create_backup",
-    description: "Export an immediate, durable JSON snapshot of all live drive unit parameters.",
+    description: "Export a durable JSON snapshot of the active component parameters.",
     inputSchema: {
       type: "object",
       properties: {},
     },
+  },
+  {
+    name: "cranklink_list_components",
+    description: "Return the connected component inventory. Refresh when there are no staged edits or active operations.",
+    inputSchema: { type: "object", properties: { refresh: { type: "boolean" } } },
+  },
+  {
+    name: "cranklink_select_component",
+    description: "Select a catalogued component from the current inventory and load its settings. Save or discard staged edits first.",
+    inputSchema: { type: "object", properties: { slot: { type: "integer", minimum: 0, maximum: 31 } }, required: ["slot"] },
   },
   // Retain legacy esteps_* aliases for backwards compatibility
   {
@@ -157,12 +167,12 @@ export class WebMCPServer {
           resources: [
             {
               uri: "cranklink://device/identity",
-              name: "Drive Unit Identity",
+              name: "Component Identity",
               mimeType: "application/json",
             },
             {
               uri: "cranklink://device/settings",
-              name: "Live Drive Unit Settings",
+              name: "Live Component Settings",
               mimeType: "application/json",
             },
             {
@@ -217,10 +227,16 @@ export class WebMCPServer {
   private async callTool(name: string, args: any): Promise<any> {
     const state = this.controller.getState();
 
+    if (name === "cranklink_list_components") {
+      return args.refresh ? this.controller.refreshUnits() : state.units;
+    }
+    if (name === "cranklink_select_component") {
+      if (!Number.isInteger(args.slot)) throw new Error("Select a component using an inventory slot.");
+      return this.controller.selectComponent(args.slot);
+    }
+
     if (name === "cranklink_probe" || name === "esteps_probe") {
-      if (!state.identity && state.transport) {
-        await this.controller.connectAndSync(state.transport);
-      }
+      if (!state.identity) throw new Error("Select a connected component first.");
       return this.controller.getState().identity;
     }
 
@@ -251,12 +267,25 @@ export class WebMCPServer {
               .filter((op: any) => op.op === "set")
               .map((op: any) => ({ name: op.name, value: op.value }));
 
+      const requestedNames = new Set<string>();
+      for (const op of ops) {
+        if (requestedNames.has(op.name)) throw new Error("Request each setting only once in a change review.");
+        requestedNames.add(op.name);
+      }
+
       while (
         this.controller.getState().phase === "connecting" ||
         this.controller.getState().phase === "probing" ||
         this.controller.getState().phase === "reading"
       ) {
         await new Promise((r) => setTimeout(r, 50));
+      }
+
+      if (Object.keys(this.controller.getState().stagedValues).length) {
+        throw new Error("Save or discard staged changes before requesting an agent write.");
+      }
+      if (this.controller.getState().mcpApproval) {
+        throw new Error("Finish the pending change review before requesting another agent write.");
       }
 
       let currentLive = this.controller.getState().liveValues;
@@ -274,13 +303,47 @@ export class WebMCPServer {
         after: op.value,
       }));
 
+      const target = this.controller.getState().identity;
+      if (!target) throw new Error("Select a connected component first.");
+      for (const op of ops) {
+        const spec = this.controller.getState().schema.find((setting) => setting.name === op.name);
+        if (!spec || spec.read_only || !currentLive[op.name]) throw new Error(`Setting ${op.name} is unavailable or read-only.`);
+      }
+
       const approved = await this.controller.requestMcpApproval(name, args, diff);
       if (!approved) {
         throw new Error("Transaction rejected by operator.");
       }
 
-      for (const op of ops) {
-        this.controller.stageParameter(op.name, op.value);
+      if (Object.keys(this.controller.getState().stagedValues).length) {
+        throw new Error("Staged changes appeared during review. Save or discard them and review the agent changes again.");
+      }
+
+      const currentTarget = this.controller.getState().identity;
+      if (currentTarget?.serial !== target.serial || currentTarget?.modelSlug !== target.modelSlug || currentTarget?.slot !== target.slot) {
+        throw new Error("The selected component changed during review. Review the changes again.");
+      }
+
+      try {
+        for (const op of ops) this.controller.stageParameter(op.name, op.value);
+        const staged = this.controller.getState().stagedValues;
+        const live = this.controller.getState().liveValues;
+        const requestedValue = (op: { name: string; value: string | number }) => {
+          const spec = this.controller.getState().schema.find((setting) => setting.name === op.name);
+          return spec?.value_type === "number" || spec?.value_type === "enum" ? Number(op.value) : op.value;
+        };
+        const changedPlan = Object.entries(staged).some(([setting, value]) => {
+          const reviewed = ops.find((op) => op.name === setting);
+          return !reviewed || String(value) !== String(requestedValue(reviewed));
+        }) || ops.some((op) => String(staged[op.name] ?? live[op.name]?.value) !== String(requestedValue(op)));
+        if (changedPlan) {
+          throw new Error("The staged plan differs from the approved changes. Include the required destination and speed settings explicitly in a new review.");
+        }
+      } catch (error) {
+        // No operator edits existed when this synchronous staging pass began.
+        // Clear only this agent's temporary plan; failed backend writes retain it.
+        this.controller.discardAllStaged();
+        throw error;
       }
       return this.controller.commitStagedBatch();
     }

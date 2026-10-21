@@ -204,19 +204,19 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
-async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true) {
+async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false) {
   if (cachePasskey) {
     await page.addInitScript(() => {
       sessionStorage.setItem("esteps_ble_passkey", "000000");
     });
   }
   await openInstrument(page);
-  const setup = await page.evaluate(async (reject) => {
+  const setup = await page.evaluate(async ({ reject, defer }) => {
     const simulatorModule = "/simulator.js";
     const { DeviceSimulator } = await import(simulatorModule);
     const device = new DeviceSimulator({
       model: reject ? "ep801" : "ep800-crg",
-      fault: reject ? "auth_reject" : "none",
+      fault: reject && !defer ? "auth_reject" : "none",
     });
     const connect = device.gatt.connect;
     let radioShutdown = false;
@@ -243,7 +243,7 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
     return { hasSimulator: Boolean(device) };
-  }, rejectAuthentication);
+  }, { reject: rejectAuthentication, defer: deferAuthenticationFailure });
   expect(setup).toEqual({ hasSimulator: true });
   await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
   await page.getByTestId("btn-connect-ble").click();
@@ -289,7 +289,11 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   expect(state.settings).toHaveLength(74);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
-  expect(commands).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master settings read"]);
+  expect(commands).toEqual([
+    "cranklink> connect ble",
+    "cranklink> --ble-master=master units",
+    "cranklink> --ble-master=master --slot 13 --component 'DU-EP800-CRG' settings read",
+  ]);
   expect(state.logs.filter((entry) => entry.stream === "stderr")).toEqual([]);
   expect(state.logs.some((entry) => entry.stream === "notice" && /Bluetooth/i.test(entry.text))).toBe(true);
   expect(state.logs.map((entry) => entry.text).join("\n")).not.toMatch(/firmware operations disabled/i);
@@ -330,10 +334,12 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
 });
 
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {
-  await selectSimulatedBluetoothDevice(page, true);
+  await selectSimulatedBluetoothDevice(page, true, true, true);
+  await expect(page.getByTestId("identity-strip")).toContainText("DU-EP801");
   await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
   await page.evaluate(async () => {
     const controller = (window as any).cranklinkInstrumentController;
+    (window as any).testBluetoothDevice.setFault("auth_reject");
     controller.stageParameter("walk-assist", 0);
     await controller.commitStagedBatch().catch(() => {});
   });
@@ -353,9 +359,12 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   expect(state.settings.length).toBeGreaterThan(0);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
-  expect(commands).toHaveLength(3);
-  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master settings read"]);
-  expect(commands[2]).toContain("settings batch");
+  expect(commands).toHaveLength(4);
+  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master units"]);
+  expect(commands[2]).toContain("--component 'DU-EP801'");
+  expect(commands[2]).toContain("settings read");
+  expect(commands[3]).toContain("settings batch");
+  expect(await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().stagedValues)).toEqual({ "walk-assist": 0 });
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);
   const authLogs = await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs);

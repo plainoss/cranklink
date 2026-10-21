@@ -2,7 +2,7 @@ import { Alert, Modal, Spinner } from "@heroui/react";
 import type { InstrumentState, SessionPhase, TransportType } from "../../types.ts";
 
 const TITLES: Partial<Record<SessionPhase, string>> = {
-  probing: "Identifying drive unit…",
+  probing: "Discovering components…",
   reading: "Reading settings…",
   committing: "Writing to the bike…",
   flashing: "Updating firmware…",
@@ -21,7 +21,7 @@ function connectingTitle(transport: TransportType | null): string {
 /** What the operator must not do while this phase runs, per transport. */
 function guidance(phase: SessionPhase, transport: TransportType | null): { text: string; critical: boolean } {
   if (transport === "sim") {
-    return { text: "Simulated drive unit. No bike hardware is involved.", critical: false };
+    return { text: "Simulated bike components. No hardware is involved.", critical: false };
   }
   const link = transport === "ble"
     ? "Keep this page open and the bike powered on and in connection mode"

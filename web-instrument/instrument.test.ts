@@ -152,16 +152,8 @@ describe("SessionController Finite State Machine & Staging", () => {
         if (line.startsWith("connect")) {
           return { code: 0 };
         }
-        if (line === "probe") {
-          const out = JSON.stringify({
-            slot: 13,
-            cargo: "00-CRG",
-            dcas_version: "4.1.11.0",
-            rx_version: "4.1.11.0",
-            serial: "010203040506",
-            model_series: 0x23,
-            model_unit: 0,
-          });
+        if (line === "units") {
+          const out = JSON.stringify({ units: [{ slot: 13, model_series: 0x23, model_unit: 0, model: "DU-EP800-CRG", model_candidates: ["DU-EP800-CRG"] }] });
           print?.(out, "stdout");
           return { code: 0 };
         }
@@ -177,6 +169,7 @@ describe("SessionController Finite State Machine & Staging", () => {
           const out = JSON.stringify({
             model: "DU-EP800/DU-EP800-CRG",
             slot: 13,
+            identity: { slot: 13, cargo: "00-CRG", dcas_version: "4.1.11.0", rx_version: "4.1.11.0", serial: "010203040506", model_series: 0x23, model_unit: 0, model_name: "DU-EP800-CRG", settings_model: "ep800-crg" },
             values: {
               "tire-circumference": { value: 2200, raw: "98080000" },
               destination: { value: 1, raw: "0101ffff" },
@@ -245,13 +238,17 @@ describe("BLE initial settings connection", () => {
         commands.push(line);
         const print = (globalThis as any).estepsTerminalPrint;
         if (line === "connect ble") return { code: 0 };
+        if (line === "--ble-master=master units") {
+          print(JSON.stringify({ units: [{ slot: snapshot.identity?.slot ?? 13, model_series: snapshot.identity?.model_series ?? 0x23, model_unit: snapshot.identity?.model_unit ?? 0, model: null, model_candidates: [] }] }), "stdout");
+          return { code: 0 };
+        }
         if (line.startsWith("settings schema")) {
-          const model = line.split("--model ")[1];
+          const model = line.split("--model ")[1].replaceAll("'", "");
           print(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8"), "stdout");
           return { code: 0 };
         }
-        assert.equal(line, "--ble-master=master settings read", "Use master routing from the initial read without a preliminary probe");
-        assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+        assert.match(line, /^--ble-master=master --slot \d+ (?:--ble-unit-auth )?settings read$/, "Read the selected target without a preliminary probe");
+        assert.equal(commands.filter((command) => command.endsWith("settings read")).length, 1);
         print(JSON.stringify(snapshot), "stdout");
         return { code: 0 };
       },
@@ -268,12 +265,13 @@ describe("BLE initial settings connection", () => {
       unavailable: { lamp: "not available" },
     }, commands));
     const identity = await controller.connectAndSync("ble");
+    assert.ok(identity);
     assert.equal(identity.serial, "010203040506");
     assert.equal(identity.slot, 0);
     assert.equal(controller.getState().phase, "ready");
     assert.equal(controller.getState().liveValues["speed-limit"].value, 25);
     assert.equal(controller.getState().unavailableValues.lamp, "not available");
-    assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+    assert.equal(commands.filter((command) => command.endsWith("settings read")).length, 1);
     assert.ok(!commands.includes("probe"));
   });
 
@@ -282,10 +280,11 @@ describe("BLE initial settings connection", () => {
     const controller = new SessionController();
     const commands: string[] = [];
     controller.attachTerminal(terminalFor({ identity: { serial: null, model_series: 0x23 }, values: {} }, commands));
-    await assert.rejects(controller.connectAndSync("ble"), /verified serial identity/);
-    assert.equal(controller.getState().phase, "error");
+    assert.equal(await controller.connectAndSync("ble"), null);
+    assert.equal(controller.getState().phase, "ready");
+    assert.match(controller.getState().failure!.error, /verified serial identity/);
     assert.equal(controller.getState().identity, null);
-    assert.equal(commands.filter((command) => command === "--ble-master=master settings read").length, 1);
+    assert.equal(commands.filter((command) => command.endsWith("settings read")).length, 1);
   });
 
   it("selects each modern family schema and preserves standard/cargo identity", async () => {
@@ -304,10 +303,11 @@ describe("BLE initial settings connection", () => {
         values: {}, unavailable: {},
       }, commands));
       const identity = await controller.connectAndSync("ble");
+      assert.ok(identity);
       assert.equal(identity.modelSlug, slug);
       assert.equal(identity.model, model);
       assert.equal(identity.isCargo, cargo.endsWith("-CRG"));
-      assert.ok(commands.includes(`settings schema --model ${slug}`));
+      assert.ok(commands.includes(`settings schema --model '${slug}'`));
       assert.equal(controller.getState().schema.find((setting) => setting.name === "speed-limit")?.userMax, 45);
     }
   });
@@ -327,14 +327,15 @@ describe("BLE initial settings connection", () => {
       const controller = new SessionController();
       const commands: string[] = [];
       controller.attachTerminal(terminalFor({
-        identity: { model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },
+        identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },
         values: {}, unavailable: {},
       }, commands));
       const identity = await controller.connectAndSync("ble");
+      assert.ok(identity);
       assert.equal(identity.modelSlug, slug);
       assert.equal(identity.model, model);
       assert.equal(identity.isCargo, /-(CRG|TRK)$/.test(model));
-      assert.ok(commands.includes(`settings schema --model ${slug}`));
+      assert.ok(commands.includes(`settings schema --model '${slug}'`));
       const schema = controller.getState().schema;
       assert.equal(schema.length, count);
       assert.equal(schema.some((setting) => setting.section === "profiles"), false);
@@ -371,7 +372,7 @@ describe("Speed and destination staging", () => {
     const controller = new SessionController();
     (controller as any).update({
       phase: "ready", transport: "sim",
-      identity: { modelSlug: model, serial: "010203040506" },
+      identity: { slot: 13, modelSlug: model, model: model === "ep800-crg" ? "DU-EP800-CRG" : `DU-${model.toUpperCase()}`, isMotor: true, modelUnit: 0, serial: "010203040506" },
       schema: enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8")), model),
       liveValues: { destination: { value: destination, raw: "" }, "speed-limit": { value: speed, raw: "" } },
     });
@@ -445,7 +446,7 @@ describe("Speed and destination staging", () => {
           (globalThis as any).estepsTerminalPrint("write rejected", "stderr");
           return { code: 1 };
         }
-        (globalThis as any).estepsTerminalPrint(JSON.stringify({ results: operations.map((op) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ completed: operations.length, results: operations.map((op) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
         return { code: 0 };
       },
     });

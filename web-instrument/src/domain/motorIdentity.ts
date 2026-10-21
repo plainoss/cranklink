@@ -1,4 +1,4 @@
-import type { DeviceIdentity, MotorModel } from "../types.ts";
+import type { DeviceIdentity, MotorModel, SettingsModel } from "../types.ts";
 
 const MODELS: Record<number, { slug: MotorModel; name: string }> = {
   0x08: { slug: "e6000", name: "E6000 family" },
@@ -11,6 +11,31 @@ const MODELS: Record<number, { slug: MotorModel; name: string }> = {
   0x37: { slug: "ep500", name: "DU-EP500" },
   0x38: { slug: "e5100", name: "DU-E5100" },
 };
+
+export function isMotorStock(series: number, unit: number): boolean {
+  return unit === 0 && MODELS[series] !== undefined;
+}
+
+/** Component names come from the Rust live identity resolver, never a motor fallback. */
+export function detectDeviceIdentity(parsed: {
+  model_series?: number; model_unit?: number; cargo?: unknown;
+  model_name?: unknown; settings_model?: unknown;
+}): Pick<DeviceIdentity, "modelSlug" | "model" | "isCargo" | "isMotor" | "modelUnit"> {
+  if (!Number.isInteger(parsed.model_series) || parsed.model_series! < 0 || parsed.model_series! > 255
+      || !Number.isInteger(parsed.model_unit) || parsed.model_unit! < 0 || parsed.model_unit! > 255) {
+    throw new Error("Component response lacks a complete stock identity.");
+  }
+  if (isMotorStock(parsed.model_series!, parsed.model_unit!)) {
+    return { ...detectMotorIdentity(parsed), isMotor: true, modelUnit: 0 };
+  }
+  const name = typeof parsed.model_name === "string" ? parsed.model_name : "";
+  if (!Number.isInteger(parsed.model_series) || !Number.isInteger(parsed.model_unit)
+      || !/^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(name) || name.startsWith("DU-")
+      || parsed.settings_model !== name) {
+    throw new Error("Component identity and settings schema do not match.");
+  }
+  return { modelSlug: name as SettingsModel, model: name, isMotor: false, isCargo: false, modelUnit: parsed.model_unit! };
+}
 
 /** Series selects the schema; verified backend metadata distinguishes shared-series variants. */
 export function detectMotorIdentity(parsed: { model_series?: number; model_unit?: number; cargo?: unknown; model_name?: unknown; settings_model?: unknown }) {

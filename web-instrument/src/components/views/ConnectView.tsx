@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Bluetooth, Cable, Check, FlaskConical, Minus, Smartphone, Usb } from "lucide-react";
-import { Alert, Button, Card, Chip, Disclosure, Link } from "@heroui/react";
+import { Alert, Button, Card, Checkbox, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { checkBluetoothAvailability, detectPlatform, type PlatformInfo } from "../../core/platform.ts";
@@ -19,6 +19,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
   const [showOptions, setShowOptions] = useState(false);
   const [simModel, setSimModel] = useState<SimulatedModel>("ep800-crg");
   const [simFault, setSimFault] = useState<FaultInjectionType>("none");
+  const [simComponents, setSimComponents] = useState(false);
 
   const platform = detectPlatform();
   // Browsers can expose Web Bluetooth while it is turned off (for example Brave's global switch).
@@ -78,7 +79,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             <h1 className="text-2xl font-bold tracking-tight">cranklink</h1>
           </div>
           <p className="text-sm text-muted leading-relaxed">
-            Read and adjust settings, back up, and update firmware on Shimano STEPS drive units from your browser.
+            Read and adjust settings on Shimano STEPS and Di2 components, save backups, and update supported drive-unit firmware from your browser.
           </p>
         </header>
 
@@ -133,11 +134,38 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
           </Button>
 
           {canUseBluetooth && (
-            <p className="text-xs text-muted leading-relaxed" data-testid="bluetooth-discovery-hint">
-              Turn the bike on just before connecting. If it isn’t listed, turn it off and on again, then enable its
-              Bluetooth connection mode if needed.
-            </p>
+            <div className="text-xs text-muted leading-relaxed" data-testid="bluetooth-discovery-hint">
+              <p>Activate the wireless connection on your cycle computer, derailleur, or wireless unit before connecting.</p>
+              <Disclosure>
+                <Disclosure.Heading>
+                  <Disclosure.Trigger className="w-full min-h-[44px] flex items-center justify-between gap-2 text-left" data-testid="btn-bluetooth-pairing-help">
+                    STEPS and Di2 pairing instructions
+                    <Disclosure.Indicator />
+                  </Disclosure.Trigger>
+                </Disclosure.Heading>
+                <Disclosure.Content>
+                  <Disclosure.Body className="flex flex-col gap-3">
+                    <ul className="list-disc pl-4 flex flex-col gap-2">
+                      <li><strong>Di2 wireless rear derailleur / MU-UR520:</strong> hold the function button and release as soon as the blue LED starts blinking.</li>
+                      <li><strong>EW-WU111 / EW-WU101:</strong> hold the Junction A button and release when its red and green LEDs alternate.</li>
+                      <li><strong>SC-M9051 / SC-MT800:</strong> hold the mode switch until C appears, then release.</li>
+                      <li><strong>STEPS cycle computers except SC-E8000:</strong> press a non-power button or turn the system on to open its 15-second connection window.</li>
+                      <li><strong>SC-E8000:</strong> use its Bluetooth LE menu, following the connection guide.</li>
+                    </ul>
+                    <p>Release the button at the indicated signal; holding it longer can select another mode. Classic wired Di2 needs a compatible Bluetooth wireless unit or a USB adapter. Lever buttons alone do not make it discoverable.</p>
+                    <Link href="https://si.shimano.com/en/pdfs/um/7J4MW/UM-7J4MW-005-ENG.pdf" target="_blank" rel="noreferrer" className="text-xs self-start">
+                      Shimano Bluetooth connection guide
+                      <Link.Icon />
+                    </Link>
+                  </Disclosure.Body>
+                </Disclosure.Content>
+              </Disclosure>
+            </div>
           )}
+
+          <p className="text-xs text-muted leading-relaxed" data-testid="component-connection-hint">
+            After connecting, choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer from the active component list. Available settings depend on the exact model.
+          </p>
 
           <TransportSupport platform={platform} bluetooth={canUseBluetooth} />
 
@@ -212,11 +240,17 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             <p className="text-xs text-muted">
               The simulator emulates a Bluetooth gateway, so simulated faults surface as Bluetooth errors.
             </p>
+            <Checkbox isSelected={simComponents} onChange={setSimComponents} isDisabled={isBusy} data-testid="sim-components-checkbox">
+              <Checkbox.Content className="min-h-[44px]">
+                <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
+                Include Di2 components
+              </Checkbox.Content>
+            </Checkbox>
             <Button
               variant="outline"
               fullWidth
               isDisabled={isBusy}
-              onPress={() => controller.connectAndSync("sim", { model: simModel, fault: simFault }).catch(() => {})}
+              onPress={() => controller.connectAndSync("sim", { model: simModel, fault: simFault, components: simComponents }).catch(() => {})}
               data-action="connect-sim"
               data-testid="btn-connect-sim"
             >

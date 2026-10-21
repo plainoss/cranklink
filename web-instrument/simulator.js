@@ -1,7 +1,19 @@
-// In-browser GATT Simulator for Shimano STEPS E-TUBE Drive Units
-// Supports DU-EP800-CRG (legacy 0x23), DU-EP600 (modern 0x30), and DU-EP801 (modern 0x35)
+// In-browser scripted GATT simulator for Shimano STEPS and wired Di2 settings.
+// Drive units: DU-EP800-CRG (0x23), DU-EP600 (0x30), and DU-EP801 (0x35).
+// Opt-in mixed inventory: lever, derailleurs, power unit, hub actuator, display.
 // Full register fidelity for Rust WASM `probe`, `settings read`, `settings set`, and `settings batch`.
 import { ETUBE_SERVICE, characteristicUuid } from "./ble.js";
+
+// Scripted protocol fixtures, not firmware execution or physical compatibility
+// claims. Each peer has its own identity, serial, PC-link state and registers.
+const COMPONENT_FIXTURES = [
+  { slot: 4, model: "ST-6870-L", series: 0x07, unit: 1, part: 1, version: [0x31, 0, 0], registers: { switchAB: 0x23, switchCS: 0xaf } },
+  { slot: 5, model: "RD-R9150", series: 0x11, unit: 4, part: 0, version: [0x33, 0, 0], registers: { adjustment: -1, adjustmentMaximum: 16, multiShiftSpeed: 3 } },
+  { slot: 6, model: "FD-6870", series: 0x07, unit: 3, version: [0x30, 1, 0], registers: { adjustment: 0, adjustmentMaximum: 16, synchroInterval: 0 } },
+  { slot: 7, model: "BT-DN110", series: 0x11, unit: 0, version: [0x45, 0, 0], registers: { shiftLimitUp: 255, shiftLimitDown: 3 } },
+  { slot: 8, model: "MU-UR500", series: 0x20, unit: 4, version: [0x33, 1, 0], registers: { adjustment: 0, adjustmentMaximum: 4, minimumGear: 1, gearCount: 11 } },
+  { slot: 9, model: "SC-EM800", series: 0x23, unit: 2, version: [0x46, 0, 0], registers: { beep: 1, distanceUnit: 0, language: 0, brightness: 60 } },
+];
 
 export class Characteristic extends EventTarget {
   constructor(id, gateway) {
@@ -51,6 +63,8 @@ export class DeviceSimulator extends EventTarget {
     networkLatencyMs = 0,
     initialPreset = null,
     logWirePackets = true,
+    components = false,
+    hubActuation = true,
   } = {}) {
     super();
 
@@ -73,6 +87,17 @@ export class DeviceSimulator extends EventTarget {
     this.disconnectOnWrite = disconnectOnWrite || fault === "disconnect_on_write";
     this.networkLatencyMs = networkLatencyMs;
     this.logWirePackets = logWirePackets;
+    this.hubActuation = hubActuation;
+    this.components = new Map((components ? COMPONENT_FIXTURES : []).map((fixture) => [fixture.slot, {
+      ...structuredClone(fixture),
+      serial: [0xc0, fixture.slot, 0, 0, 0, 1],
+      connected: false,
+      owner: 0,
+      keyIndex: 0,
+      adjustmentTarget: null,
+      adjustmentPolls: 0,
+    }]));
+    this.componentWrites = [];
 
     this.authStart = [];
     this.authProof = [];
@@ -226,10 +251,145 @@ export class DeviceSimulator extends EventTarget {
 
   resetRegisters() {
     this.registers = JSON.parse(JSON.stringify(this._defaultRegisters));
+    for (const fixture of COMPONENT_FIXTURES) {
+      const component = this.components.get(fixture.slot);
+      if (component) {
+        component.registers = structuredClone(fixture.registers);
+        component.adjustmentTarget = null;
+        component.adjustmentPolls = 0;
+      }
+    }
   }
 
   getWireLog() {
     return [...this.wireLog];
+  }
+
+  getComponentRegisters(slot) {
+    const component = this.components.get(slot);
+    if (!component) throw new Error(`No simulated component at slot ${slot}`);
+    return structuredClone(component.registers);
+  }
+
+  _inventoryBitmap(includePc = false) {
+    const bitmap = [0, 0, 0, 0];
+    for (const slot of [13, ...this.components.keys(), ...(includePc ? [3] : [])]) {
+      bitmap[Math.floor(slot / 8)] |= 1 << (slot % 8);
+    }
+    return bitmap;
+  }
+
+  _componentRequest(component, group, command, params) {
+    const { slot, registers: regs } = component;
+    const reject = () => this.emit(0x2afd, [slot, group, command + 3]);
+    const reply = (...data) => this.emit(0x2afd, [slot, group, command + 2, ...data]);
+    if (group === 1) {
+      if (command === 0x1c) return reply(component.series, component.unit, 255, 255);
+      if (command === 0x34) return reply(0, component.series, component.unit);
+      if (command === 0x2c) return reply(...component.version);
+      if (command === 0x3c) return reply(...component.serial);
+      // Product-number strings are synthetic fixture metadata, never keys.
+      if (command === 0xa4) return reply(0, ...new TextEncoder().encode("12345"));
+      if (command === 0xac) return reply(...new TextEncoder().encode("ABCDEF"));
+      return reject();
+    }
+    if ((group === 4 && command === 0x0c) || (group === 0x32 && command === 0x9c)) {
+      return component.part !== undefined ? reply(component.part) : reject();
+    }
+    if (group === 0x32 && command === 0x10) {
+      if (params[0] === 0) {
+        component.connected = false;
+        component.adjustmentPolls = 0;
+        return reply(0, component.owner, 255, 255);
+      }
+      component.owner = params[1] ?? 0;
+      component.keyIndex = 0;
+      component.connected = false;
+      return;
+    }
+    if (group === 0x32 && command === 0x30) {
+      const key = [[0xa2, 0x2b], [0x30, 0x0e], [0x7a, 0x4d], [0x62, 0x2b], [0x85, 0xb4]][component.keyIndex];
+      if (!key || params[0] !== key[0] || params[1] !== key[1]) return;
+      component.keyIndex++;
+      if (component.keyIndex === 5) {
+        component.connected = true;
+        this.emit(0x2afd, [slot, 0x32, 0x12, 1, component.owner, 255, 255]);
+      }
+      return;
+    }
+    if (!component.connected) return reject();
+    const isWrite = [
+      [4, 0x10], [0x0b, 0x50], [0x0a, 0x98], [0x0b, 0x60],
+      [0x0b, 0x10], [0x0b, 0x18], [0x23, 0], [5, 0x18], [5, 0x20], [5, 0x50],
+    ].some(([g, c]) => g === group && c === command);
+    if (isWrite) {
+      if (this.disconnectOnWrite) return this.triggerDisconnect();
+      if (this.fault === "write_timeout") return;
+      if (this.fault === "readonly_rejection") return reject();
+    }
+    const reservedZero = (width, meaningful) => params.length === width && params.slice(meaningful).every((byte) => byte === 0);
+    let accepted = false;
+    if (component.unit === 1 && group === 4) {
+      if (command === 0x14) return reply(regs.switchAB, regs.switchCS, 255, 255);
+      if (command === 0x10 && reservedZero(4, 2) && (params[0] >> 4) <= 3 && (params[0] & 15) <= 3) {
+        regs.switchAB = params[0];
+        regs.switchCS = params[1];
+        accepted = true;
+      }
+    } else if (component.model === "RD-R9150" && group === 0x0b) {
+      if (command === 0x14) return reply(regs.adjustment & 255, regs.adjustmentMaximum, 255, 255);
+      if (command === 0x54) return reply(regs.multiShiftSpeed, 255, 255, 255);
+      if (command === 0x50 && reservedZero(4, 1) && params[0] <= 6) {
+        regs.multiShiftSpeed = params[0];
+        accepted = true;
+      }
+    } else if (component.model === "FD-6870" && group === 0x0a) {
+      if (command === 0x14) return reply(regs.adjustment & 255, regs.adjustmentMaximum, 255, 255);
+      if (command === 0x9c) return reply(regs.synchroInterval, 255, 255, 255);
+      if (command === 0x98 && params.length === 1 && params[0] <= 2) {
+        regs.synchroInterval = params[0];
+        accepted = true;
+      }
+    } else if (component.model === "BT-DN110" && group === 0x0b) {
+      if (command === 0x64) return reply(regs.shiftLimitUp, regs.shiftLimitDown, 255, 255);
+      if (command === 0x60 && reservedZero(4, 2) && params.slice(0, 2).every((value) => [2, 3, 255].includes(value))) {
+        [regs.shiftLimitUp, regs.shiftLimitDown] = params;
+        accepted = true;
+      }
+    } else if (component.model === "MU-UR500" && group === 0x0b) {
+      if (command === 0x14) {
+        // Scripted actuator completion, not an executed stock motor/actuator.
+        // The exact MU firmware fixture deliberately leaves motion incomplete.
+        if (this.hubActuation && component.adjustmentTarget !== null && ++component.adjustmentPolls >= 2) {
+          regs.adjustment = component.adjustmentTarget;
+          component.adjustmentTarget = null;
+        }
+        return reply(regs.adjustment & 255, regs.adjustmentMaximum, 255, 255);
+      }
+      if (command === 0x1c) return reply(regs.minimumGear, regs.gearCount, 255, 255);
+      if (command === 0x10 && reservedZero(4, 2) && params[1] === 4 && (params[0] <= 4 || params[0] >= 252)) {
+        component.adjustmentTarget = params[0] > 127 ? params[0] - 256 : params[0];
+        component.adjustmentPolls = 0;
+        accepted = true;
+      }
+      if (command === 0x18 && reservedZero(4, 2) && params[0] === 1 && [5, 8, 11].includes(params[1])) {
+        regs.gearCount = params[1];
+        accepted = true;
+      }
+    } else if (component.model === "SC-EM800") {
+      const field = new Map([["35:0", "beep"], ["5:24", "distanceUnit"], ["5:32", "language"], ["5:80", "brightness"]]);
+      const get = field.get(`${group}:${command - 4}`);
+      if (get) return reply(regs[get]);
+      const set = field.get(`${group}:${command}`);
+      const choices = { beep: [0, 1], distanceUnit: [0, 1], language: [0, 1, 2, 3, 4, 5], brightness: [20, 40, 60, 80, 100] };
+      if (set && reservedZero(set === "brightness" ? 4 : 1, 1) && choices[set].includes(params[0])) {
+        regs[set] = params[0];
+        accepted = true;
+      }
+    }
+    if (!accepted) return reject();
+    this.componentWrites.push({ slot, model: component.model, group, command, parameters: [...params] });
+    return reply();
   }
 
   emit(id, data) {
@@ -280,26 +440,42 @@ export class DeviceSimulator extends EventTarget {
         12: [0x2c, 0],
         13: [0x2d, 1, 0xff, 0],
         19: [0x33, 1, 0x1e, gatewaySeries, 2, 0xff, 0xff],
-        27: [0x3b, this.masterMode ? 0 : 8, 32, 0, 0],
+        27: [0x3b, ...this._inventoryBitmap(!this.masterMode)],
         29: [0x3d, 0, 0],
       }[b[1]];
       if (!response) throw new Error(`unexpected simulated PCE command ${b[1]}`);
       this.emit(0x2af9, response);
       if (this.masterMode && b[1] === 0x0c && b[2] === 1) {
         this.emit(0x2afd, [13, 0x32, 0x12, 1, 0, 0xff, 0xff]);
+        for (const component of this.components.values()) {
+          component.connected = true;
+          component.owner = 0;
+          this.emit(0x2afd, [component.slot, 0x32, 0x12, 1, 0, 255, 255]);
+        }
+      }
+      if (b[1] === 0x0c && b[2] === 0) {
+        for (const component of this.components.values()) {
+          component.connected = false;
+          component.keyIndex = 0;
+        }
       }
       return;
     }
 
     if (id === 0x2afe) {
       // Local gateway queries on slot 0
+      if (b[0] === 0 && b[1] === 2 && b[2] === 0x14 && this.components.has(b[3])) {
+        const component = this.components.get(b[3]);
+        this.emit(0x2afd, [0, 2, 0x16, component.slot, component.series, component.unit]);
+        return;
+      }
       if (b[0] === 0 && b[1] === 2 && b[2] === 0x14 && b[3] === 13) {
         const series = { "ep800-crg": 0x23, ep600: 0x30, ep801: 0x35 }[this.model];
         this.emit(0x2afd, [0, 2, 0x16, 13, series, 0]);
         return;
       }
       if (b[0] === 0 && b[1] === 1 && b[2] === 0x14) {
-        this.emit(0x2afd, [0, 1, 0x16, 0, 0, 8, 32, 0, 0, 0xff]);
+        this.emit(0x2afd, [0, 1, 0x16, 0, 0, ...this._inventoryBitmap(true), 0xff]);
         return;
       }
       if (b[0] === 0 && b[1] === 1 && b[2] === 0x1c) {
@@ -308,6 +484,9 @@ export class DeviceSimulator extends EventTarget {
         return;
       }
 
+      if (this.components.has(b[0])) {
+        return this._componentRequest(this.components.get(b[0]), b[1], b[2], b.slice(3));
+      }
       if (b[0] !== 13) throw new Error("unexpected simulated unit slot");
       const [slot, group, command] = b;
       const params = b.slice(3);

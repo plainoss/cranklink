@@ -498,7 +498,9 @@ The firmware simulator executes selected gateway and motor images through a
 virtual connection. It exercises service exchanges, replies, cleanup and
 faults such as dropped keys or reordered fragments. Its current executable
 coverage includes eight display images and MU-UR500 3.3.1 settings, with actual
-native/BLE CLI backup, save, restore and lost-acknowledgment checks. Classic
+native/BLE CLI backup, save, restore and lost-acknowledgment checks. Current UI/WASM
+browser tests also exercise SC-EM800 4.6.0 and MU-UR500 3.3.1 save, durable backups,
+modeled power-cycle readback, restore and unfinished hub actuation. Classic
 lever, derailleur and power-unit schemas have protocol tests but still lack
 executable firmware profiles. Coverage of one model does not prove another's
 firmware behavior; see the [component results](../tools/firmware-sim/component-validation.json).

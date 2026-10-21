@@ -4,7 +4,7 @@
 [![Web](https://github.com/plainoss/cranklink/actions/workflows/web.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/web.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. The CLI also supports model-specific settings for catalogued Di2 components. Available as a web app and a CLI built on the same Rust core.
+Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. The web app and CLI also support model-specific settings for catalogued Di2 components, using the same Rust core.
 
 > [!WARNING]
 > Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
@@ -22,7 +22,9 @@ The project began as the recovery of a bricked EP800-CRG that official tools and
 The core compiled to WebAssembly; all protocol work runs in the browser. Requires Chrome or Edge on desktop or Android (Safari and iOS lack WebUSB and Web Bluetooth), plus one of:
 
 - **SM-PCE02** over WebUSB or Web Serial. Required for firmware recovery. On Android, use WebUSB.
-- **Bluetooth**, via the bike's E-TUBE gateway (e.g. SC-EM800). Power the bike on shortly before connecting; if it is not listed, power-cycle it or enable the gateway's connection mode. Close other apps connected to the bike.
+- **Bluetooth**, via the bike's E-TUBE gateway (e.g. SC-EM800 or EW-WU111). Activate its connection mode before connecting and close other apps connected to the bike. The app includes model-specific pairing help: Di2 uses the appropriate function/Junction A button, while most STEPS displays open a short window after power-on or a button press. See [Bluetooth connection instructions](docs/bluetooth.md#connection-mode).
+
+After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.
 
@@ -37,9 +39,9 @@ Firmware images are not bundled.
 
 All families support component discovery and identification. Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
-The CLI supports classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. These component layouts have protocol tests but have not been validated on hardware. The web tuning interface continues to use drive-unit schemas.
+The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 
-Exact MU-UR500 and cycle-computer firmware execution, current CLI save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md).
+Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md).
 
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 

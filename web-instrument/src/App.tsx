@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { AlertTriangle, LogOut, Menu, Save, Search, ShieldAlert } from "lucide-react";
-import { Alert, Button, Card, Chip, Drawer, Link, SearchField, Separator, Toast, toast } from "@heroui/react";
+import { AlertTriangle, LogOut, Menu, RefreshCw, Save, Search, ShieldAlert } from "lucide-react";
+import { Alert, Button, Card, Chip, Disclosure, Drawer, Link, SearchField, Separator, Toast, toast } from "@heroui/react";
 import type { InstrumentState, SettingSectionId } from "./types.ts";
 import type { SessionController } from "./core/sessionController.ts";
 import {
@@ -29,6 +29,7 @@ import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
 import { PasskeyDialog } from "./components/ui/PasskeyDialog.tsx";
 import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
+import { OptionSelect } from "./components/ui/OptionSelect.tsx";
 
 const DISCLAIMER_KEY = "cranklink_disclaimer_dismissed";
 
@@ -47,6 +48,9 @@ export function App({ controller }: AppProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [selectingSlot, setSelectingSlot] = useState<number | null>(null);
+  const [refreshingUnits, setRefreshingUnits] = useState(false);
+  const [targetError, setTargetError] = useState<string | null>(null);
   // Shown until acknowledged once in this browser; reachable again from the sidebar.
   const [warningOpen, setWarningOpen] = useState(() => {
     try {
@@ -68,30 +72,38 @@ export function App({ controller }: AppProps) {
   );
 
   useEffect(() => controller.subscribe(setState), [controller]);
+  useEffect(() => setTargetError(null), [state.identity?.slot, state.identity?.serial, state.identity?.modelSlug]);
 
   // Completed writes confirm through HeroUI's toast queue.
   useEffect(() => {
     const notice = state.toast;
     if (!notice) return;
     controller.dismissToast();
-    toast.success(notice.message, {
+    const toastId: string = toast.success(notice.message, {
       timeout: 8000,
       ...(notice.action === "backup"
-        ? { actionProps: { children: "View backups", onPress: () => void navigate({ to: pathFor({ goal: "backup" }) }) } }
+        ? { actionProps: { children: "View backups", onPress: () => {
+          toast.close(toastId);
+          void navigate({ to: pathFor({ goal: "backup" }) });
+        } } }
         : {}),
     });
   }, [state.toast, controller, navigate]);
 
-  const connected = !["disconnected", "connecting", "probing", "error"].includes(state.phase);
+  const connected = !["disconnected", "connecting", "probing", "error"].includes(state.phase)
+    || (state.phase === "probing" && (state.identity !== null || state.units.length > 0));
+  const isMotor = state.identity?.isMotor === true;
 
   // The route decides the view; the session decides whether a view is reachable.
   useEffect(() => {
     if (!connected) {
       if (routePath !== "/connect") void navigate({ to: "/connect" });
-    } else if (routePath === "/connect" || routePath === "/") {
-      void navigate({ to: "/tune/$category", params: { category: "geometry" } });
+    } else if ((routePath === "/connect" || routePath === "/") && (state.identity || state.phase === "ready")) {
+      void navigate({ to: "/tune/$category", params: { category: isMotor ? "geometry" : "all" } });
+    } else if (!isMotor && routePath.startsWith("/tune/") && routePath !== "/tune/all") {
+      void navigate({ to: "/tune/$category", params: { category: "all" } });
     }
-  }, [connected, navigate, routePath]);
+  }, [connected, isMotor, navigate, routePath, state.identity, state.phase]);
 
   useEffect(() => {
     if (state.phase !== "flashing") return;
@@ -113,6 +125,36 @@ export function App({ controller }: AppProps) {
   }, [navigate]);
 
   const stagedCount = Object.keys(state.stagedValues).length;
+  const targetBusy = state.phase !== "ready" || state.linkLost || selectingSlot !== null || refreshingUnits;
+
+  const selectTarget = async (slot: number) => {
+    if (targetBusy || stagedCount > 0 || slot === state.identity?.slot) return;
+    setSelectingSlot(slot);
+    setTargetError(null);
+    try {
+      const identity = await controller.selectComponent(slot);
+      setSearchQuery("");
+      setSearchOpen(false);
+      go({ goal: "tune", category: identity.isMotor ? "geometry" : "all" });
+    } catch (error) {
+      setTargetError(error instanceof Error ? error.message : "Could not select this component.");
+    } finally {
+      setSelectingSlot(null);
+    }
+  };
+
+  const refreshUnits = async () => {
+    if (targetBusy || stagedCount > 0) return;
+    setRefreshingUnits(true);
+    setTargetError(null);
+    try {
+      await controller.refreshUnits();
+    } catch (error) {
+      setTargetError(error instanceof Error ? error.message : "Could not refresh connected components.");
+    } finally {
+      setRefreshingUnits(false);
+    }
+  };
 
   const disconnect = () => {
     if (stagedCount > 0) setDisconnectConfirmOpen(true);
@@ -174,6 +216,7 @@ export function App({ controller }: AppProps) {
       current={destination}
       stagedCount={stagedCount}
       sections={new Set(state.schema.map((setting) => setting.section))}
+      isMotor={isMotor}
       onNavigate={go}
     />
   );
@@ -184,17 +227,71 @@ export function App({ controller }: AppProps) {
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Connected unit</span>
         <LinkStatus state={state} />
       </Card.Header>
-      <Card.Title className="text-sm font-bold truncate" title={friendlyMotorName(state.identity)}>
-        {friendlyMotorName(state.identity)}
+      <Card.Title className="text-sm font-bold truncate" title={isMotor ? friendlyMotorName(state.identity) : state.identity?.model}>
+        {state.identity ? (isMotor ? friendlyMotorName(state.identity) : state.identity.model) : "Select a component"}
       </Card.Title>
-      <Card.Content className="p-0">
+      {state.identity && <Card.Content className="p-0">
         <Separator />
         <p className="pt-1 text-[11px] font-mono text-muted grid grid-cols-2 gap-x-2 gap-y-0.5">
           <span className="col-span-2">SN: {state.identity?.serial}</span>
-          <span>DCAS: {state.identity?.dcasVersion}</span>
-          <span>RX: {state.identity?.rxVersion}</span>
+          {isMotor ? <><span>DCAS: {state.identity?.dcasVersion}</span><span>RX: {state.identity?.rxVersion}</span></> : <span className="col-span-2">Firmware: {state.identity?.dcasVersion}</span>}
         </p>
-      </Card.Content>
+      </Card.Content>}
+    </Card>
+  );
+
+  const unitOptions = state.units
+    .filter((unit) => unit.model !== null || unit.model_candidates.length > 0)
+    .map((unit) => ({
+      id: String(unit.slot),
+      label: `${unit.model ?? unit.model_candidates.join(" / ")} · slot ${unit.slot}`,
+    }));
+  if (state.identity && !unitOptions.some((option) => option.id === String(state.identity?.slot))) {
+    unitOptions.unshift({ id: String(state.identity.slot), label: `${state.identity.model} · slot ${state.identity.slot}` });
+  }
+  const targetSelector = (
+    <Card variant="secondary" className="gap-3" data-testid="component-selector">
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="min-w-0 flex-1">
+          <OptionSelect
+            label="Active component"
+            value={state.identity ? String(state.identity.slot) : null}
+            options={unitOptions}
+            onChange={(id) => void selectTarget(Number(id))}
+            isDisabled={targetBusy || stagedCount > 0 || unitOptions.length === 0}
+            data-testid="component-select"
+          />
+        </div>
+        <Button variant="outline" isDisabled={targetBusy || stagedCount > 0} onPress={() => void refreshUnits()} data-testid="btn-refresh-units" className="shrink-0">
+          <RefreshCw size={16} className={refreshingUnits ? "animate-spin" : ""} aria-hidden="true" />
+          Refresh components
+        </Button>
+      </div>
+      <p className={`text-xs ${targetError ? "text-danger" : "text-muted"}`} aria-live="polite" data-testid="component-selector-status">
+        {targetError ?? (selectingSlot !== null ? "Reading the selected component…" : stagedCount > 0 ? "Save or undo your staged changes before switching components." : unitOptions.length === 0 ? "No catalogued component is available to select. Refresh after checking the connection." : "Choose the component whose settings and backups you want to use.")}
+      </p>
+      {state.units.length > 0 && (
+        <Disclosure>
+          <Disclosure.Heading>
+            <Disclosure.Trigger className="text-xs text-muted flex items-center justify-between gap-2 min-h-[44px]" data-testid="btn-component-inventory">
+              {state.units.length} connected component{state.units.length === 1 ? "" : "s"}
+              <Disclosure.Indicator />
+            </Disclosure.Trigger>
+          </Disclosure.Heading>
+          <Disclosure.Content>
+            <Disclosure.Body>
+              <ul className="text-xs flex flex-col gap-1.5" aria-label="Connected components">
+                {state.units.map((unit) => (
+                  <li key={unit.slot} data-testid={`component-unit-${unit.slot}`}>
+                    <span className="font-medium">{unit.model ?? (unit.model_candidates.length ? unit.model_candidates.join(" / ") : "Unidentified component")}</span>
+                    <span className="text-muted"> · slot {unit.slot}{unit.slot === state.identity?.slot ? " · active" : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            </Disclosure.Body>
+          </Disclosure.Content>
+        </Disclosure>
+      )}
     </Card>
   );
 
@@ -239,7 +336,7 @@ export function App({ controller }: AppProps) {
 
   const searchable = destination.goal === "tune";
   const showSearchInput = searchable && (isDesktop || searchOpen || searchQuery.length > 0);
-  const title = searchQuery.trim() && searchable ? "Search results" : titleFor(destination);
+  const title = searchQuery.trim() && searchable ? "Search results" : !isMotor && searchable ? "Component settings" : titleFor(destination);
 
   return (
     <div className="min-h-dvh bg-background text-foreground flex">
@@ -328,16 +425,27 @@ export function App({ controller }: AppProps) {
         </header>
 
         <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-8 pt-6 pb-10 flex flex-col gap-6">
+          {targetSelector}
           <FailureBanner state={state} controller={controller} onShowDiagnostics={() => go({ goal: "diagnostics" })} />
 
-          {destination.goal === "overview" && <OverviewView state={state} onNavigate={go} />}
-          {destination.goal === "tune" && (
+          {!state.identity && destination.goal !== "diagnostics" && (
+            <Alert status="default" data-testid="component-selection-required">
+              <Alert.Indicator />
+              <Alert.Content>
+                <Alert.Title>Select a component to continue</Alert.Title>
+                <Alert.Description>Choose an identified component above to read its settings and backups.</Alert.Description>
+              </Alert.Content>
+            </Alert>
+          )}
+
+          {state.identity && destination.goal === "overview" && <OverviewView state={state} onNavigate={go} />}
+          {state.identity && destination.goal === "tune" && (
             <TuneView state={state} controller={controller} category={destination.category} query={searchQuery} />
           )}
-          {destination.goal === "firmware" && (
+          {state.identity && destination.goal === "firmware" && (
             <FirmwareView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} />
           )}
-          {destination.goal === "backup" && <BackupView state={state} controller={controller} />}
+          {state.identity && destination.goal === "backup" && <BackupView state={state} controller={controller} />}
           {destination.goal === "diagnostics" && <DiagnosticsView state={state} controller={controller} />}
           {isDesktop && <ChangesRail state={state} controller={controller} onReview={() => setReviewOpen(true)} />}
         </main>
@@ -416,16 +524,18 @@ function NavList({
   current,
   stagedCount,
   sections,
+  isMotor,
   onNavigate,
 }: {
   current: Destination;
   stagedCount: number;
-  /** Setting sections this drive unit reports; other tuning pages are hidden. */
+  /** Setting sections this active unit reports; other tuning pages are hidden. */
   sections: Set<SettingSectionId>;
+  isMotor: boolean;
   onNavigate: (destination: Destination) => void;
 }) {
-  const tuneItems = TUNE_ITEMS.filter((entry) =>
-    entry.destination.goal !== "tune" || entry.destination.category === "all" || sections.has(entry.destination.category));
+  const tuneItems = TUNE_ITEMS.filter((entry) => entry.destination.goal !== "tune"
+    || entry.destination.category === "all" || (isMotor && sections.has(entry.destination.category)));
   const item = (entry: NavItem, nested = false) => {
     const active = sameDestination(entry.destination, current);
     const Icon = entry.icon;
@@ -457,7 +567,7 @@ function NavList({
         {item(OVERVIEW_ITEM)}
         <li>
           <p className="flex items-center justify-between px-3.5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted" data-testid="nav-section-parameters">
-            <span>Tuning</span>
+            <span>{isMotor ? "Tuning" : "Settings"}</span>
             {stagedCount > 0 && (
               <Chip size="sm" color="warning" variant="soft" className="normal-case tracking-normal">
                 {stagedCount} unsaved
@@ -469,7 +579,7 @@ function NavList({
         <li aria-hidden="true">
           <Separator className="my-2" />
         </li>
-        {TOOL_ITEMS.map((entry) => item(entry))}
+        {TOOL_ITEMS.filter((entry) => isMotor || entry.destination.goal !== "firmware").map((entry) => item(entry))}
       </ul>
     </nav>
   );

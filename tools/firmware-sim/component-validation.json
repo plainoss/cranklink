@@ -1,5 +1,7 @@
 {
   "schema_version": 1,
+  "validation_stage": "initial CLI component implementation, before web integration",
+  "followup_web_validation": "web-component-validation.json",
   "date": "2026-10-21",
   "passed_within_declared_scope": true,
   "base_commit": "0ee1e48c68a4684b93585088f203e01da59c1d0f",
@@ -13,7 +15,7 @@
   ],
   "execution_cpu_model": "cortex-m3 (modeled execution model, not physical CPU identification)",
   "hardware_access": false,
-  "scope": "Component settings execute unchanged exact-hash firmware; additional upstream software/firmware regressions are included; no physical compatibility certification",
+  "scope": "Initial CLI snapshot: source and binary hashes below predate the web integration. Component settings execute unchanged exact-hash firmware; additional upstream software/firmware regressions are included; no physical compatibility certification. Later UI/WASM checks are recorded separately in followup_web_validation.",
   "source_sha256": {
     "src/cli.rs": "97bd472981b937607ad1ceeee88bb8a0fa52d63a6b685df853c0181db7678c3d",
     "src/settings.rs": "7ff33842a60ed85c446f291d3be04be02d54b05eb47e8070e8ae2f2f24796113",

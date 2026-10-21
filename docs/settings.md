@@ -1,4 +1,4 @@
-# Settings (CLI)
+# Settings
 
 `cranklink settings schema --model <model>` lists each family's field names, units, ranges, choices, OEM flags, and read-only fields. Models can be motor family aliases (`ep800-crg`, `ep600`, etc.) or catalogued component names such as `ST-6870-L`. Unknown model names are rejected. `cranklink settings <command> --help` covers options.
 
@@ -28,11 +28,13 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 -
 cranklink --port usb -c ST-6870-L -s <SERIAL> settings restore lever-before.json --backup lever-current.json
 ```
 
-The CLI and Rust settings core expose these component schemas; the web tuning interface currently uses drive-unit schemas.
+The web app uses the same Rust schemas. After connecting, select the target in **Active component**; discovery lists the connected models and slots. Refresh the inventory after changing the bus. Component selection reads a fresh identity and settings snapshot before displaying controls. Save or discard staged edits before switching targets. Read-only and unavailable fields cannot be staged, and catalogued models without a settings layout display an explicit unavailable message. Motor tuning and firmware actions appear only for drive units.
+
+Browser saves create durable local backups before each SET and require verified receipts. The Backups page offers restore only for the selected model and serial; switching components retains other backups for download. Full configuration snapshots are downloadable records; restore uses the setting backups created before writes. Batches run in order and can partially apply on failure, so keep their backups for recovery. WebMCP exposes inventory and component selection through `cranklink_list_components` and `cranklink_select_component`, with the same target and staging guards.
 
 Signed values can be supplied directly, for example `settings set hub-adjustment -3 --backup hub-before.json`. Hub adjustment can acknowledge acceptance before its actuator reaches the target. Cranklink sends one SET and polls GET for a three-second completion window, checking the live maximum on every reply. Individual transport calls retain their own timeouts. Setting the current value still sends one SET so it can cancel a different pending target; the receipt's `changed` field remains false. An unfinished adjustment reports an uncertain outcome and retains its backup; it is never automatically retried.
 
-Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
+Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. Browser tests additionally drive the current UI and WASM through SC-EM800 4.6.0 and MU-UR500 3.3.1 save, power-cycle, readback and restore flows, and an unfinished hub adjustment. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
 ## Protected writes
 

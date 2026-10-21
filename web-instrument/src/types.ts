@@ -6,6 +6,18 @@ export type TransportType = "usb" | "serial" | "ble" | "sim";
 
 export type SimulatedModel = "ep800-crg" | "ep600" | "ep801";
 export type MotorModel = SimulatedModel | "ep500" | "e5100" | "e8000" | "e7000" | "e6100" | "e6000";
+export type SettingsModel = MotorModel | `${string}-${string}`;
+
+export interface ComponentUnit {
+  slot: number;
+  model_series: number;
+  model_unit: number;
+  model: string | null;
+  model_candidates: string[];
+  part?: number | null;
+  model_params?: number[] | null;
+  raw?: number[];
+}
 
 export type FaultInjectionType =
   | "none"
@@ -17,6 +29,7 @@ export type FaultInjectionType =
 
 export interface SimulatorOptions {
   model: SimulatedModel;
+  components?: boolean;
   initialPreset?: "eu_default" | "us_commuter" | "cargo_heavy";
   fault?: FaultInjectionType;
 }
@@ -31,6 +44,7 @@ export interface SettingSpec {
   choices: number[];
   oem: boolean;
   nullable: boolean;
+  read_only?: boolean;
   wire_units_per_input: number;
 }
 
@@ -61,11 +75,13 @@ export interface EnrichedSetting extends SettingSpec {
 export interface DeviceIdentity {
   slot: number;
   model: string;
-  modelSlug: MotorModel;
+  modelSlug: SettingsModel;
   serial: string;
   dcasVersion: string;
   rxVersion: string;
   isCargo: boolean;
+  isMotor: boolean;
+  modelUnit: number;
   modelSeries?: number;
   unitAuthenticated?: boolean;
 }
@@ -83,6 +99,7 @@ export interface JournalSnapshot {
   /** Parsed creation time, or null when the filename carries no stamp. */
   createdAt: Date | null;
   serial?: string;
+  settingsModel?: string;
   summary: string;
   /** Setting name and prior value for single-setting backups. */
   setting?: string;
@@ -173,6 +190,7 @@ export interface InstrumentState {
   transport: TransportType | null;
   simulatorOptions: SimulatorOptions;
   identity: DeviceIdentity | null;
+  units: ComponentUnit[];
   schema: EnrichedSetting[];
   liveValues: Record<string, SettingEntry>;
   unavailableValues: Record<string, string>;

@@ -45,18 +45,30 @@ interface TuneViewProps {
 
 export function TuneView({ state, controller, category, query }: TuneViewProps) {
   const searching = query.trim().length > 0;
+  const component = state.identity?.isMotor === false;
   const show = (group: TuneCategory) => searching || category === group;
 
   return (
     <SettingsProvider value={{ state, controller, query }}>
       <div className="w-full flex flex-col gap-6">
-        {category === "all" && !searching ? (
-          <AllSettingsList
-            state={state}
-            title="All settings"
-            description="Every setting reported by this drive unit, including ones without a dedicated control."
-            data-testid="all-settings"
-          />
+        {component && allSettingNames(state).length === 0 ? (
+          <Alert status="default" data-testid="component-settings-unavailable">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>No settings available for {state.identity?.model}</Alert.Title>
+              <Alert.Description>This component is catalogued, but does not yet have a verified settings layout.</Alert.Description>
+            </Alert.Content>
+          </Alert>
+        ) : component || (category === "all" && !searching) ? (
+          <>
+            <AllSettingsList
+              state={state}
+              title={component ? `${state.identity?.model} settings` : "All settings"}
+              description={component ? "Settings supported by this component. Read-only fields show their current value." : "Every setting reported by this drive unit, including ones without a dedicated control."}
+              data-testid="all-settings"
+            />
+            {searching && <NoSearchResults query={query} />}
+          </>
         ) : (
           <>
             {show("geometry") && hasSection(state, "geometry") && <GeometrySection />}

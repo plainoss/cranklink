@@ -41,6 +41,8 @@ export interface SettingAccess {
   value: number | string | null | undefined;
   numeric: number;
   isStaged: boolean;
+  isReadOnly: boolean;
+  isDisabled: boolean;
   unavailable: string | undefined;
   format: (value: number | string | null | undefined) => string;
   stage: (value: number | string) => void;
@@ -53,6 +55,8 @@ export function useSetting(name: string): SettingAccess {
   const live = state.liveValues[name]?.value;
   const staged = state.stagedValues[name];
   const value = staged ?? live;
+  const isReadOnly = Boolean(spec?.read_only);
+  const isDisabled = isReadOnly || Boolean(state.unavailableValues[name]) || state.phase !== "ready" || state.linkLost;
   return {
     name,
     spec,
@@ -61,9 +65,18 @@ export function useSetting(name: string): SettingAccess {
     value,
     numeric: Number(value),
     isStaged: staged !== undefined,
+    isReadOnly,
+    isDisabled,
     unavailable: state.unavailableValues[name],
     format: (next) => formatValue(spec, next),
-    stage: (next) => controller.stageParameter(name, next),
+    stage: (next) => {
+      if (isDisabled) return;
+      try {
+        controller.stageParameter(name, next);
+      } catch {
+        // The controller records validation failures for the shared banner.
+      }
+    },
     revert: () => controller.revertParameter(name),
   };
 }
@@ -132,9 +145,9 @@ export function SettingRow({
             {setting.format(setting.value)}
           </Chip>
         )}
-        {inlineControl && <div className="shrink-0 max-w-full">{inlineControl}</div>}
+        {inlineControl && !setting.isReadOnly && <div className="shrink-0 max-w-full">{inlineControl}</div>}
       </div>
-      {children}
+      {!setting.isReadOnly && children}
       {footer}
     </div>
   );
@@ -154,6 +167,7 @@ function SettingStatus({ setting }: { setting: SettingAccess }) {
       <span>
         Live: <strong className="font-semibold text-stone-800">{setting.format(setting.live)}</strong>
       </span>
+      {setting.isReadOnly && <Chip size="sm" variant="soft">Read only</Chip>}
       {setting.isStaged && (
         <>
           <Chip color="warning" variant="soft" size="sm" className="font-semibold">
@@ -204,7 +218,7 @@ export function SettingSlider({ name, min, max, step, "data-testid": testId }: S
       step={step ?? setting.spec?.userStep ?? 1}
       formatOptions={intlUnit ? { style: "unit", unit: intlUnit } : undefined}
       onChange={(next) => typeof next === "number" && setting.stage(next)}
-      isDisabled={Boolean(setting.unavailable)}
+      isDisabled={setting.isDisabled}
       className="w-full"
       data-testid={testId}
     >
@@ -250,7 +264,7 @@ export function SettingSegmented({ name, options, values, "data-testid": testId 
         const [key] = [...keys];
         if (key !== undefined) setting.stage(Number(key));
       }}
-      isDisabled={Boolean(setting.unavailable)}
+      isDisabled={setting.isDisabled}
       size="sm"
       className="flex-wrap"
       data-testid={testId}
@@ -272,7 +286,7 @@ export function SettingSelect({ name, options }: SettingChoiceProps) {
       value={Number.isFinite(setting.numeric) ? String(setting.numeric) : null}
       options={choiceOptions(setting, options).map((option) => ({ id: String(option.value), label: option.label }))}
       onChange={(id) => setting.stage(Number(id))}
-      isDisabled={Boolean(setting.unavailable)}
+      isDisabled={setting.isDisabled}
     />
   );
 }

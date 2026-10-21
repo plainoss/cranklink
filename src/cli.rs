@@ -614,6 +614,8 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             cli.command,
             Command::Firmware {
                 command: FirmwareCommand::Inspect { .. }
+            } | Command::Settings {
+                command: SettingsCommand::Schema { .. }
             }
         )
     {
@@ -3010,6 +3012,29 @@ mod cli_tests {
                 .is_err()
         );
         assert!(settings_model_name("typo").is_err());
+    }
+
+    #[test]
+    fn offline_component_and_motor_schemas_do_not_open_browser_ble_transport() {
+        for (model, setting) in [("ST-6870-L", "switch-a-function"), ("ep801", "lamp")] {
+            execute(
+                [
+                    "cranklink",
+                    "--port",
+                    "webble",
+                    "--json",
+                    "settings",
+                    "schema",
+                    setting,
+                    "--model",
+                    model,
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            )
+            .unwrap();
+        }
     }
 
     #[test]

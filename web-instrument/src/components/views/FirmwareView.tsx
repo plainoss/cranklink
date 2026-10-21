@@ -1,4 +1,4 @@
-import { useState, useRef, type DragEvent } from "react";
+import { useEffect, useState, useRef, type DragEvent } from "react";
 import { UploadCloud, FileCheck2 } from "lucide-react";
 import { Alert, Button, Card, Chip, Disclosure } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
@@ -31,9 +31,19 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [confirming, setConfirming] = useState<ProgramTarget | null>(null);
+  useEffect(() => setConfirming(null), [state.identity?.slot, state.identity?.serial, state.identity?.modelSlug]);
 
   const { firmware } = state;
   const isFlashing = state.phase === "flashing";
+
+  if (!state.identity?.isMotor) {
+    return (
+      <Card className="gap-2" data-testid="component-firmware-unavailable">
+        <Card.Title className="text-base font-bold">Firmware tools require a supported drive unit</Card.Title>
+        <Card.Description className="text-sm">Firmware programming is unavailable for {state.identity?.model ?? "the selected component"}. Choose a drive unit from the active component list to use firmware and recovery tools.</Card.Description>
+      </Card>
+    );
+  }
 
   const handleFiles = (files: FileList | null) => {
     if (files && files.length > 0) {

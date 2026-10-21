@@ -265,7 +265,7 @@ impl BleSession {
         self.trace = trace;
         Ok(())
     }
-    /// Release motor ownership between browser commands without shutting down
+    /// Release component ownership between browser commands without shutting down
     /// the gateway's Bluetooth radio. Explicit disconnect still calls stop().
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn pause_browser_command(&mut self) -> Result<()> {
@@ -737,13 +737,14 @@ impl BleSession {
         let mut unit = crate::device::UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         unit.prepare_session(self, allow_component)?;
         if let Some(component) = component {
-            if !unit.is_motor() {
-                ensure!(
-                    unit.model
-                        .is_some_and(|model| crate::unit_models::name_matches(component, model)),
-                    "component {component:?} no longer matches slot {slot}"
-                );
+            if unit.model.is_none() {
+                unit.resolve_name(self)?;
             }
+            ensure!(
+                unit.model
+                    .is_some_and(|model| crate::unit_models::name_matches(component, model)),
+                "component {component:?} no longer matches slot {slot}"
+            );
         }
         self.linked_slot = Some(slot);
         // Initial master setup broadcasts PC start and all five keys through
@@ -1206,6 +1207,8 @@ mod tests {
         stock_series: Option<u8>,
         stock_unit: Option<u8>,
         component_part: Option<u8>,
+        component_stock: BTreeMap<u8, [u8; 2]>,
+        stock_sequence: VecDeque<[u8; 2]>,
         master_info: Option<Vec<u8>>,
         master_stock_reply: Option<Vec<u8>>,
         motor_params: Option<Vec<u8>>,
@@ -1459,7 +1462,15 @@ mod tests {
                         response.extend(s.motor_params.clone().unwrap_or(b"00-CRG\0".to_vec()))
                     }
                     (1, 0x1c) => {
-                        response.extend(s.master_stock_reply.clone().unwrap_or(vec![0x23, 0, 0xff]))
+                        if let Some(stock) = s.stock_sequence.pop_front() {
+                            response.extend(stock);
+                        } else if let Some(stock) = s.component_stock.get(&data[0]) {
+                            response.extend(stock);
+                        } else {
+                            response.extend(
+                                s.master_stock_reply.clone().unwrap_or(vec![0x23, 0, 0xff]),
+                            );
+                        }
                     }
                     (1, 0x2c) => {
                         response.extend(s.motor_version.clone().unwrap_or(vec![0x42, 0, 0]))
@@ -1474,12 +1485,19 @@ mod tests {
                         response.extend(s.unit_bitmap.unwrap_or([8, 32, 0, 0]));
                         response.push(0xff); // observed fixed-size notifications may have extra bytes
                     }
-                    (2, 0x14) => response.extend([
-                        data[3],
-                        s.stock_series.unwrap_or(0x23),
-                        s.stock_unit.unwrap_or(0),
-                    ]),
+                    (2, 0x14) => {
+                        response.push(data[3]);
+                        let stock = s.stock_sequence.pop_front().unwrap_or_else(|| {
+                            s.component_stock.get(&data[3]).copied().unwrap_or([
+                                s.stock_series.unwrap_or(0x23),
+                                s.stock_unit.unwrap_or(0),
+                            ])
+                        });
+                        response.extend(stock);
+                    }
                     (4, 0x0c) | (0x32, 0x9c) => response.push(s.component_part.unwrap_or(1)),
+                    (4, 0x14) => response.push(0x23),
+                    (0x0b, 0x64) => response.extend([2, 255]),
                     (0x10, 0x14) if s.reject_lamp => {
                         response[2] += 1;
                     }
@@ -1706,6 +1724,137 @@ mod tests {
         );
         assert!(session.gateway_started_slots.is_empty());
         assert!(session.master_pc_start_receipts.is_empty());
+    }
+    fn check_browser_component_switching(master: bool) {
+        let (mut session, state) = mock();
+        {
+            let mut s = state.borrow_mut();
+            s.unit_bitmap = Some([if master { 16 } else { 24 }, 32, 0, 0]);
+            s.motor_slots = vec![4, 13];
+            s.component_stock = BTreeMap::from([(4, [2, 1]), (13, [2, 0])]);
+        }
+        session.set_master_routing(master).unwrap();
+        session.authenticate().unwrap();
+        let units = session.units().unwrap();
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| (unit.slot, unit.model))
+                .collect::<Vec<_>>(),
+            vec![(4, Some("ST-6770-L")), (13, Some("SM-BMR1"))]
+        );
+        assert!(session.linked_slot.is_none());
+        session.pause_browser_command().unwrap();
+
+        session.resume_browser_command(master).unwrap();
+        let lever = session.start_component(Some(4), Some("ST-6770-L")).unwrap();
+        assert_eq!(lever.cargo, "ST-6770-L");
+        let assignment = crate::settings::read_for_model(
+            &mut session,
+            lever.slot,
+            "switch-a-function",
+            crate::settings::SettingsModel::Component("ST-6770-L"),
+        )
+        .unwrap();
+        assert_eq!(assignment.value, 2);
+        session.pause_browser_command().unwrap();
+        assert!(session.linked_slot.is_none());
+        if master {
+            assert!(session.gateway_started_slots.contains(&13));
+            assert!(session.master_pc_start_receipts.contains_key(&13));
+        }
+
+        session.resume_browser_command(master).unwrap();
+        let power = session.start_component(Some(13), Some("SM-BMR1")).unwrap();
+        assert_eq!(power.cargo, "SM-BMR1");
+        let limit = crate::settings::read_for_model(
+            &mut session,
+            power.slot,
+            "multi-shift-limit.down",
+            crate::settings::SettingsModel::Component("SM-BMR1"),
+        )
+        .unwrap();
+        assert_eq!(limit.value, 255);
+        session.pause_browser_command().unwrap();
+        assert!(session.linked_slot.is_none());
+        session.stop().unwrap();
+        session.close().unwrap();
+
+        let writes = &state.borrow().writes;
+        assert_eq!(
+            writes.iter().filter(|(id, _)| *id == AUTH_CONTROL).count(),
+            2
+        );
+        let stop_lever = writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes.starts_with(&[4, 0x32, 0x10, 0]))
+            .unwrap();
+        let read_power = writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes == &[13, 0x0b, 0x64, 0])
+            .unwrap();
+        let stop_power = writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32, 0x10, 0]))
+            .unwrap();
+        let gateway_stop = writes
+            .iter()
+            .position(|(id, bytes)| *id == PCE_COMMAND && bytes == &[0, 0x0c, 0])
+            .unwrap();
+        assert!(stop_lever < read_power && read_power < stop_power && stop_power < gateway_stop);
+        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+            && (matches!(
+                (bytes[1], bytes[2]),
+                (0x16, 0x7c | 0xd8 | 0xe0) | (1, 0x84 | 0xc0)
+            ) || bytes[1] == 0x33)));
+        if master {
+            assert_eq!(
+                writes
+                    .iter()
+                    .filter(|(id, bytes)| { *id == PCE_COMMAND && bytes == &[0, 0x1d, 0] })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                writes
+                    .iter()
+                    .filter(|(id, bytes)| { *id == PCE_COMMAND && bytes == &[0, 0x0c, 1] })
+                    .count(),
+                1
+            );
+            assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+                && bytes[1] == 0x32
+                && (bytes[2] == 0x30 || (bytes[2] == 0x10 && bytes[3] == 1))));
+        }
+        assert!(state.borrow().closed);
+    }
+    #[test]
+    fn browser_inventory_then_two_catalogued_settings_reads_preserves_normal_connection() {
+        check_browser_component_switching(false);
+    }
+    #[test]
+    fn browser_inventory_then_two_catalogued_settings_reads_preserves_master_receipts() {
+        check_browser_component_switching(true);
+    }
+    #[test]
+    fn named_motor_is_rechecked_after_inventory_before_target_start() {
+        let (mut session, state) = mock();
+        {
+            let mut s = state.borrow_mut();
+            s.unit_bitmap = Some([0, 32, 0, 0]);
+            s.stock_sequence = VecDeque::from([[0x23, 0], [0x30, 0]]);
+        }
+        session.authenticate().unwrap();
+        let error = session
+            .start_component(Some(13), Some("DU-EP800-CRG"))
+            .unwrap_err();
+        assert!(error.to_string().contains("no longer matches slot 13"));
+        assert!(session.linked_slot.is_none());
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND
+                && (bytes[1] == 0x32 || matches!((bytes[1], bytes[2]), (1, 0x84 | 0xc0)))
+        }));
+        session.stop().unwrap();
     }
     #[test]
     fn browser_command_trace_replacement_is_atomic_and_redacts_credentials() {
