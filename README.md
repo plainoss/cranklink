@@ -119,7 +119,7 @@ cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion.
 
-For the specific EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, see the experimental [opened-board E-TUBE recovery guide](docs/ep800-hardware-recovery.md), including bridge photos and the dedicated stock-only tools.
+For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, follow the [temporary bridge recovery guide](docs/ep800-hardware-recovery.md) using `firmware flash dcas --bridge-recovery`.
 
 `cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts.
 
@@ -127,7 +127,7 @@ For the specific EP800 failure that acknowledges Key 1 but floods empty `0x70` f
 
 - [Settings](docs/settings.md): protected writes, backups, batch plans.
 - [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
-- [Firmware simulator](docs/firmware-simulator.md): offline testing against stock firmware.
+- [Firmware simulator](docs/firmware-simulator.md): offline application tests and `sim.py resident` bootloader regressions.
 - [Web app development](web-instrument/README.md): build, test, deploy.
 
 ## License

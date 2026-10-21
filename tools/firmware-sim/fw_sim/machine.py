@@ -1,7 +1,8 @@
 """Bounded instruction execution and explicitly modeled packet transport."""
 import hashlib
-from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE
+from unicorn import UcError, UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R4, UC_ARM_REG_R7, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC
+from .cpu import DEFAULT_CPU, new_cpu
 
 RETURN, INPUT = 0x4F000, 0x20009000
 
@@ -34,7 +35,8 @@ class Machine:
                     'peripheral state outside RAM')
             require(0 <= profile['peripheral_channel'] < 5, 'invalid peripheral channel')
         self.output, self.notifications, self.responses = [], [], []
-        self.u = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
+        self.cpu_model = profile.get('cpu', DEFAULT_CPU)
+        self.u = new_cpu(self.cpu_model)
         for address, size in ((0x10000, 0x40000), (0x20000000, 0x10000),
                               (0x40000000, 0x10000), (0xE000E000, 0x2000), (0xF0000000, 0x1000)):
             self.u.mem_map(address, size)

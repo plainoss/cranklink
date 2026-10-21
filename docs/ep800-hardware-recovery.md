@@ -9,9 +9,9 @@ procedure restores D only, leaving M firmware and settings unchanged. Try the
 [normal recovery CLI](../README.md#recover-a-motor-stuck-in-bootloader-mode) first.
 
 This worked on one **DU-EP800-CRG, board 1, series `23`, unit `00`, bootloader
-5.0.6.1**, using an **SM-PCE02 and macOS native USB**. The public tools below were
-adapted from that successful recovery and tested offline; this public build has
-not been rerun on hardware. Other board revisions and platforms remain untested.
+5.0.6.1**, using an **SM-PCE02 and macOS native USB**. The CLI mode below incorporates
+that successful recovery sequence and has been tested offline; the integrated
+build has not been rerun on hardware. Other boards and platforms remain untested.
 
 ## Why the bridge helps
 
@@ -32,9 +32,8 @@ Keeping it connected allowed a complete stock firmware restore on the failed
 motor. That supports the simulator explanation; the failed motor's internal
 SPI data was not directly measured.
 
-You do not need a donor motor or a bootloader dump to follow this guide. The
-tools restore the original application firmware; they do not replace the
-bootloader or flash the donor's code.
+You do not need a donor motor or a bootloader dump. Recovery restores the
+original D application, leaving the resident bootloader in place.
 
 ## Find the connector board
 
@@ -73,9 +72,8 @@ Marked power point ── 20 ohm resistor ── Marked signal point
 ```
 
 Use the resistor, not a direct wire. **20 ohms worked on this board; confirm your
-board matches before using it.** The power point was used as a nominal 3.3 V
-source; its voltage under load was not independently recorded. Arrange an
-insulated, secure connection that can stay in place for the entire transfer.
+board matches before using it.** Secure and insulate the connection so it can
+stay in place for the entire transfer.
 
 ## 2. Connect E-TUBE
 
@@ -93,36 +91,30 @@ Looking from the cable side reverses left/right. Inner/outer describe the cable
 conductors; this table does not assign positive/ground or wire colours. Preserve
 the viewing orientation when comparing your wiring.
 
-## 3. Prepare the tools and original firmware
+## 3. Prepare the CLI and original firmware
 
-You need Rust, Python 3, your motor's known **12-digit hexadecimal serial**, and
+You need Rust, your motor's known **12-digit hexadecimal serial**, and
 your own stock firmware files. Close other programs using the adaptor. Save any
-existing settings backup and keep the recovery output private: it contains device
-identifiers.
+existing settings backup.
 
-The tools accept only **D 4.2.0.0** with **M 4.1.11.0**. Confirm from your records
+This mode accepts only **D 4.2.0.0** with **M 4.1.11.0**. Confirm from your records
 that M already has that version. The supplied M file is checked for compatibility
-but is not flashed; its live version cannot be checked before restoring D.
+but is not flashed; its live version cannot be checked before restoring D. The
+CLI checks the files' versions and hashes automatically.
 
-| File | Required SHA256 |
-|---|---|
-| Stock D container | `35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543` |
-| Stock M container | `94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44` |
-
-From the repository root, build the tools:
+From the repository root, build the CLI:
 
 ```sh
-cargo build --locked --manifest-path tools/ep800-recovery/Cargo.toml --bins
+cargo build --locked --bin cranklink
 ```
 
 Replace the paths and serial below with your own. Run this preparation check
-first; without `--execute`, it does not connect to hardware:
+first; without `--write`, this mode does not connect to hardware:
 
 ```sh
-python3 tools/ep800-recovery/recover.py \
-  --d /path/to/DUEP800-D.4.2.0.dat \
-  --m /path/to/DUEP800-M.4.1.11.dat \
-  --serial YOUR12HEXUID --output ./recovery-run-01
+./target/debug/cranklink --port usb -s YOUR12HEXUID firmware flash dcas \
+  /path/to/DUEP800-D.4.2.0.dat \
+  --companion /path/to/DUEP800-M.4.1.11.dat --bridge-recovery
 ```
 
 No firmware files are included in this repository.
@@ -132,31 +124,27 @@ No firmware files are included in this repository.
 With the wiring and resistor secured, connect USB. Run:
 
 ```sh
-python3 tools/ep800-recovery/recover.py \
-  --d /path/to/DUEP800-D.4.2.0.dat \
-  --m /path/to/DUEP800-M.4.1.11.dat \
-  --serial YOUR12HEXUID --output ./recovery-run-01 \
-  --execute --countdown 10 --attempts 20
+./target/debug/cranklink --port usb -s YOUR12HEXUID firmware flash dcas \
+  /path/to/DUEP800-D.4.2.0.dat \
+  --companion /path/to/DUEP800-M.4.1.11.dat --bridge-recovery --write
 ```
 
-The countdown gives you ten seconds to establish contact. The script tries the
+The countdown gives you ten seconds to establish contact. The CLI tries the
 connection up to twenty times, then starts one stock restore when all five keys
-are acknowledged and the motor's identity matches.
+are acknowledged and the motor's identity matches. Use `--countdown` or
+`--attempts` to change those defaults.
 
 **Keep the resistor connected through erase, the entire transfer, finish and
 reset.** Releasing it after the keys is too early. In the original recovery,
 removing it during transfer caused the motor to stall again.
 
-Wait for `Stock transfer finish/reset acknowledged` and a successful exit. The
-journal must contain `finish-and-reset` with **157,996 bytes**, checksum **`0xCB`**,
-`finish_acknowledged: true` and `reset_acknowledged: true`.
+Wait for `Stock transfer finish/reset acknowledged` and a successful exit.
 
 Only then remove the temporary resistor, leaving USB and E-TUBE connected.
 
 ## 5. Verify without the resistor
 
 ```sh
-cargo build --locked --bin cranklink
 ./target/debug/cranklink --port usb probe
 ./target/debug/cranklink --port usb -s YOUR12HEXUID settings read \
   --output settings-after.json
@@ -171,15 +159,26 @@ motor operation were not tested. Check operation separately after reassembly.
 
 ## If the transfer is interrupted
 
-Keep the output directory and journal. The script does **not** retry a restore,
-resume a partial image or reset the motor after an uncertain write. Diagnose the
-failure before deliberately starting another complete restore with a new output
-directory. The successful case needed a fresh connection and full rewrite after
-an interrupted first attempt.
+Keep the journal and diagnostic files printed by the CLI; they contain device
+identifiers, so review them before sharing. The CLI does **not** retry a restore
+or resume a partial image after an uncertain write. Diagnose the failure before
+deliberately starting another complete restore. The successful case needed a
+fresh connection and full rewrite after an interrupted first attempt.
 
 Connection-only retries do not erase firmware, but may reset or cycle adaptor
 power.
 
-The dedicated recovery tools use the connection sequence that worked on this
-motor. The ordinary CLI's `--recovery` setup differs. Developers can find the
-protocol details and offline tests in [the tool notes](ep800-recovery-tools.md).
+Use `--bridge-recovery` for this procedure; ordinary `--recovery` uses a different
+connection sequence.
+
+## For developers
+
+[`src/recovery.rs`](../src/recovery.rs) selects adaptor protocol `0x60`, target
+31 and legacy framing selector 5. After all five keys are acknowledged, the
+same USB connection passes directly to the existing `Session::flash_dcas`
+writer. Firmware hashes and live serial, bootloader and board identity are
+checked before erase. Only a clean timeout before Key 2 is acknowledged can
+retry; ambiguous responses, transport errors and write failures stop the operation.
+
+Run `cargo test --locked recovery::tests` for the recovery tests, or
+`./tools/verify.sh` for the full local checks.

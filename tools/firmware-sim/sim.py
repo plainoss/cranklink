@@ -23,6 +23,13 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('profiles', help='list executable image hashes')
 
+    from fw_sim.cpu import CPU_MODELS, DEFAULT_CPU
+    resident = sub.add_parser('resident', help='run EP800 resident SPI/key recovery regressions offline')
+    resident.add_argument('--image', required=True, type=Path, help='local acquired 64 KiB resident dump')
+    resident.add_argument('--cpu', choices=sorted(CPU_MODELS), default=DEFAULT_CPU,
+                          help='execution model only; does not establish the physical CPU/ISA')
+    resident.add_argument('--output', required=True, type=Path)
+
     pull_cmd = sub.add_parser('pull', help='auto-pull and cache firmware from official Shimano URLs')
     pull_cmd.add_argument('names', nargs='*', help='firmware profile IDs, models, or filenames (e.g. ep800-4.2.0, sc-em800)')
     pull_cmd.add_argument('--all', action='store_true', help='pull all 18 profiled firmware images')
@@ -63,6 +70,14 @@ def main():
 
     if args.command == 'profiles':
         print(json.dumps(PROFILES, indent=2))
+        return
+
+    if args.command == 'resident':
+        from fw_sim.resident import run_regression
+        report = run_regression(args.image, cpu=args.cpu)
+        args.output.write_text(json.dumps(report, indent=2) + '\n')
+        print(json.dumps(dict(passed=report['passed'], scenarios=len(report['cases']),
+                              cpu_model=report['cpu_model'], hardware_access=False)))
         return
 
     if args.command == 'pull':

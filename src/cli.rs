@@ -411,6 +411,15 @@ enum FlashCommand {
         /// Recover from an already-interrupted bootloader state
         #[arg(long)]
         recovery: bool,
+        /// Recover the EP800 Key-2 stall with the documented temporary resistor bridge
+        #[arg(long, conflicts_with = "recovery")]
+        bridge_recovery: bool,
+        /// Maximum connection attempts before any flash write (bridge recovery only)
+        #[arg(long, requires = "bridge_recovery", value_parser = clap::value_parser!(u8).range(1..=20))]
+        attempts: Option<u8>,
+        /// Seconds to establish the bridge before connecting (default: 10)
+        #[arg(long, requires = "bridge_recovery", value_parser = clap::value_parser!(u64).range(0..=300))]
+        countdown: Option<u64>,
         /// Commit destructive erase and programming (default: safe dry-run)
         #[arg(long)]
         write: bool,
@@ -912,8 +921,74 @@ fn execute_firmware_command(
                 expect_sha256,
                 journal,
                 recovery,
+                bridge_recovery,
+                attempts,
+                countdown,
                 write,
             } => {
+                if bridge_recovery {
+                    ensure!(
+                        !allow_unverified_model,
+                        "--bridge-recovery accepts only the documented EP800 target; remove --allow-unverified-model"
+                    );
+                    ensure!(
+                        slot.is_none() || slot == Some(31),
+                        "--bridge-recovery requires bootloader slot 31"
+                    );
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = (attempts, countdown);
+                        anyhow::bail!(
+                            "--bridge-recovery requires the native CLI and an SM-PCE02 USB adaptor"
+                        );
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let serial = expect_serial
+                            .context("bridge recovery requires motor serial (-s <12-HEX>)")?;
+                        if let Some(expected) = expect_sha256 {
+                            let fw = Firmware::load(&file)?;
+                            ensure!(
+                                fw.metadata.source_sha256.eq_ignore_ascii_case(&expected),
+                                "source SHA-256 does not match --expect-sha256"
+                            );
+                        }
+                        let journal = journal.unwrap_or_else(|| {
+                            PathBuf::from(format!(
+                                "cranklink-flash-dcas-{}-{}.journal.jsonl",
+                                serial,
+                                crate::platform::now_ms()
+                            ))
+                        });
+                        crate::recovery::recover_bridge(
+                            crate::recovery::BridgeOptions {
+                                port: port.as_deref().unwrap_or("usb"),
+                                dcas: &file,
+                                companion: &companion,
+                                serial: &serial,
+                                journal: &journal,
+                                trace: trace.as_deref(),
+                                countdown: countdown.unwrap_or(10),
+                                attempts: attempts.unwrap_or(20),
+                                write,
+                            },
+                            |message| notice_println!("{message}"),
+                        )?;
+                        if is_json {
+                            out_println!(
+                                "{}",
+                                serde_json::json!({
+                                    "mode": "bridge-recovery",
+                                    "status": if write { "transfer-finished" } else { "preflight-passed" },
+                                    "serial": serial,
+                                    "application_verified": false,
+                                    "journal": if write { Some(&journal) } else { None },
+                                })
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
                 let fw = Firmware::load(&file)?;
                 ensure!(fw.metadata.kind.is_dcas(), "flash dcas requires a D image");
                 let comp = Firmware::load(&companion)?;
@@ -2877,6 +2952,88 @@ mod cli_tests {
                 assert!(!write); // default is dry-run!
             }
             _ => panic!("expected Firmware Flash Dcas"),
+        }
+    }
+
+    fn bridge_args(extra: &[&str]) -> Vec<String> {
+        let mut args = vec![
+            "cranklink",
+            "-s",
+            "010203040506",
+            "firmware",
+            "flash",
+            "dcas",
+            "missing-d.dat",
+            "--companion",
+            "missing-m.dat",
+        ];
+        args.extend_from_slice(extra);
+        args.into_iter().map(String::from).collect()
+    }
+
+    #[test]
+    fn bridge_recovery_options_are_explicit_and_bounded() {
+        let cli = Cli::try_parse_from(bridge_args(&[
+            "--bridge-recovery",
+            "--attempts",
+            "3",
+            "--countdown",
+            "0",
+        ]))
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Firmware {
+                command: FirmwareCommand::Flash {
+                    command: FlashCommand::Dcas {
+                        bridge_recovery: true,
+                        recovery: false,
+                        attempts: Some(3),
+                        countdown: Some(0),
+                        write: false,
+                        ..
+                    },
+                    ..
+                }
+            }
+        ));
+        for extra in [
+            vec!["--bridge-recovery", "--recovery"],
+            vec!["--attempts", "3"],
+            vec!["--countdown", "0"],
+            vec!["--bridge-recovery", "--attempts", "0"],
+            vec!["--bridge-recovery", "--attempts", "21"],
+            vec!["--bridge-recovery", "--countdown", "301"],
+        ] {
+            assert!(
+                Cli::try_parse_from(bridge_args(&extra)).is_err(),
+                "{extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bridge_recovery_rejects_unsupported_context_before_loading_or_connecting() {
+        for (extra, expected) in [
+            (
+                vec!["--bridge-recovery", "--read-only"],
+                "--read-only rejects",
+            ),
+            (vec!["--bridge-recovery", "--slot", "13"], "slot 31"),
+            (
+                vec!["--bridge-recovery", "--allow-unverified-model"],
+                "documented EP800",
+            ),
+            (
+                vec!["--bridge-recovery", "--port", "ble:dummy"],
+                "Use wired connection",
+            ),
+        ] {
+            let error = execute(bridge_args(&extra)).unwrap_err();
+            assert!(
+                format!("{error:#}").contains(expected),
+                "{extra:?}: {error:#}"
+            );
         }
     }
 

@@ -2,7 +2,7 @@
 
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
-This implementation covers the packet engine, native/Bluetooth transports and a limited persistent-write path. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
+This implementation covers the packet engine, native/Bluetooth transports, a limited persistent-write path and a separate EP800 resident-bootloader regression. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
 
 ## Verified firmware coverage
 
@@ -190,6 +190,40 @@ python tools/firmware-sim/verify_features.py --binary target/debug/cranklink \
 Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contain raw CLI output and should stay local.
 
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600 and SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. The [native results](../tools/firmware-sim/native-validation.json) record successful probes, settings reads and the expected E6100 model rejection. Firmware metadata checks and the virtual endpoint never weaken those CLI gates.
+
+## EP800 resident bootloader and Key 2 recovery
+
+The recovery investigation added a separate regression using the 64 KiB resident bootloader read from a working EP800. It reproduces how repeated empty SPI replies can keep Key 2 queued, and how a first SPI byte of `0xff` lets the queued key advance. The physical bridge procedure is documented in the [recovery guide](ep800-hardware-recovery.md).
+
+Supply your own acquired resident dump; no donor dump is included or downloaded. The harness accepts only the exact `ep800-resident-5.0.6.1` image, SHA-256 `59cc3fc007ca0b3595d8ba8e8207cc5257b05be84da8fd80278303d165488d9f`. A matching version string alone is insufficient because the code and RAM addresses are specific to those bytes.
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py resident \
+  --image /path/to/resident.bin --output /tmp/resident-regression.json
+
+# Include the acquired-image tests alongside the synthetic tests.
+CRANKLINK_RESIDENT_IMAGE=/path/to/resident.bin \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+  -s tools/firmware-sim -p 'test_*.py'
+```
+
+The five scenarios check:
+
+| Modeled condition | Required result |
+| --- | --- |
+| SPI polling inhibited | Key 2 is acknowledged. |
+| SPI input stays zero | Empty `0x70` replies repeat; Key 2 remains queued. |
+| SPI input stays `0xff` | Key 2 is acknowledged. |
+| SPI changes from zero to `0xff` after stalling | The already queued Key 2 is consumed, then all five keys are acknowledged in order. |
+| UART transmission never completes | Only the first transmission starts; later replies do not bypass the busy flag. |
+
+The real RAM initializer, FIFO parser, key validators, SPI polling/checksum and UART transmit/busy routines execute. Unlike the first investigation fixture, UART transmit is observed without replacing its return path. The harness supplies decoded frames at the RX FIFO, a constant SPI receive-register value and UART completion between service slices. It does not run M firmware, erase/write/reset operations, full boot, interrupts or physical E-TUBE timing. The `0xff` case establishes a software escape condition; it does not predict which board voltage or resistor produces that condition.
+
+### CPU model and instruction compatibility
+
+Execution now selects a named Unicorn CPU model instead of relying on an implicit default. Existing application profiles use `cortex-m3` unless their `cpu` field specifies another supported model; `resident --cpu` accepts `cortex-m0`, `cortex-m3` and `cortex-m4`. These are execution settings, not identification of the physical processor.
+
+Selecting Cortex-M0 in Unicorn 2.1.4 still permits the Thumb-2 `MOVW` sequence `41 f2 70 70`. A successful emulation therefore does **not** prove ARMv6-M instruction compatibility or that a modified binary boots on hardware. Check instruction encodings separately when changing firmware, and keep hardware boot verification distinct from a simulator pass.
 
 ## Execution boundaries and remaining work
 

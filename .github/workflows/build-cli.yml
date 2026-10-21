@@ -42,6 +42,12 @@ jobs:
       - name: Test BLE CLI and core
         if: steps.filter.outputs.has_changes == 'true'
         run: cargo test --locked --features ble --lib --bin cranklink
+      - name: Test firmware simulator without private firmware
+        if: steps.filter.outputs.has_changes == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/firmware-sim"
+          "$RUNNER_TEMP/firmware-sim/bin/pip" install -r tools/firmware-sim/requirements-test.txt
+          "$RUNNER_TEMP/firmware-sim/bin/python" -m unittest discover -s tools/firmware-sim -p 'test_*.py'
       - name: Log skip summary
         if: steps.filter.outputs.has_changes != 'true'
         run: echo "No CLI or Rust core changes detected; skipped CLI test suite." >> "$GITHUB_STEP_SUMMARY"

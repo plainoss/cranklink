@@ -19,6 +19,7 @@ CLI_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
+    "tools/firmware-sim/**",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
 ]

@@ -160,6 +160,23 @@ pub struct Session {
     unit_auth_attempted: bool,
 }
 impl Session {
+    /// Continue the same exclusive USB connection after the bounded bridge
+    /// handshake. The caller has consumed every received frame and selected
+    /// target 31; initialization or reopening here would lose that state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn from_bridge_port(port: Box<dyn Port>, trace: File) -> Self {
+        Self {
+            port,
+            decoder: Decoder::default(),
+            incoming: VecDeque::new(),
+            trace: Some(trace),
+            pc_slot: 0,
+            normal_slot: None,
+            target_slot: Some(31),
+            adapter_supply: true,
+            unit_auth_attempted: false,
+        }
+    }
     pub fn open(port: &str, trace: Option<&Path>) -> Result<Self> {
         ensure!(!crate::ble::is_port(port), "Bluetooth requires the settings-only BLE session; firmware/boot operations are disabled");
         let port = platform::open_port(port)?;
@@ -880,11 +897,12 @@ impl Session {
     }
 }
 fn fast_idle_frame(f: &Frame) -> bool {
-    f.control == 0xa8
-        && f.payload.len() == 16
-        && f.payload[0] < 32
-        && f.payload[1] == 0x70
-        && f.payload[2..].iter().all(|&b| b == 0)
+    (f.control == 0x88 && f.payload == [0x70, 0, 0, 0x78])
+        || (f.control == 0xa8
+            && f.payload.len() == 16
+            && f.payload[0] < 32
+            && f.payload[1] == 0x70
+            && f.payload[2..].iter().all(|&b| b == 0))
 }
 fn fast_boot_response_matches(f: &Frame, slot: u8, command: u8, param: u8, response: u8) -> bool {
     f.control == 0xa8
@@ -1172,6 +1190,19 @@ mod tests {
         f.payload[15] = 0;
         f.control = 0x48;
         assert!(!fast_idle_frame(&f));
+    }
+    #[test]
+    fn only_exact_empty_legacy_spi_notifications_are_discarded() {
+        assert!(fast_idle_frame(&frame(0x88, &[0x70, 0, 0, 0x78])));
+        for f in [
+            frame(0x88, &[0x70, 0, 1, 0x79]),
+            frame(0x88, &[0x70, 0, 0]),
+            frame(0x88, &[0x70, 0, 0, 0x78, 0]),
+            frame(0xa8, &[0x70, 0, 0, 0x78]),
+            frame(0x88, &[0x31, 0, 0]),
+        ] {
+            assert!(!fast_idle_frame(&f));
+        }
     }
     #[test]
     fn fast_slot_switch_uses_55_and_echoes_assignment() {

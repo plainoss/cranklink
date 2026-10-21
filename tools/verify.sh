@@ -8,7 +8,6 @@ cd "$REPO_ROOT"
 echo "==> [1/4] Checking Rust formatting..."
 if command -v cargo-fmt >/dev/null 2>&1 || cargo fmt --version >/dev/null 2>&1; then
   cargo fmt --check || { echo "Formatting failed. Run 'cargo fmt' to fix."; exit 1; }
-  cargo fmt --manifest-path tools/ep800-recovery/Cargo.toml --check
 fi
 
 echo "==> [2/4] Running Rust type & borrow checking (BLE + Core)..."
@@ -16,8 +15,6 @@ cargo check --locked --features ble --bin cranklink
 
 echo "==> [3/4] Running core Rust unit tests..."
 cargo test --locked --lib --bin cranklink
-cargo test --locked --manifest-path tools/ep800-recovery/Cargo.toml
-python3 -m unittest discover -s tools/ep800-recovery -p 'test_*.py'
 
 if [ -d "web-instrument" ]; then
   echo "==> [4/4] Verifying Web Instrument (types + unit tests)..."
