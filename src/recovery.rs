@@ -160,12 +160,20 @@ impl Sequence {
             last_tx: None,
         }
     }
+    /// Every key TX, including the last, gets a full RETRY to be answered
+    /// inside the window before an expiry counts as clean.
     fn can_send(&self, now: Instant) -> bool {
-        now < self.start + WINDOW
+        now + RETRY <= self.start + WINDOW
             && now >= self.next_send
             && self.tx_count < MAX_TX
             && !self.full
             && !(self.progress && self.outstanding)
+    }
+    /// The window is over, or the TX cap is reached and the last key has had
+    /// its full RETRY to be answered.
+    fn expired(&self, now: Instant) -> bool {
+        let awaiting = self.outstanding && self.last_tx.is_some_and(|tx| now < tx + RETRY);
+        now >= self.start + WINDOW || (self.tx_count >= MAX_TX && !awaiting)
     }
     fn sent(&mut self, now: Instant) -> Result<()> {
         ensure!(self.can_send(now), "key TX timing/state/cap guard rejected");
@@ -447,7 +455,7 @@ impl Wire {
                 return Ok(true);
             }
             let now = Instant::now();
-            if now >= self.seq.start + WINDOW || self.seq.tx_count >= MAX_TX {
+            if self.seq.expired(now) {
                 ensure!(
                     !self.seq.progress,
                     "key window ended after ACK2; preserving state, no retry"
@@ -1141,6 +1149,29 @@ mod tests {
         s.tx_count = MAX_TX;
         assert!(!s.can_send(x));
         assert!(!s.can_send(t + WINDOW));
+    }
+    #[test]
+    fn last_key_gets_a_full_retry_before_clean_expiry() {
+        let t = Instant::now();
+        let mut s = Sequence::new(t);
+        let late = t + WINDOW - RETRY / 2;
+        s.next_send = late;
+        assert!(!s.can_send(late));
+        let last = t + WINDOW - RETRY;
+        s.next_send = last;
+        s.sent(last).unwrap();
+        assert!(!s.expired(t + WINDOW - Duration::from_millis(1)));
+        assert!(s.expired(t + WINDOW));
+
+        let mut s = Sequence::new(t);
+        let x = t + Duration::from_millis(60);
+        s.tx_count = MAX_TX - 1;
+        s.sent(x).unwrap();
+        assert!(!s.expired(x));
+        assert!(!s.expired(x + RETRY - Duration::from_millis(1)));
+        assert!(s.expired(x + RETRY));
+        s.ack(1, x, x).unwrap();
+        assert!(s.expired(x));
     }
     #[test]
     fn malformed_raw_data_never_authorizes_handover() {
