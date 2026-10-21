@@ -256,6 +256,7 @@ class FramingAndAdmissionTests(unittest.TestCase):
     def test_write_reset_and_auth_commands_do_not_execute(self):
         motor = Motor.__new__(Motor)
         motor.u, motor.call, motor.output, motor.profile = Mock(), Mock(), [], {}
+        motor.speed_patch_ceiling = None
         for payload in ('16ad01', '16ab00', '16a800', '101000', '321101'):
             with self.subTest(payload=payload), self.assertRaisesRegex(RuntimeError, 'only normal read'):
                 motor.receive(bytes.fromhex(payload), 0)

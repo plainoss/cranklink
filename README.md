@@ -126,6 +126,7 @@ For RX, probe with `--target rx`, then run `firmware flash rx` with the M file a
 - [Settings](docs/settings.md): protected writes, backups, batch plans.
 - [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
 - [Firmware simulator](docs/firmware-simulator.md): offline testing against stock firmware.
+- [Firmware patcher](docs/ep800-speed-limit-patcher.md): create and check supported motor images offline with `tools/patch_motor_speed.py`.
 - [Web app development](web-instrument/README.md): build, test, deploy.
 
 ## License

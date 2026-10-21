@@ -1,6 +1,7 @@
 """Firmware protocol execution with synthetic initialized RAM and virtual TX."""
 import struct
 from .machine import Machine, INPUT, require, UC_ARM_REG_R4, UC_ARM_REG_R7
+from .speed_patch import speed_patch_ceiling
 
 
 class Motor(Machine):
@@ -8,6 +9,8 @@ class Motor(Machine):
 
     def __init__(self, image, profile):
         super().__init__(image, profile)
+        self._image = bytes(image)
+        self.speed_patch_ceiling = speed_patch_ceiling(self._image)
         self.storage = None
         if profile['abi'] == 'legacy':
             self.u.mem_write(profile['table'], b'\xff' * 33)
@@ -56,6 +59,12 @@ class Motor(Machine):
             # Writes are opt-in and limited to the exact-profile storage/auth
             # path. Reset, flashing and unrelated setting writes stay excluded.
             allowed_write = (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            # Speed SET is an opt-in simulator capability for the exact patch.
+            # The unchanged firmware performs its checks and modeled commit.
+            speed_write = (self.speed_patch_ceiling is not None
+                           and len(payload) == 6 and payload[:2] == b'\x16\xb0'
+                           and payload[4:] == b'\x01\xff')
+            allowed_write = allowed_write or speed_write
             require(payload[1] & 7 == 4 or self.storage is not None and allowed_write,
                     'only normal reads or explicitly enabled persistent settings are supported')
             self.call(p['dispatch'], source, INPUT)
