@@ -47,7 +47,7 @@ Fields flagged `oem` require drive-unit authentication, run automatically when `
 | E6100-CRG, E6180-TRK | Legacy |
 | E6000 family | None before D3.4.0; protected writes blocked on later firmware |
 
-Only EP800-CRG settings are validated on hardware. The other families are covered by protocol and offline firmware tests.
+Only EP800-CRG settings are validated on hardware. Other families have protocol-test coverage; firmware execution is limited to the exact profiles and operations listed in [simulator coverage](firmware-simulator.md).
 
 ## Backups and restore
 

@@ -163,8 +163,8 @@
     "final_gatt_adjustment_cases": 2,
     "binary_sha256": {
       "read_and_gear_write_suites": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
-      "final_adjustment_native": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
-      "final_adjustment_gatt": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3"
+      "final_adjustment_native": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771",
+      "final_adjustment_gatt": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771"
     },
     "raw_stock_checks": [
       "27 adjustment/gear seed combinations",
@@ -222,7 +222,7 @@
     "dropped_genuine_set_acks": 2,
     "binary_sha256": {
       "all_versions": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3",
-      "final_fault_checks": "38bfa088a84007624f4f000ddd84a26047113a341d0392629fbb83d45f86fbb3"
+      "final_fault_checks": "0b11c01055d25f2cfdb4e68812fdc98137c57c337e89098979d0a089be7c4771"
     },
     "checks": [
       "all exposed schema values and every byte input",
