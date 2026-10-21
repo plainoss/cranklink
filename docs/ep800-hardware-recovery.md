@@ -15,6 +15,10 @@ not been rerun on hardware. Other board revisions and platforms remain untested.
 
 ## Why the bridge helps
 
+The motor stopped booting after a modified firmware binary was flashed. An
+unsupported ARM instruction was suspected, but the original fault was not
+confirmed.
+
 We read the bootloader from a working EP800-CRG with the same bootloader
 version and ran that code in the firmware simulator. The tests
 showed how repeated empty replies on SPI, the internal link between the two
