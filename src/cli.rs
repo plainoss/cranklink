@@ -608,15 +608,29 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         _ => {}
     }
 
+    // `ble scan` is the documented spelling of `scan --ble`; neither needs a port.
+    if let Command::Ble {
+        command: BleCommand::Scan { seconds, all },
+    } = cli.command
+    {
+        cli.command = Command::Scan {
+            ble: true,
+            seconds,
+            all,
+        };
+    }
+
     // BLE dispatch vs native wired dispatch
     if cli.port.as_deref().is_some_and(crate::ble::is_port)
         && !matches!(
             cli.command,
-            Command::Firmware {
-                command: FirmwareCommand::Inspect { .. }
-            } | Command::Settings {
-                command: SettingsCommand::Schema { .. }
-            }
+            Command::Scan { .. }
+                | Command::Firmware {
+                    command: FirmwareCommand::Inspect { .. }
+                }
+                | Command::Settings {
+                    command: SettingsCommand::Schema { .. }
+                }
         )
     {
         return execute_ble(cli, is_json);
@@ -1563,7 +1577,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     Ok(None)
                 }
             }
-            _ => unreachable!(),
+            _ => anyhow::bail!("command is not available over Bluetooth"),
         }
     })();
     #[cfg(target_arch = "wasm32")]
@@ -2039,9 +2053,10 @@ fn read_only_command_allowed(command: &Command) -> bool {
     }
 }
 
+/// Commands execute_ble implements; anything else is refused before connecting.
 fn ble_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Probe | Command::Units | Command::Session => true,
+        Command::Probe | Command::Units => true,
         Command::Settings { .. } => true,
         Command::Firmware { command } => matches!(
             command,
@@ -2050,7 +2065,7 @@ fn ble_command_allowed(command: &Command) -> bool {
                 ..
             }
         ),
-        Command::Ble { .. } => true,
+        Command::Ble { command } => matches!(command, BleCommand::TestLink),
         _ => false,
     }
 }
@@ -2928,6 +2943,26 @@ mod cli_tests {
         assert_eq!(sanitize_serial("A1B2C3D4E5F6").unwrap(), "a1b2c3d4e5f6");
         assert!(sanitize_serial("short").is_err());
         assert!(sanitize_serial("01020304050G").is_err());
+    }
+
+    #[test]
+    fn ble_sessions_accept_only_commands_execute_ble_implements() {
+        let command = |args: &[&str]| {
+            let mut full = vec!["cranklink"];
+            full.extend_from_slice(args);
+            Cli::try_parse_from(full).unwrap().command
+        };
+        for args in [
+            &["probe"][..],
+            &["units"],
+            &["ble", "test-link"],
+            &["settings", "read"],
+        ] {
+            assert!(ble_command_allowed(&command(args)), "{args:?}");
+        }
+        for args in [&["session"][..], &["ble", "scan"], &["adapter", "status"]] {
+            assert!(!ble_command_allowed(&command(args)), "{args:?}");
+        }
     }
 
     #[test]
