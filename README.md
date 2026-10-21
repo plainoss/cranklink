@@ -77,7 +77,7 @@ Drive Unit Probe:
   Renesas (M): v4.1.11.0
 ```
 
-Commands that touch settings or firmware take `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial.
+Settings writes and ordinary firmware flashing take `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial. Bridge recovery can read and bind the serial automatically after connecting.
 
 ### Read and change settings
 
@@ -119,13 +119,17 @@ cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion.
 
+For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, follow the [temporary bridge recovery guide](docs/ep800-hardware-recovery.md) using `firmware flash dcas --bridge-recovery`.
+
+For bootloader research on a working, powered EP800-CRG, `firmware dump-bootloader --output NEW_DIR` reads the 64 KiB resident window without flashing. See the [extraction instructions](docs/ep800-hardware-recovery.md#read-a-working-motors-bootloader).
+
 `cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts.
 
 ## Documentation
 
 - [Settings](docs/settings.md): protected writes, backups, batch plans.
 - [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
-- [Firmware simulator](docs/firmware-simulator.md): offline testing against stock firmware.
+- [Firmware simulator](docs/firmware-simulator.md): offline application tests and `sim.py resident` bootloader regressions.
 - [Web app development](web-instrument/README.md): build, test, deploy.
 
 ## License

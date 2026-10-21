@@ -107,6 +107,7 @@ pub(crate) fn flash_dcas_with_user_info(
     let live = boot_identity(link, identity.slot)?;
     ensure!(
         live.slot == identity.slot
+            && live.version == identity.version
             && live.serial == identity.serial
             && live.series == identity.series
             && live.unit == identity.unit
@@ -497,6 +498,22 @@ mod tests {
                 .all(|f| f.control == 0x88
                     && matches!(f.payload[0], 0x2e | 0x2f | 0x30 | 0x29 | 0x2a))
         );
+    }
+    #[test]
+    fn changed_compatible_boot_version_blocks_all_programming_commands() {
+        let mut link = Replay::new(256);
+        // Both versions satisfy DCASX compatibility, but the exact expected
+        // identity must remain unchanged through the final pre-erase check.
+        link.identity.version[3] = 1;
+        let image = link.image.clone();
+        assert!(flash_dcas(&mut link, &image, &identity(), |_, _| {}).is_err());
+        assert!(
+            link.sent
+                .iter()
+                .all(|f| f.control == 0x88
+                    && matches!(f.payload[0], 0x2e | 0x2f | 0x30 | 0x29 | 0x2a))
+        );
+        assert_eq!(link.blocks, 0);
     }
     #[test]
     fn dcas2i_flashing_uses_coarse_erase_and_indexed_packets() {
