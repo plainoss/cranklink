@@ -195,6 +195,29 @@ describe("Catalogued component discovery and schema binding", () => {
     assert.match(h.controller.getState().failure?.error ?? "", /Component schema unavailable/);
   });
 
+  it("discards a read of the previous component that lands after a target switch", async () => {
+    const h = harness();
+    const motor = { slot: 13, model_series: 0x23, model_unit: 0, model: "DU-EP800-CRG", model_candidates: ["DU-EP800-CRG"] };
+    h.config.inventory = [units[0], motor];
+    h.replies.set(13, {
+      model: "DU-EP800/DU-EP800-CRG", slot: 13,
+      identity: { ...snapshot(motor).identity, serial: "010203040506", cargo: "00-CRG", settings_model: "ep800-crg" },
+      values: { lamp: { value: 1, raw: "01" } }, unavailable: {},
+    });
+    // Motor schemas come from static files, so the motor selection finishes
+    // before a lever read queued behind it.
+    globalThis.fetch = (async () => ({ ok: true, json: async () => [spec("lamp", { min_raw: 0, max_raw: 1, choices: [0, 1] })] })) as unknown as typeof fetch;
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(4);
+    const selecting = h.controller.selectComponent(13);
+    const staleRead = h.controller.readAllParameters();
+    await selecting;
+    await assert.rejects(staleRead, /component changed during the read/);
+    assert.equal(h.controller.getState().identity?.slot, 13);
+    assert.deepEqual(Object.keys(h.controller.getState().liveValues), ["lamp"]);
+    assert.equal(h.controller.getState().failure, null);
+  });
+
   it("rejects an identity/schema mismatch before replacing the selected component", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");

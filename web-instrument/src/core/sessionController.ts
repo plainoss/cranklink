@@ -54,6 +54,12 @@ export interface TerminalHost {
   configureSimulator?: (opts: any) => void;
 }
 
+/** The same physical component: serial, schema, slot and stock identity all match. */
+function sameComponent(a: DeviceIdentity | null, b: DeviceIdentity | null): boolean {
+  return !!a && !!b && a.serial === b.serial && a.modelSlug === b.modelSlug && a.slot === b.slot
+    && a.modelSeries === b.modelSeries && a.modelUnit === b.modelUnit;
+}
+
 export class SessionController {
   private state: InstrumentState;
   private listeners: Set<(state: InstrumentState) => void> = new Set();
@@ -504,9 +510,16 @@ export class SessionController {
       });
     }
 
+    let superseded = false;
     try {
       const prefixFlags = this.buildSessionFlags(transport, identity, false);
       const readRes = await this.exec(`${prefixFlags}settings read`);
+      // Another component was selected while this read was queued: its values
+      // must not replace the new target's, and its state belongs to that operation.
+      if (!sameComponent(this.state.identity, identity)) {
+        superseded = true;
+        throw new Error("The selected component changed during the read; its values were discarded.");
+      }
       if (readRes.code !== 0) {
         throw new Error(readRes.stderr || `Settings read failed (${readRes.code})`);
       }
@@ -516,7 +529,9 @@ export class SessionController {
       this.update({ linkLost: false });
       return values;
     } catch (err: any) {
-      this.fail("read", err, { phase: wasReady ? "ready" : "error", status: (error) => `Read error: ${error}` });
+      if (!superseded) {
+        this.fail("read", err, { phase: wasReady ? "ready" : "error", status: (error) => `Read error: ${error}` });
+      }
       throw err;
     }
   }
