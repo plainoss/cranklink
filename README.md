@@ -4,7 +4,7 @@
 [![Web](https://github.com/plainoss/cranklink/actions/workflows/web.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/web.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. Available as a web app and a CLI built on the same Rust core.
+Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. The CLI also supports model-specific settings for catalogued Di2 components. Available as a web app and a CLI built on the same Rust core.
 
 > [!WARNING]
 > Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
@@ -36,6 +36,10 @@ Firmware images are not bundled.
 | E8000, E7000, E6100, E6000 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
 
 All families support component discovery and identification. Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
+
+The CLI supports classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. These component layouts have protocol tests but have not been validated on hardware. The web tuning interface continues to use drive-unit schemas.
+
+Exact MU-UR500 and cycle-computer firmware execution, current CLI save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md).
 
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 
@@ -95,6 +99,11 @@ cranklink --port usb -s <SERIAL> settings set profile1.boost.torque 85 --backup 
 
 # Roll back
 cranklink --port usb -s <SERIAL> settings restore before.json
+
+# Inspect and target a catalogued Di2 component
+cranklink settings schema --model ST-6870-L
+cranklink --port usb -c ST-6870-L -s <SERIAL> settings read
+cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 --backup lever-before.json
 ```
 
 See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.

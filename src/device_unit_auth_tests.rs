@@ -195,6 +195,7 @@ fn session(mode: u8) -> (Session, Rc<RefCell<State>>) {
         trace: None,
         pc_slot: 0,
         normal_slot: Some(13),
+        normal_is_motor: true,
         target_slot: Some(13),
         adapter_supply: false,
         unit_auth_attempted: false,

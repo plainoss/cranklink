@@ -8,7 +8,8 @@
 //!
 //! Gateway PIN authentication, gateway role/discovery and motor PC-link or
 //! protected-setting authorization are separate state transitions. Inventory
-//! resolves multiple component types, but `start_component` requires a motor.
+//! resolves multiple component types. Explicit component startup requires a
+//! unique catalogued identity; default startup and firmware retain motor gates.
 //! Master discovery can itself start remote PC links through the gateway;
 //! startup consumes those receipts instead of replaying the motor keys.
 use crate::{
@@ -701,28 +702,53 @@ impl BleSession {
         self.inventory_slots(&slots, true)
     }
     pub fn start(&mut self, selected: Option<u8>) -> Result<Identity> {
-        self.start_component(selected, None)
+        self.start_inner(selected, None, false)
     }
     pub fn start_component(
         &mut self,
         selected: Option<u8>,
         component: Option<&str>,
     ) -> Result<Identity> {
+        self.start_inner(
+            selected,
+            component,
+            selected.is_some() || component.is_some(),
+        )
+    }
+    fn start_inner(
+        &mut self,
+        selected: Option<u8>,
+        component: Option<&str>,
+        allow_component: bool,
+    ) -> Result<Identity> {
         let slots = self.discover_units()?;
         let slot = if let Some(component) = component {
-            let units = self.inventory_slots(&slots, true)?;
+            let named_slots = match selected {
+                Some(slot) => vec![crate::device::select_motor_slot(&slots, Some(slot))?],
+                None => slots.clone(),
+            };
+            let units = self.inventory_slots(&named_slots, true)?;
             crate::device::select_named_component(&units, component)?
         } else if selected.is_none() && slots.len() > 1 {
             crate::device::select_current_motor(&self.inventory_slots(&slots, false)?)?
         } else {
             crate::device::select_motor_slot(&slots, selected)?
         };
-        let motor = crate::device::UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
-        motor.require_motor()?;
+        let mut unit = crate::device::UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
+        unit.prepare_session(self, allow_component)?;
+        if let Some(component) = component {
+            if !unit.is_motor() {
+                ensure!(
+                    unit.model
+                        .is_some_and(|model| crate::unit_models::name_matches(component, model)),
+                    "component {component:?} no longer matches slot {slot}"
+                );
+            }
+        }
         self.linked_slot = Some(slot);
         // Initial master setup broadcasts PC start and all five keys through
-        // the gateway. Preserve its motor receipt instead of starting twice.
-        // Later commands restart only the motor released by the previous pause.
+        // the gateway. Preserve its component receipt instead of starting twice.
+        // Later commands restart only the component released by the previous pause.
         let receipt = if self.master_routing && self.gateway_started_slots.contains(&slot) {
             Some(
                 if let Some(value) = self.master_pc_start_receipts.get(&slot).cloned() {
@@ -766,15 +792,23 @@ impl BleSession {
                     receipt.value.len() >= 7
                         && receipt.value[4] == 0
                         && receipt.value[5..7] == [0xff, 0xff],
-                    "BLE motor did not confirm PC owner zero; privileged routing is unverified"
+                    "BLE component did not confirm PC owner zero; privileged routing is unverified"
                 );
             }
         }
         self.gateway_started_slots.remove(&slot);
         self.master_pc_start_receipts.remove(&slot);
-        let cargo = crate::motor_support::read_params(self, slot, motor.model_series)?;
+        if !unit.is_motor() {
+            return Ok(Identity {
+                slot,
+                cargo: unit.model.context("unresolved component model")?.to_owned(),
+                dcas_version: version(&self.command(slot, 1, 0x2c, &[0], 0x2e)?)?,
+                rx_version: "not applicable".to_owned(),
+            });
+        }
+        let cargo = crate::motor_support::read_params(self, slot, unit.model_series)?;
         ensure!(
-            motor.model_series == 0x08 || cargo.len() >= 7,
+            unit.model_series == 0x08 || cargo.len() >= 7,
             "truncated BLE motor attribute reply"
         );
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
@@ -910,6 +944,7 @@ impl BleSession {
         );
         let model = self.model_identity(slot)?;
         ensure!(model.len() >= 3, "invalid motor stock identity");
+        crate::device::UnitIdentity::from_reply(slot, model.clone())?.require_motor()?;
         let cargo = crate::motor_support::read_params(self, slot, model[1])?;
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
         ensure!(
@@ -1169,6 +1204,8 @@ mod tests {
         bad_mode: bool,
         unit_bitmap: Option<[u8; 4]>,
         stock_series: Option<u8>,
+        stock_unit: Option<u8>,
+        component_part: Option<u8>,
         master_info: Option<Vec<u8>>,
         master_stock_reply: Option<Vec<u8>>,
         motor_params: Option<Vec<u8>>,
@@ -1437,7 +1474,12 @@ mod tests {
                         response.extend(s.unit_bitmap.unwrap_or([8, 32, 0, 0]));
                         response.push(0xff); // observed fixed-size notifications may have extra bytes
                     }
-                    (2, 0x14) => response.extend([data[3], s.stock_series.unwrap_or(0x23), 0]),
+                    (2, 0x14) => response.extend([
+                        data[3],
+                        s.stock_series.unwrap_or(0x23),
+                        s.stock_unit.unwrap_or(0),
+                    ]),
+                    (4, 0x0c) | (0x32, 0x9c) => response.push(s.component_part.unwrap_or(1)),
                     (0x10, 0x14) if s.reject_lamp => {
                         response[2] += 1;
                     }
@@ -2429,6 +2471,157 @@ mod tests {
         );
         session.stop().unwrap();
         assert!(session.linked_slot.is_none());
+    }
+    fn component_mock(series: u8, unit: u8) -> (BleSession, Rc<RefCell<State>>) {
+        let (mut session, state) = mock();
+        {
+            let mut s = state.borrow_mut();
+            s.unit_bitmap = Some([24, 0, 0, 0]); // PC 3, component 4
+            s.stock_series = Some(series);
+            s.stock_unit = Some(unit);
+            s.motor_slot = Some(4);
+        }
+        session.authenticate().unwrap();
+        (session, state)
+    }
+    fn check_component_start(series: u8, unit: u8, model: &str) {
+        let (mut session, state) = component_mock(series, unit);
+        let identity = session.start_component(Some(4), None).unwrap();
+        assert_eq!(identity.cargo, model);
+        assert_eq!(identity.dcas_version, "4.2.0.0");
+        assert_eq!(identity.rx_version, "not applicable");
+        session.stop().unwrap();
+        let writes = &state.borrow().writes;
+        assert!(writes.contains(&(FREE_COMMAND, vec![4, 0x32, 0x10, 1, 3, 0, 0])));
+        assert!(writes.contains(&(FREE_COMMAND, vec![4, 1, 0x2c, 0])));
+        assert!(writes.contains(&(FREE_COMMAND, vec![4, 0x32, 0x10, 0, 3, 0, 0])));
+        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+            && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
+    }
+    #[test]
+    fn explicit_derailleur_ble_session_skips_motor_attributes_and_rx_version() {
+        check_component_start(2, 4, "RD-6770");
+    }
+    #[test]
+    fn explicit_power_unit_ble_session_skips_motor_attributes_and_rx_version() {
+        check_component_start(2, 0, "SM-BMR1");
+    }
+    #[test]
+    fn explicit_hub_actuator_ble_session_skips_motor_attributes_and_rx_version() {
+        check_component_start(6, 4, "MU-S705");
+    }
+    #[test]
+    fn named_lever_ble_session_resolves_part_before_target_start() {
+        let (mut session, state) = component_mock(2, 1);
+        let identity = session.start_component(Some(4), Some("ST-6770-L")).unwrap();
+        assert_eq!(identity.cargo, "ST-6770-L");
+        assert_eq!(identity.rx_version, "not applicable");
+        let error = session
+            .authenticate_unit_settings("010203040506")
+            .unwrap_err();
+        assert!(error.to_string().contains("not a recognized motor"));
+        session.stop().unwrap();
+        let writes = &state.borrow().writes;
+        let part = writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes == &[4, 4, 0x0c, 0])
+            .unwrap();
+        let start = writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes == &[4, 0x32, 0x10, 1, 3, 0, 0])
+            .unwrap();
+        assert!(part < start);
+        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+            && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
+    }
+    #[test]
+    fn named_component_ble_selection_intersects_explicit_slot() {
+        let (mut session, state) = component_mock(0x23, 2);
+        state.borrow_mut().unit_bitmap = Some([24, 32, 0, 0]);
+        assert!(session
+            .start_component(Some(4), Some("RD-6770"))
+            .unwrap_err()
+            .to_string()
+            .contains("matching slots []"));
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND && matches!((bytes[1], bytes[2]), (0x32, 0x10 | 0x30))
+        }));
+        assert!(session.linked_slot.is_none());
+        session.stop().unwrap();
+    }
+    #[test]
+    fn unknown_explicit_ble_component_is_rejected_before_target_start() {
+        let (mut session, state) = component_mock(0x99, 2);
+        assert!(session
+            .start_component(Some(4), None)
+            .unwrap_err()
+            .to_string()
+            .contains("not a catalogued component"));
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND && matches!((bytes[1], bytes[2]), (0x32, 0x10 | 0x30))
+        }));
+        assert!(session.linked_slot.is_none());
+        session.stop().unwrap();
+    }
+    #[test]
+    fn unresolved_explicit_ble_lever_is_rejected_before_target_start() {
+        let (mut session, state) = component_mock(2, 1);
+        state.borrow_mut().component_part = Some(0xff);
+        assert!(session
+            .start_component(Some(4), None)
+            .unwrap_err()
+            .to_string()
+            .contains("component model remains unresolved"));
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND && matches!((bytes[1], bytes[2]), (0x32, 0x10 | 0x30))
+        }));
+        assert!(session.linked_slot.is_none());
+        session.stop().unwrap();
+    }
+    #[test]
+    fn default_ble_start_remains_motor_only_for_known_component() {
+        let (mut session, state) = component_mock(2, 4);
+        assert!(session
+            .start(None)
+            .unwrap_err()
+            .to_string()
+            .contains("not a recognized motor"));
+        assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
+            *id == FREE_COMMAND && matches!((bytes[1], bytes[2]), (0x32, 0x10 | 0x30))
+        }));
+        assert!(session.linked_slot.is_none());
+        session.stop().unwrap();
+    }
+    #[test]
+    fn explicit_component_master_routing_uses_existing_gateway_start_receipt() {
+        let (mut session, state) = mock();
+        {
+            let mut s = state.borrow_mut();
+            s.unit_bitmap = Some([0, 32, 0, 0]);
+            s.master_stock_reply = Some(vec![2, 0, 0xff]);
+        }
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        let identity = session.start_component(Some(13), None).unwrap();
+        assert_eq!(identity.cargo, "SM-BMR1");
+        assert_eq!(identity.rx_version, "not applicable");
+        assert!(session
+            .motor_firmware(&[1, 2, 3, 4, 5, 6])
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("only EP800"));
+        assert!(session
+            .motor_firmware_with_policy(&[1, 2, 3, 4, 5, 6], true)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("does not support motor"));
+        let writes = &state.borrow().writes;
+        assert!(writes.contains(&(FREE_COMMAND, vec![13, 1, 0x2c, 0])));
+        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+            && (matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84 | 0xc0))
+                || bytes.starts_with(&[13, 0x32]))));
     }
     #[test]
     fn discovery_pc_link_identity_and_stop_use_gatt_channels_without_usb_frames() {

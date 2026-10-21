@@ -96,8 +96,11 @@ commands. These examples show how to interpret a recognized name:
 | Drive units | EP-series and E-series families | Stock identity and available product attributes. |
 
 A resolved name records identity. Gear control, settings and firmware updates
-need separate implementations and validation for the component. Cranklink's
-current settings and firmware paths are scoped to selected drive units.
+need separate implementations and validation for the component. Cranklink
+supports model-specific settings for selected classic Di2 levers, derailleurs,
+power units, MU hub actuators and cycle computers. Inspect
+`settings schema --model <COMPONENT>` and the [settings guide](settings.md).
+Firmware update paths remain scoped to selected drive units.
 
 Even unit number `00` is insufficient to identify a motor: Di2 batteries and
 other components use it too. Cranklink's motor paths check the complete
@@ -164,17 +167,18 @@ does not start a motor PC-link session. Bluetooth discovery can also require
 gateway setup and role changes, so its traffic is not identical to the wired
 inventory.
 
-Cranklink's `probe`, motor settings and motor firmware paths require a
-recognized drive unit. They are not generic commands for every component
-that `units` can name. For motor settings, the sequence is:
+Default `probe`, motor settings and motor firmware paths require a recognized
+drive unit. Explicit `--component` or slot selection also permits probes and
+supported settings on a uniquely identified catalogued component. Catalog
+recognition does not grant every operation. For motor settings, the sequence is:
 
 ```text
 Discover → select motor → open service session → finish identification
          → read or change settings → close service session
 ```
 
-The **PC-link session** is the motor's service connection. Startup includes a
-fixed sequence of keys and a motor acknowledgment. Cranklink completes the
+The **PC-link session** is the component's service connection. Startup includes a
+fixed sequence of keys and a component acknowledgment. Cranklink completes the
 model and firmware checks needed for the requested operation, then sends the
 command. At the end, it asks the motor to stop and checks the acknowledgment.
 Opening a serial port or establishing Bluetooth is only the transport step.
@@ -334,7 +338,7 @@ at least 2703 and ready state `01/02`, with a 90 s limit. No voltage unit is
 established for that raw threshold. Reset, protocol change and PnP waits are
 3 s, 1 s and 5 s respectively: host pacing policies, not measured bus minima.
 Adapter supply does not establish traction power or assist readiness. The
-[initialization sequence](../src/device.rs#L298) preserves those distinctions.
+[initialization sequence](../src/device.rs#L339) preserves those distinctions.
 
 ### Component identity and diagnostic reads
 
@@ -371,9 +375,12 @@ live component model.
 
 Older E6000-family identities also differ from some historical catalog aliases.
 The [catalog caveat](../src/unit_models.rs#L270) describes that limitation;
-an alias must not grant another model's operations. Version selectors are
-firmware-specific too: the [E6100 simulator limitation](firmware-simulator.md#run-the-real-native-cli-offline)
-includes a working `01/84 00` path where the newer `01/2C 00` query is rejected.
+an alias must not grant another model's operations. Version selectors and cache
+requirements are firmware-specific too. The [simulator fixtures](firmware-simulator.md)
+now initialize the stock M/RX and product caches missing from earlier bare-D
+fixtures; clearing the version cache reproduces the earlier E6100 `01/2C`
+rejection. This initializes data consumed by unchanged instructions, without
+executing M firmware or complete board boot.
 
 The [bounded memory reader](../src/bootloader_dump.rs#L259) uses
 `[addr_hi,addr_lo,addr_mid,count,00]`, with count 1–3. Reply parameters echo
@@ -402,24 +409,24 @@ framing. Cranklink's ordinary parameter limits are 16 bytes for gateway commands
 and 15 for component commands; they are client limits, not universal GATT maxima.
 Large firmware records use a separate [fragment codec](../src/ble/firmware.rs#L1).
 
-The [gateway proof calculation](../src/ble.rs#L155) and
-[authentication sequence](../src/ble.rs#L410) document nonce padding,
+The [gateway proof calculation](../src/ble.rs#L159) and
+[authentication sequence](../src/ble.rs#L417) document nonce padding,
 proof construction, subscriptions and receipts. A six-digit passkey preserves
 leading zeroes. When both auth characteristics are absent, the client uses the
 supported unauthenticated service shape; finding only one is an error.
 
 Slave discovery reads the master's routed `01/14` bitmap and `02/14` identity
 cache. Master discovery uses PCE PnP and `1B`, and can start motor PC-link itself.
-The [slave discovery](../src/ble.rs#L515) and [master discovery](../src/ble.rs#L569)
+The [slave discovery](../src/ble.rs#L519) and [master discovery](../src/ble.rs#L575)
 methods explain master-slot inclusion, cache selection and the existing start
-receipt. [Cleanup](../src/ble.rs#L791) orders motor stop,
+receipt. [Cleanup](../src/ble.rs#L828) orders motor stop,
 slave-mode restoration/readback, gateway stop and GATT close; gateway stop can
 end connection mode. Keep ownership until explicit disconnect.
 
 ### Motor settings and update traffic
 
 Motor PC-link uses `32/10` start/stop and `32/30` keys, with `32/12` receipts.
-The [wired startup sequence](../src/device.rs#L520) specifies the five keys, source
+The [wired startup sequence](../src/device.rs#L563) specifies the five keys, source
 address and timing. Protected settings use a separate exchange: legacy
 `16/D8,DA,E0,E2` or modern `33/68,6A,70,72`. The
 [authorization contract](../src/ble/unit_auth.rs#L1) describes derivation, fragment
@@ -428,26 +435,26 @@ the family and firmware rules.
 
 For setting names, choices, units and ranges, run
 `cranklink settings schema --model ep800`. For wire layouts, read
-[`SettingSpec`](../src/settings.rs#L190), the [base schema](../src/settings.rs#L357)
-and [model overrides](../src/settings.rs#L74):
+[`SettingSpec`](../src/settings.rs#L257), the [base schema](../src/settings.rs#L427)
+and [model overrides](../src/settings.rs#L116):
 `group`, `set`, `get` and `query` select the exchange; `template`, `offset`,
 `width`, `scale` and `preserve` define the payload. Those wire fields are not
-exported by the CLI schema. [`updated_payload`](../src/settings.rs#L1241)
-reconstructs SET bytes, while [`read_raw`](../src/settings.rs#L862) and
-[`set_name`](../src/settings.rs#L1544) handle split names. This keeps every setting's layout
+exported by the CLI schema. [`updated_payload`](../src/settings.rs#L1336)
+reconstructs SET bytes, while [`read_raw`](../src/settings.rs#L938) and
+[`set_name`](../src/settings.rs#L1679) handle split names. This keeps every setting's layout
 beside its implementation rather than maintaining a second field dictionary.
 
 Read the complete shared payload and preserve sibling fields. On tested EP800,
 speed GET selector `0` aliases effective speed, and destination GET selector
 `0` can be rejected; modern factory fallback must not be copied to that path.
-The [destination validation](../src/settings.rs#L1116) handles unset `FF` explicitly.
+The [destination validation](../src/settings.rs#L1212) handles unset `FF` explicitly.
 The implemented settings path has no extra generic EEPROM commit. Profile
 names span two writes and can partially complete; read both chunks after an
 interruption. A batch can also leave earlier writes applied.
 
 | Observed transport/control | Traffic to recognize | Detailed contract |
 | --- | --- | --- |
-| D boot `88` | Five update keys; identity, erase, address, finish and reset commands. | [Entry](../src/device.rs#L848), [boot identity](../src/firmware_io.rs#L60), [programming commands](../src/firmware_io.rs#L93). |
+| D boot `88` | Five update keys; identity, erase, address, finish and reset commands. | [Entry](../src/device.rs#L923), [boot identity](../src/firmware_io.rs#L60), [programming commands](../src/firmware_io.rs#L93). |
 | D data `0B` | 64-byte buffers; separate `82`, `83`, `C0` and motor `31` receipts (indexed on DCAS2i/X). | [DCAS writer](../src/firmware_io.rs#L93). |
 | Fast bridge `A8` | Addressed 16-byte command envelopes; slot stays in the record. | [Fast RX envelope](../src/rx.rs#L190). |
 | Normal RX `48` | `F0` command relay and `F8` four-byte fragments. | [Ordinary RX relay](../src/rx.rs#L561). |
@@ -490,14 +497,17 @@ specify physical framing, modulation, checksum, arbitration or wire timing.
 The firmware simulator executes selected gateway and motor images through a
 virtual connection. It exercises service exchanges, replies, cleanup and
 faults such as dropped keys or reordered fragments. Its current executable
-coverage is concentrated on motor and gateway firmware; Di2 identity tests
-establish catalog and query behavior, rather than executing every Di2 device.
+coverage includes eight display images and MU-UR500 3.3.1 settings, with actual
+native/BLE CLI backup, save, restore and lost-acknowledgment checks. Classic
+lever, derailleur and power-unit schemas have protocol tests but still lack
+executable firmware profiles. Coverage of one model does not prove another's
+firmware behavior; see the [component results](../tools/firmware-sim/component-validation.json).
 
 Synthetic memory supplies some device state, and virtual transport replaces
 electrical and radio behavior. A passing exchange can establish useful
 protocol behavior without establishing physical interoperability. The
 [simulator guide](firmware-simulator.md) lists exact images, reproduction
-commands and the current E6100 native-probe limitation. A separate EP800
+commands, modeled cache/storage boundaries and coverage gaps. A separate EP800
 resident regression covers bounded boot-entry behavior, not complete boot
 or flash programming.
 

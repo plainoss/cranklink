@@ -343,7 +343,10 @@
     "sha256": "c2bdeb052b7f5d89190674346d1d4f3491e1a7eb05b3c79f17f86983e4fff6ac",
     "group1_table": 73000,
     "series_ram": 536871844,
-    "rx_cache": 536881564
+    "rx_cache": 536881564,
+    "cargo_ram": 536881952,
+    "cargo_fixture": "00",
+    "cargo_provenance": "Synthetic standard EP600 model variant 00, not recovered device NVM. Stock GET16/7C call0x1C0A2 enters0x1D2AE, then0x2684A and seven-byte copy0x27B94 from RAM0x20002B20. Reply construction and transport execute unchanged."
   },
   {
     "id": "ep500-4.1.1",
@@ -364,7 +367,12 @@
     "role_ram": 536873040,
     "sha256": "6dd6ebf14f04a2d363cced8f77a8c8f86b64583c71e2abb9b2cc0fe64e2d1952",
     "group1_table": 71816,
-    "series_ram": 536871648
+    "series_ram": 536871648,
+    "rx_cache": 536881262,
+    "rx_cache_provenance": "Synthetic absent-M version cache uses D container compatibility bytes47..49. Stock linked GET01/2C at0x209B8 calls0x14B80; helper rejects zero RAM0x2000286E, otherwise compares three cached version bytes against D flash0x10010..12 and constructs the firmware reply unchanged.",
+    "cargo_ram": 536881680,
+    "cargo_fixture": "00",
+    "cargo_provenance": "Synthetic standard EP500 model variant 00, not recovered device NVM. Stock GET16/7C call0x1B7FA enters0x1C98C, then0x2474A and seven-byte copy0x25D98 from RAM0x20002A10. Reply construction and transport execute unchanged."
   },
   {
     "id": "ep500-4.1.0",
@@ -385,7 +393,12 @@
     "role_ram": 536873040,
     "sha256": "b273042b1f0e69aa35db227e5d590efc845acd6c40381e0ba0aab4d3e5a2333c",
     "group1_table": 71816,
-    "series_ram": 536871648
+    "series_ram": 536871648,
+    "rx_cache": 536881262,
+    "rx_cache_provenance": "Synthetic absent-M version cache uses D container compatibility bytes47..49. Stock linked GET01/2C at0x209B8 calls0x14B80; helper rejects zero RAM0x2000286E, otherwise compares three cached version bytes against D flash0x10010..12 and constructs the firmware reply unchanged.",
+    "cargo_ram": 536881680,
+    "cargo_fixture": "00",
+    "cargo_provenance": "Synthetic standard EP500 model variant 00, not recovered device NVM. Stock GET16/7C call0x1B7FA enters0x1C98C, then0x2474E and seven-byte copy0x25D9C from RAM0x20002A10. Reply construction and transport execute unchanged."
   },
   {
     "id": "ep800-4.1.11",
@@ -429,7 +442,12 @@
     "table": 536879460,
     "role_ram": 536872077,
     "series_ram": 536872073,
-    "group1_table": 73240
+    "group1_table": 73240,
+    "rx_cache": 536881558,
+    "rx_cache_provenance": "Synthetic absent-M version cache uses D container compatibility bytes47..49. Stock linked GET01/2C at0x24360 calls0x1C1EE; helper rejects zero RAM0x20002996, otherwise compares three cached version bytes against D flash0x10010..12 and constructs the firmware reply unchanged.",
+    "product_params_ram": 536880932,
+    "product_params_fixture_hex": "10000000",
+    "product_params_provenance": "Synthetic standard E6100 product attributes, not recovered device NVM. Stock GET16/7C call0x2234C enters0x22F7C and0x194DE, whose four-byte copy0x1B21A reads RAM0x20002724; stock code adds three zero bytes and constructs the seven-byte reply unchanged."
   },
   {
     "id": "e5000-4.5.0",
@@ -469,7 +487,12 @@
     "table": 536879464,
     "role_ram": 536872077,
     "series_ram": 536872073,
-    "group1_table": 73144
+    "group1_table": 73144,
+    "rx_cache": 536881568,
+    "rx_cache_provenance": "Synthetic absent-M version cache uses D container compatibility bytes47..49. Stock linked GET01/2C at0x247FC calls0x1C36E; helper rejects zero RAM0x200029A0, otherwise compares three cached version bytes against D flash0x10010..12 and constructs the firmware reply unchanged.",
+    "product_params_ram": 536880936,
+    "product_params_fixture_hex": "10000000",
+    "product_params_provenance": "Synthetic standard E5100 product attributes, not recovered device NVM. Stock GET16/7C call0x226CC enters0x2341C and0x1951C, whose four-byte copy0x1B402 reads RAM0x20002728; stock code adds three zero bytes and constructs the seven-byte reply unchanged."
   },
   {
     "id": "sc-e7000-4.1.0",

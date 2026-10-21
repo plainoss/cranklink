@@ -1,4 +1,4 @@
-//! Named motor settings with model-specific encodings and validation.
+//! Named component settings with model-specific encodings and validation.
 //! All writes preserve shared fields, journal the original before sending, and read back.
 use crate::device::UnitCommands;
 use crate::storage::OpenOptions;
@@ -8,6 +8,10 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, io::Write, path::Path};
 
 pub mod batch;
+#[cfg(test)]
+mod component_tests;
+mod components;
+mod components_other;
 
 /// Identity selection belongs to the session layer; firmware names alone do not
 /// distinguish EP600 from EP801, which share the DUEP600 firmware family.
@@ -22,6 +26,7 @@ pub enum SettingsModel {
     E7000,
     E6100,
     E6000,
+    Component(&'static str),
 }
 impl SettingsModel {
     pub fn name(self) -> &'static str {
@@ -35,6 +40,7 @@ impl SettingsModel {
             Self::E7000 => "DU-E7000",
             Self::E6100 => "DU-E6100 family",
             Self::E6000 => "DU-E6000 family",
+            Self::Component(name) => name,
         }
     }
     pub(crate) fn slug(self) -> &'static str {
@@ -48,6 +54,7 @@ impl SettingsModel {
             Self::E7000 => "e7000",
             Self::E6100 => "e6100",
             Self::E6000 => "e6000",
+            Self::Component(name) => name,
         }
     }
     pub(crate) fn series(self) -> u8 {
@@ -61,10 +68,45 @@ impl SettingsModel {
             Self::E7000 => 0x21,
             Self::E6100 => 0x20,
             Self::E6000 => 0x08,
+            Self::Component(name) => {
+                crate::unit_models::UNIT_MODELS
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .expect("component settings model belongs to catalog")
+                    .series
+            }
         }
     }
     fn modern(self) -> bool {
         matches!(self, Self::Ep600 | Self::Ep801 | Self::Ep500)
+    }
+
+    /// Resolve offline motor aliases or an exact catalogued component name.
+    pub fn from_name(name: &str) -> Result<Self> {
+        let model = match name.to_ascii_lowercase().as_str() {
+            "ep800-crg" | "ep800" => Self::Ep800Crg,
+            "ep600" => Self::Ep600,
+            "ep801" => Self::Ep801,
+            "ep500" => Self::Ep500,
+            "e5100" => Self::E5100,
+            "e8000" => Self::E8000,
+            "e7000" => Self::E7000,
+            "e6100" => Self::E6100,
+            "e6000" => Self::E6000,
+            _ => {
+                let entry = crate::unit_models::UNIT_MODELS.iter()
+                    .find(|entry| crate::unit_models::name_matches(name, entry.name))
+                    .with_context(|| format!("unknown settings model {name:?}; use a motor family alias or catalogued component name"))?;
+                // Drive units require their live product attributes; do not let
+                // a catalog name bypass the motor-specific schema selection.
+                ensure!(
+                    !entry.name.starts_with("DU-"),
+                    "use a motor family alias for drive-unit schemas"
+                );
+                Self::Component(entry.name)
+            }
+        };
+        Ok(model)
     }
 }
 
@@ -72,6 +114,11 @@ impl SettingsModel {
 /// The modern profile carries an additional meaningful byte. In particular,
 /// byte 5 contains carry-over/cut-off values and must survive sibling edits.
 pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
+    if let SettingsModel::Component(name) = model {
+        let mut specs = components::schema(name);
+        specs.extend(components_other::schema(name));
+        return specs;
+    }
     let mut specs = schema();
     if matches!(
         model,
@@ -180,6 +227,15 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
 }
 
 pub fn capabilities_for_model(model: SettingsModel) -> Value {
+    if let SettingsModel::Component(name) = model {
+        let specs = schema_for_model(model);
+        return json!({"model": name, "ble_hardware_validated": false,
+            "usb_baseline_validated": false, "profile_mode": "not applicable",
+            "settings_available": !specs.is_empty(),
+            "unsupported_features": if specs.is_empty() {
+                vec!["named settings are not implemented for this component"]
+            } else { vec!["settings outside the model schema"] }});
+    }
     json!({"model":model.name(),"ble_hardware_validated":false,"usb_baseline_validated":model == SettingsModel::Ep800Crg,
         "profile_mode":if model.modern(){"basic mode only"}else if model == SettingsModel::Ep800Crg {"legacy profiles"}else{"not implemented"},
         "unsupported_features":if model.modern(){vec!["fine-tune profiles", "free-shift/modern automatic shifting", "OEM light-output and maximum-power tuning", "OEM torque-bound writes"]}else if model == SettingsModel::Ep800Crg {vec![]}else{vec!["assist profiles", "drivetrain and shifting settings", "OEM torque and power tuning"]}})
@@ -211,6 +267,10 @@ pub struct SettingSpec {
     pub choices: Vec<i64>,
     pub oem: bool,
     pub nullable: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+    #[serde(skip)]
+    bit_mask: Option<u8>,
     #[serde(skip)]
     group: u8,
     #[serde(skip)]
@@ -258,6 +318,8 @@ impl SettingSpec {
             choices: vec![],
             oem: false,
             nullable: name.starts_with("maintenance-") && name != "maintenance-alert",
+            read_only: false,
+            bit_mask: None,
             group,
             get: set + 4,
             set,
@@ -311,6 +373,9 @@ impl SettingSpec {
         let mut n = 0i64;
         for (i, x) in b.iter().enumerate() {
             n |= (*x as i64) << (8 * i);
+        }
+        if let Some(mask) = self.bit_mask {
+            n = (n & i64::from(mask)) >> mask.trailing_zeros();
         }
         if self.signed && b[self.width - 1] & 128 != 0 {
             n -= 1i64 << (8 * self.width);
@@ -853,10 +918,16 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
         SettingsModel::E6000,
     ]
     .into_iter()
+    .chain(
+        crate::unit_models::UNIT_MODELS
+            .iter()
+            .filter(|entry| !entry.name.starts_with("DU-"))
+            .map(|entry| SettingsModel::Component(entry.name)),
+    )
     .any(|model| {
         schema_for_model(model)
             .iter()
-            .any(|s| s.group == group && (s.get == command || s.set == command))
+            .any(|s| s.group == group && (s.get == command || (!s.read_only && s.set == command)))
     })
 }
 /// Profile names use two five-byte text chunks, selected by hex `50/51` or
@@ -993,6 +1064,7 @@ pub fn set_for_model(
     let original = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
     validate_model_reply(&s, &original)?;
     let before = s.decode(&original)?;
+    validate_current_value(model, &s, &before)?;
     let payload = updated_payload(&s, &original, n, unset)?;
     validate_combination(&s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
     if s.name.starts_with("max-power.") {
@@ -1067,25 +1139,46 @@ pub fn set_for_model(
         .context("create settings backup (choose a new filename)")?;
     serde_json::to_writer_pretty(
         &mut backup,
-        &json!({"format":"cranklink-setting-backup-v1","serial":hex::encode(crate::device::serial_bytes(&session.command(slot,1,0x3c,&[0],0x3e)?)?),"slot":slot,"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
+        &json!({"format":"cranklink-setting-backup-v1","serial":hex::encode(crate::device::serial_bytes(&session.command(slot,1,0x3c,&[0],0x3e)?)?),"slot":slot,"settings_model":model.slug(),"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
     let changed = before != after;
-    if changed {
+    // A previous adjustment may still be moving toward another target even
+    // when GET reports the requested current value. Always apply this target
+    // once, so restoring an equal current value also cancels pending movement.
+    if changed || s.name == "hub-adjustment" {
         session
             .command(slot, s.group, s.set, &payload, s.set + 2)
             .context(
                 "setting write failed; outcome may be uncertain, inspect backup and read device",
             )?;
-        let got = session
-            .command(slot, s.group, s.get, &s.query, s.get + 2)
-            .context("write acknowledged but readback failed; inspect backup")?;
+        let started = crate::platform::Instant::now();
+        let got = loop {
+            let got = session
+                .command(slot, s.group, s.get, &s.query, s.get + 2)
+                .context("write acknowledged but readback failed; inspect backup")?;
+            validate_model_reply(&s, &got).context("invalid setting readback; inspect backup")?;
+            // Hub adjustment acknowledges acceptance before its actuator has
+            // reached the target. Read until completion; never resend the SET.
+            if s.name != "hub-adjustment" || s.decode(&got)? == after {
+                break got;
+            }
+            ensure!(started.elapsed() < std::time::Duration::from_secs(3),
+                "hub adjustment readback mismatch: actuator completion unconfirmed; outcome may be uncertain; original preserved in {}", backup_path.display());
+            crate::platform::sleep(std::time::Duration::from_millis(100));
+        };
         ensure!(
             s.decode(&got)? == after,
             "setting readback mismatch; original preserved in {}",
             backup_path.display()
         );
+        if let Some(mask) = s.bit_mask {
+            ensure!(
+                got[s.offset] & !mask == original[s.offset] & !mask,
+                "shared setting bits changed unexpectedly"
+            );
+        }
         for i in 0..s.offset {
             ensure!(
                 got.get(i) == original.get(i),
@@ -1176,6 +1269,8 @@ fn validate_modern_speed_destination(n: i64, destination: u8) -> Result<()> {
 }
 
 fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
+    components::validate_reply(spec, raw)?;
+    components_other::validate_reply(spec, raw)?;
     if spec.preserve == Some(6) {
         ensure!(
             raw.len() >= 7 && raw[..2] == spec.query[..2],
@@ -1241,14 +1336,24 @@ fn meaningful_len(s: &SettingSpec) -> usize {
 fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Result<Vec<u8>> {
     let meaningful = meaningful_len(s);
     ensure!(original.len() >= meaningful, "short shared settings reply");
+    ensure!(
+        s.template.len() >= meaningful && s.offset + s.width <= s.template.len(),
+        "invalid settings wire layout for {}",
+        s.name
+    );
     let mut payload = s.template.clone();
     payload[..meaningful].copy_from_slice(&original[..meaningful]);
     if s.name.starts_with("speed-limit") {
         payload[2] = s.query[0];
         payload[3] = 255;
     }
-    for i in 0..s.width {
-        payload[s.offset + i] = ((n >> (8 * i)) & 255) as u8;
+    if let Some(mask) = s.bit_mask {
+        payload[s.offset] =
+            (payload[s.offset] & !mask) | (((n as u8) << mask.trailing_zeros()) & mask);
+    } else {
+        for i in 0..s.width {
+            payload[s.offset + i] = ((n >> (8 * i)) & 255) as u8;
+        }
     }
     if unset && s.group == 0x48 && s.set == 0x50 {
         payload.fill(255);
@@ -1325,6 +1430,13 @@ impl ParsedRestore {
             "backup belongs to another motor or has no serial identity"
         );
         let spec = spec_for_model(&self.setting, model)?;
+        if matches!(model, SettingsModel::Component(_)) {
+            ensure!(
+                self.raw_backup["settings_model"].as_str() == Some(model.slug()),
+                "backup belongs to another component model or lacks its model identity"
+            );
+        }
+        validate_model_reply(&spec, &self.original_parameters)?;
         ensure!(
             spec.decode(&self.original_parameters)? == self.before,
             "backup value does not match captured original parameters"
@@ -1526,6 +1638,7 @@ fn restore_date(
 }
 
 pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
+    ensure!(!s.read_only, "setting {} is read-only", s.name);
     if s.value_type == "date" {
         parse_date(value)?;
     } else if s.width == 0 {
@@ -1537,6 +1650,24 @@ pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
         ensure!(s.nullable, "this setting does not support unset");
     } else {
         s.raw_value(value)?;
+    }
+    Ok(())
+}
+
+/// A component write and its dry run must only accept changes whose captured
+/// original value can later pass the same schema during restore.
+pub(crate) fn validate_current_value(
+    model: SettingsModel,
+    spec: &SettingSpec,
+    value: &Value,
+) -> Result<()> {
+    if matches!(model, SettingsModel::Component(_)) {
+        let input = match value {
+            Value::Null => "unset".to_owned(),
+            Value::String(value) => value.clone(),
+            value => value.to_string(),
+        };
+        validate_input(spec, &input).context("current component value is outside the writable schema; refusing a change whose backup cannot be restored")?;
     }
     Ok(())
 }

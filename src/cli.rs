@@ -179,8 +179,7 @@ struct Cli {
         short = 'c',
         global = true,
         help_heading = "Target Verification",
-        help = "Target component model filter (e.g. DU-EP800-CRG)",
-        conflicts_with = "slot"
+        help = "Target component model filter (e.g. DU-EP800-CRG)"
     )]
     component: Option<String>,
 
@@ -283,7 +282,7 @@ enum Command {
     Probe,
     /// Persistent interactive JSON-RPC session driver for AI agents & test runners
     Session,
-    /// Read, export, and configure motor settings
+    /// Read, export, and configure drive-unit and catalogued component settings
     Settings {
         #[command(subcommand)]
         command: SettingsCommand,
@@ -311,8 +310,8 @@ enum SettingsCommand {
     Schema {
         /// Specific setting name to inspect (optional)
         name: Option<String>,
-        /// Drive unit model schema
-        #[arg(long, default_value = "ep800-crg", value_parser = ["ep800-crg", "ep600", "ep801", "ep500", "e5100", "e8000", "e7000", "e6100", "e6000"])]
+        /// Motor family alias or catalogued component model (e.g. ST-6870-L)
+        #[arg(long, default_value = "ep800-crg", value_parser = parse_settings_model)]
         model: String,
     },
     /// Read one setting, or every supported setting when no name is given
@@ -328,6 +327,7 @@ enum SettingsCommand {
         /// Name of setting to write
         name: String,
         /// New value
+        #[arg(allow_negative_numbers = true)]
         value: String,
         /// Pre-write backup path (auto-generated if omitted)
         #[arg(long)]
@@ -569,10 +569,13 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     cli.command,
                     Command::Probe
                         | Command::Settings {
-                            command: SettingsCommand::Read { .. } | SettingsCommand::Batch { .. }
+                            command: SettingsCommand::Read { .. }
+                                | SettingsCommand::Set { .. }
+                                | SettingsCommand::Restore { .. }
+                                | SettingsCommand::Batch { .. }
                         }
                 ),
-            "--component applies only to probe, settings read or batch"
+            "--component applies only to probe or settings read, set, restore or batch"
         );
     }
 
@@ -741,7 +744,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         Command::Settings {
             command: SettingsCommand::Schema { name, model },
         } => {
-            let model_enum = settings_model_name(&model);
+            let model_enum = settings_model_name(&model)?;
             let specs = crate::settings::schema_for_model(model_enum);
             if let Some(target) = name {
                 let spec = specs
@@ -2030,31 +2033,36 @@ fn ble_command_allowed(command: &Command) -> bool {
     }
 }
 
-fn settings_model_name(name: &str) -> crate::settings::SettingsModel {
-    match name {
-        "ep600" => crate::settings::SettingsModel::Ep600,
-        "ep801" => crate::settings::SettingsModel::Ep801,
-        "ep500" => crate::settings::SettingsModel::Ep500,
-        "e5100" => crate::settings::SettingsModel::E5100,
-        "e8000" => crate::settings::SettingsModel::E8000,
-        "e7000" => crate::settings::SettingsModel::E7000,
-        "e6100" => crate::settings::SettingsModel::E6100,
-        "e6000" => crate::settings::SettingsModel::E6000,
-        _ => crate::settings::SettingsModel::Ep800Crg,
-    }
+fn parse_settings_model(name: &str) -> std::result::Result<String, String> {
+    settings_model_name(name)
+        .map(|model| model.slug().to_string())
+        .map_err(|e| e.to_string())
+}
+
+fn settings_model_name(name: &str) -> Result<crate::settings::SettingsModel> {
+    crate::settings::SettingsModel::from_name(name)
 }
 
 fn resolve_settings_model(
     session: &mut dyn crate::device::UnitCommands,
     id: &crate::device::Identity,
 ) -> Result<crate::settings::SettingsModel> {
-    let identity = session.model_identity(id.slot)?;
-    ensure!(
-        identity.len() >= 3 && identity[2] == 0,
-        "unsupported settings motor identity"
-    );
-    let params = crate::motor_support::read_params(session, id.slot, identity[1])?;
-    crate::motor_support::for_motor_params(identity[1], identity[2], &params)?
+    let identity =
+        crate::device::UnitIdentity::from_reply(id.slot, session.model_identity(id.slot)?)?;
+    if !identity.is_motor() {
+        let resolved = crate::unit_models::read_identification(
+            session,
+            id.slot,
+            identity.model_series,
+            identity.model_unit,
+        )?;
+        let name = resolved
+            .model
+            .context("component settings require a unique catalogued model identity")?;
+        return crate::settings::SettingsModel::from_name(name);
+    }
+    let params = crate::motor_support::read_params(session, id.slot, identity.model_series)?;
+    crate::motor_support::for_motor_params(identity.model_series, identity.model_unit, &params)?
         .settings
         .context("named settings are not implemented for this motor")
 }
@@ -2285,14 +2293,29 @@ fn execute_settings(
                 identity["serial"] = serde_json::json!(serial);
                 identity["model_series"] = serde_json::json!(model.series());
                 identity["settings_model"] = serde_json::json!(model.slug());
-                let model_name =
-                    crate::motor_support::read_params(session, id.slot, model.series())
-                        .ok()
-                        .and_then(|params| {
-                            crate::unit_models::identify(model.series(), 0, None, Some(&params))
-                        });
-                identity["model_name"] = serde_json::json!(model_name.unwrap_or(model.name()));
-                identity["model_unit"] = serde_json::json!(0);
+                let (model_name, model_unit) =
+                    if let crate::settings::SettingsModel::Component(name) = model {
+                        let entry = crate::unit_models::UNIT_MODELS
+                            .iter()
+                            .find(|entry| entry.name == name)
+                            .expect("catalog model");
+                        (name, entry.unit)
+                    } else {
+                        let name =
+                            crate::motor_support::read_params(session, id.slot, model.series())
+                                .ok()
+                                .and_then(|params| {
+                                    crate::unit_models::identify(
+                                        model.series(),
+                                        0,
+                                        None,
+                                        Some(&params),
+                                    )
+                                });
+                        (name.unwrap_or(model.name()), 0)
+                    };
+                identity["model_name"] = serde_json::json!(model_name);
+                identity["model_unit"] = serde_json::json!(model_unit);
                 snapshot["identity"] = identity;
                 snapshot
             };
@@ -2322,6 +2345,7 @@ fn execute_settings(
                     .ok_or_else(|| anyhow::anyhow!("unknown setting: {name}"))?;
                 crate::settings::validate_input(spec, value)?;
                 let current = crate::settings::read_for_model(session, id.slot, name, model)?;
+                crate::settings::validate_current_value(model, spec, &current.value)?;
                 return Ok(serde_json::json!({
                     "dry_run": true,
                     "valid": true,
@@ -2623,6 +2647,9 @@ fn print_setting_schema(spec: &crate::settings::SettingSpec) {
         "Standard (unprotected)"
     };
     out_println!("  OEM:        {}", oem_desc);
+    if spec.read_only {
+        out_println!("  Access:     Read only");
+    }
 }
 
 fn print_settings_schema_table(specs: &[crate::settings::SettingSpec]) {
@@ -2640,7 +2667,13 @@ fn print_settings_schema_table(specs: &[crate::settings::SettingSpec]) {
         } else {
             format!("{} .. {}", s.min, s.max)
         };
-        let prot = if s.oem { "OEM Protected" } else { "Standard" };
+        let prot = if s.read_only {
+            "Read only"
+        } else if s.oem {
+            "OEM Protected"
+        } else {
+            "Standard"
+        };
         out_println!(
             "  {:<32}  {:<12}  {:<14}  {}",
             s.name,
@@ -2954,6 +2987,194 @@ mod cli_tests {
             }
             _ => panic!("expected Schema command"),
         }
+    }
+
+    #[test]
+    fn component_schema_models_resolve_without_motor_fallback() {
+        let cli =
+            Cli::try_parse_from(["cranklink", "settings", "schema", "--model", "st6870l"]).unwrap();
+        match cli.command {
+            Command::Settings {
+                command: SettingsCommand::Schema { model, .. },
+            } => {
+                assert_eq!(model, "ST-6870-L");
+                assert_eq!(
+                    settings_model_name(&model).unwrap(),
+                    crate::settings::SettingsModel::Component("ST-6870-L")
+                );
+            }
+            _ => panic!("expected component schema"),
+        }
+        assert!(
+            Cli::try_parse_from(["cranklink", "settings", "schema", "--model", "ST-UNKNOWN"])
+                .is_err()
+        );
+        assert!(settings_model_name("typo").is_err());
+    }
+
+    #[test]
+    fn component_model_and_slot_can_be_combined_for_live_identity_validation() {
+        let cli = Cli::try_parse_from([
+            "cranklink",
+            "--slot",
+            "13",
+            "--component",
+            "MU-UR500",
+            "settings",
+            "read",
+        ])
+        .unwrap();
+        assert_eq!(cli.slot, Some(13));
+        assert_eq!(cli.component.as_deref(), Some("MU-UR500"));
+    }
+
+    #[test]
+    fn signed_setting_values_parse_without_consuming_option_flags() {
+        let cli = Cli::try_parse_from([
+            "cranklink",
+            "settings",
+            "set",
+            "hub-adjustment",
+            "-3",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Settings {
+                command: SettingsCommand::Set { value, dry_run, .. },
+            } => {
+                assert_eq!(value, "-3");
+                assert!(dry_run);
+            }
+            _ => panic!("expected signed setting"),
+        }
+        assert!(
+            Cli::try_parse_from(["cranklink", "settings", "set", "hub-adjustment", "--typo"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn live_component_settings_use_part_identity_without_motor_queries() {
+        struct Lever;
+        impl crate::device::UnitCommands for Lever {
+            fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
+                assert_eq!(slot, 4);
+                Ok(vec![4, 7, 1])
+            }
+            fn command(
+                &mut self,
+                slot: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                response: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!(
+                    (slot, group, command, params, response),
+                    (4, 4, 0x0c, &[0][..], 0x0e)
+                );
+                Ok(vec![1])
+            }
+        }
+        let id = crate::device::Identity {
+            slot: 4,
+            cargo: "ST-6870-L".into(),
+            dcas_version: "3.0.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        assert_eq!(
+            resolve_settings_model(&mut Lever, &id).unwrap(),
+            crate::settings::SettingsModel::Component("ST-6870-L")
+        );
+    }
+
+    #[test]
+    fn full_component_snapshot_retains_the_live_model_and_unit_number() {
+        struct PowerUnit;
+        impl crate::device::UnitCommands for PowerUnit {
+            fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
+                Ok(vec![slot, 2, 0])
+            }
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (0x0b, 0x64) => Ok(vec![2, 255]),
+                    _ => panic!("unexpected motor/component query {group:02X}/{command:02X}"),
+                }
+            }
+        }
+        let id = crate::device::Identity {
+            slot: 4,
+            cargo: "SM-BMR1".into(),
+            dcas_version: "3.0.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let snapshot = execute_settings(
+            &mut PowerUnit,
+            &id,
+            &SettingsCommand::Read {
+                name: None,
+                output: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(snapshot["identity"]["model_name"], "SM-BMR1");
+        assert_eq!(snapshot["identity"]["model_series"], 2);
+        assert_eq!(snapshot["identity"]["model_unit"], 0);
+        assert_eq!(snapshot["identity"]["settings_model"], "SM-BMR1");
+        assert_eq!(snapshot["capabilities"]["settings_available"], true);
+        assert_eq!(snapshot["values"]["multi-shift-limit.up"]["value"], 2);
+    }
+
+    #[test]
+    fn component_dry_run_rejects_an_original_assignment_outside_restore_choices() {
+        struct Lever;
+        impl crate::device::UnitCommands for Lever {
+            fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
+                Ok(vec![slot, 2, 1])
+            }
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (4, 0x0c) => Ok(vec![1]),
+                    (4, 0x14) => Ok(vec![0xa3]),
+                    _ => panic!("unexpected command in dry run"),
+                }
+            }
+        }
+        let id = crate::device::Identity {
+            slot: 4,
+            cargo: "ST-6770-L".into(),
+            dcas_version: "3.0.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let error = execute_settings(
+            &mut Lever,
+            &id,
+            &SettingsCommand::Set {
+                name: "switch-a-function".into(),
+                value: "1".into(),
+                backup: None,
+                dry_run: true,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("backup cannot be restored"));
     }
 
     #[test]

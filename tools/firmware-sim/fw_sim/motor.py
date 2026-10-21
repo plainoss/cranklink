@@ -20,7 +20,16 @@ class Motor(Machine):
         self.write_byte(profile['series_ram'], image[40])
         if 'cargo_ram' in profile:
             self.u.mem_write(profile['cargo_ram'], profile['cargo_fixture'].encode('ascii').ljust(7,b'\0'))
+        if 'product_params_ram' in profile:
+            # Legacy product attributes occupy a four-byte boot/NVM cache;
+            # stock GET16/7C expands it to seven bytes. Keep adjacent RAM intact.
+            params = bytes.fromhex(profile['product_params_fixture_hex'])
+            require(len(params) == 4, 'product attribute fixture must contain four bytes')
+            self.u.mem_write(profile['product_params_ram'], params)
         if 'rx_cache' in profile:
+            # The missing M application normally fills this version cache.
+            # Use the exact decoded D container compatibility bytes; stock
+            # linked version-query selection and reply construction still run.
             self.u.mem_write(profile['rx_cache'], image[47:50])
 
     def install_storage(self, path=None):

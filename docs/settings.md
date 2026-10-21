@@ -1,6 +1,38 @@
 # Settings (CLI)
 
-`cranklink settings schema --model <model>` lists each family's field names, units, ranges, choices, and OEM flags. `cranklink settings <command> --help` covers options. This page covers what neither shows.
+`cranklink settings schema --model <model>` lists each family's field names, units, ranges, choices, OEM flags, and read-only fields. Models can be motor family aliases (`ep800-crg`, `ep600`, etc.) or catalogued component names such as `ST-6870-L`. Unknown model names are rejected. `cranklink settings <command> --help` covers options.
+
+## Component settings
+
+Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior.
+
+Component sessions use the stock identity and, where necessary, a part discriminator to select an exact catalog model. They read the component application version without issuing motor cargo/RX queries. Unknown or unresolved identities are rejected. A catalog entry does not automatically grant a settings layout: components without an implemented schema return no fields and `capabilities.settings_available: false` in full snapshots.
+
+| Components | Fields |
+| --- | --- |
+| Classic wired ST/SW Di2 controls, including 6770, 6870, 9070, R785, R8050/R8070, R9150/R9170 and RX815 variants | `switch-a-function`, `switch-b-function`; extended C/S wire channels are read-only |
+| Classic rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150 and RX805/RX815/RX817 | `multi-shift-speed`; current and maximum derailleur adjustment are read-only |
+| Classic front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150 and RX815 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
+| SM-BMR1, SM-BMR2, BM-DN100, BT-DN110 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
+| MU-S705, MU-UR500, MU-UR510, MU-UR520 hub actuators | `hub-adjustment` (−4…4, live maximum must be 4); `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
+| SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, and `display-brightness` |
+
+The schema is authoritative for exact model variants. Modern wireless levers and other components without a verified layout remain without named settings. Firmware may reject an individual service; a full read reports that field under `unavailable`. These layouts are covered by protocol tests, not hardware validation.
+
+Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear down; SW-S705 accepts only 2/3. Writes preserve the sibling nibble and meaningful auxiliary channels, while reserved SET bytes stay zero instead of copying GET padding. Modern event-function extensions remain outside these classic schemas. Component edits also reject current values outside their writable schema so every accepted change has a restorable backup. Rear multi-shift speed is 0 off, 1 very slow, 2 slow, 3 normal, 4 fast, 5 very fast, 6 super fast. Front synchro interval is 0 normal, 1 slow, 2 very slow. Display language is 0 English, 1 French, 2 German, 3 Dutch, 4 Italian, 5 Spanish; beep is 0 off/1 on; distance unit is 0 kilometres/1 miles; backlight is 0 off/1 on/2 manual; brightness is 20/40/60/80/100 percent.
+
+```sh
+cranklink settings schema --model ST-6870-L
+cranklink --port usb -c ST-6870-L -s <SERIAL> settings read
+cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 --backup lever-before.json
+cranklink --port usb -c ST-6870-L -s <SERIAL> settings restore lever-before.json --backup lever-current.json
+```
+
+The CLI and Rust settings core expose these component schemas; the web tuning interface currently uses drive-unit schemas.
+
+Signed values can be supplied directly, for example `settings set hub-adjustment -3 --backup hub-before.json`. Hub adjustment can acknowledge acceptance before its actuator reaches the target. Cranklink sends one SET and polls GET for a three-second completion window, checking the live maximum on every reply. Individual transport calls retain their own timeouts. Setting the current value still sends one SET so it can cancel a different pending target; the receipt's `changed` field remains false. An unfinished adjustment reports an uncertain outcome and retains its backup; it is never automatically retried.
+
+Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
 ## Protected writes
 
@@ -19,8 +51,9 @@ Only EP800-CRG settings are validated on hardware. The other families are covere
 
 ## Backups and restore
 
-- Every `set` writes a new backup file (motor serial, original value, planned value) before sending, then verifies by readback. Backup files are never overwritten.
+- Every `set` writes a new backup file (component serial, original value, planned value) before sending, then verifies by readback. Component backups also record the settings model. Backup files are never overwritten.
 - `restore` takes such a backup, checks the serial, and writes a new backup of the current value first.
+- Component restores also require the same catalog model in the backup; shared fields changed since the backup are preserved. Existing motor backups remain compatible.
 - A `settings read --output` snapshot is not a restore input.
 - Readback does not prove persistence. Power-cycle the bike and read again.
 
@@ -44,4 +77,4 @@ cranklink -s <SERIAL> settings batch plan.json --backup-prefix run-01
 
 - Speed and maximum power are validated against the destination (region). An unset EP800 destination blocks speed changes; set a destination first. The web app stages a compatible destination automatically.
 - An unset maintenance calendar must be initialized with `maintenance-date YYYY-MM-DD` before editing year, month, or day individually.
-- Bus slots can change after a power cycle. Select a motor with `-c <MODEL>` or a slot from a fresh `cranklink units`.
+- Bus slots can change after a power cycle. Select a component with `-c <MODEL>` or a slot from a fresh `cranklink units`.
