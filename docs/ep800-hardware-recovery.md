@@ -3,14 +3,57 @@
 Use this procedure for a motor that answers the first firmware connection key
 but stalls before the second, repeatedly sending empty `0x70` responses. The
 bridge lets its bootloader—the motor's recovery program—accept the connection
-and restore the original D firmware through E-TUBE. M firmware and settings are
-left unchanged. Try the [normal recovery CLI](../README.md#recover-a-motor-stuck-in-bootloader-mode)
+and restore the original firmware through E-TUBE. **D** is the Shimano
+communication processor; **M** is the Renesas motor-control processor. This
+procedure restores D only, leaving M firmware and settings unchanged. Try the [normal recovery CLI](../README.md#recover-a-motor-stuck-in-bootloader-mode)
 first.
 
 This worked on one **DU-EP800-CRG, board 1, series `23`, unit `00`, bootloader
 5.0.6.1**, using an **SM-PCE02 and macOS native USB**. The public tools below were
 adapted from that successful recovery and tested offline; this public build has
 not been rerun on hardware. Other board revisions and platforms remain untested.
+
+## Why the bridge helps
+
+We read the bootloader—the recovery program—from a working EP800-CRG with the
+same bootloader version and ran that code in the firmware simulator. The tests
+showed how repeated empty replies on SPI, the internal link between the two
+processors, could keep the bootloader busy sending `0x70` responses instead of
+processing the second E-TUBE connection key.
+
+When the simulated SPI input returned `0xFF` (all bits high), the bootloader
+stopped accepting those empty replies and could process the remaining keys.
+This led us to try a resistor that pulls the corresponding board signal high.
+Keeping it connected allowed a complete stock firmware restore on the failed
+motor. That supports the simulator explanation; the failed motor's internal
+SPI data was not directly measured.
+
+You do not need a donor motor or a bootloader dump to follow this guide. The
+tools restore the original application firmware; they do not replace the
+bootloader or flash the donor's code.
+
+## Find the connector board
+
+Disconnect the battery and USB before opening or handling the motor.
+These views help identify the opened motor and both sides of the connector
+board; they are not a complete disassembly guide.
+Only the backgrounds have been removed; the board details and chip labels
+are unchanged.
+
+![Opened motor showing gears and the power board](images/ep800-recovery/opened-motor-cleaned.png)
+
+The board around the gears is the power board. The recovery contacts are on the
+separate connector board shown below.
+
+![Connector board: E-TUBE sockets and both processors](images/ep800-recovery/connector-board-processors-cleaned.png)
+
+The connector board holds the E-TUBE sockets, the large Renesas processor (M),
+and the smaller square SHIMANO chip (D). This is the side needed for the bridge.
+
+![Reverse of the connector board, showing its board-to-board connector](images/ep800-recovery/connector-board-reverse-cleaned.png)
+
+The reverse side has the large connector linking the two boards. The exact
+bridge contacts are marked in the original close-up below.
 
 ## 1. Connect the marked points
 
@@ -38,12 +81,10 @@ insulated, secure connection that can stay in place for the entire transfer.
 
 ## 2. Connect E-TUBE
 
-![E-TUBE breakout connection used for recovery](images/ep800-recovery/etube-wiring-cleaned.jpg)
+![E-TUBE contact connections on the connector board](images/ep800-recovery/etube-wiring-cleaned.png)
 
-Background-cleaned illustration of the breakout. Use the contact mapping below
-for wiring; fine details in the illustration may differ from the photograph.
-
-For this breakout:
+Close-up of the original E-TUBE connections, with the background removed.
+For the breakout used in this recovery:
 
 | Viewing direction | E-TUBE inner conductor | E-TUBE outer conductor |
 |---|---|---|
@@ -145,34 +186,13 @@ an interrupted first attempt.
 Connection-only retries do not erase firmware, but may reset or cycle adaptor
 power. Once the restore starts, hold the bridge steady until its final result.
 
-## What the tools check
+## Checks before flashing
 
-The dedicated pair below preserves the connection sequence used successfully on
-hardware. The ordinary CLI's `--recovery` setup differs and was not the sequence
-validated for this failure.
+The tools check the firmware files, complete the five connection keys and verify
+that the motor's identity matches before erasing anything. They retry failed
+connections, but never automatically retry an interrupted flash. Keep the output
+and journal if a restore fails.
 
-- [`sustained_key_epochs`](../tools/ep800-recovery/src/bin/sustained_key_epochs.rs)
-  checks adaptor readiness, selects protocol **`0x60`**, target **31**, the target
-  mask and legacy framing selector **5**, then enables power. It starts the first
-  key about **60 ms** later. Each attempt allows **10 seconds** and at most **120**
-  key transmissions. Keys 1/2 can retry at intervals of at least **100 ms**;
-  after Key 2, each next key requires the preceding acknowledgement.
-- [`restore_sustained_boot`](../tools/ep800-recovery/src/bin/restore_sustained_boot.rs)
-  checks the raw exchanges, checksums and ordered five-key proof, which must be
-  less than **20 seconds** old. Before erase, it reads the motor identity and
-  requires your supplied serial, bootloader **5.0.6.1**, board **1**, series **`23`**,
-  unit **`00`**, slot **31**, and the exact stock files above. It records progress
-  in a durable journal and requires finish/reset acknowledgements.
-
-The wrapper moves directly between these stages. Do not run another diagnostic
-or power-cycle the adaptor between them.
-
-Offline tests, without hardware or firmware files:
-
-```sh
-python3 -m unittest discover -s tools/ep800-recovery -p 'test_*.py'
-cargo test --locked --manifest-path tools/ep800-recovery/Cargo.toml
-```
-
-The [image manifest](images/ep800-recovery/manifest.json) records the source
-photos, edits and file hashes.
+The dedicated recovery tools use the connection sequence that worked on this
+motor. The ordinary CLI's `--recovery` setup differs. Developers can find the
+protocol details and offline tests in [the tool notes](ep800-recovery-tools.md).

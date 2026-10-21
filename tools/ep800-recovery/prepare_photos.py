@@ -2,8 +2,7 @@
 """Remove JPEG/PNG descriptive metadata without recompressing image pixels.
 
 Usage: python3 prepare_photos.py SOURCE DESTINATION
-Preserves JPEG coded scan bytes and PNG IDAT chunks exactly. The publication
-manifest records original and publication-copy hashes separately.
+Preserves JPEG coded scan bytes and PNG IDAT chunks exactly.
 """
 from pathlib import Path
 import struct
