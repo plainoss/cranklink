@@ -1146,7 +1146,8 @@ fn execute_firmware_command(
                 }
                 let boot = s.boot_start_at(!recovery, slot)?;
                 jnl.record("boot-identity", &boot)?;
-                let allow_model = !write || allow_unverified_model;
+                // A dry run applies the same model policy as the write it previews.
+                let allow_model = allow_unverified_model;
                 let guard = (|| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
@@ -1194,7 +1195,7 @@ fn execute_firmware_command(
                     if profile.verification_tier
                         != crate::firmware::VerificationTier::HardwareVerified
                     {
-                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                        out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
                             ">> To execute live flash programming, add the --write flag.\n"
@@ -1320,7 +1321,8 @@ fn execute_firmware_command(
                 jnl.record("application-before", &before)?;
                 let boot = s.boot_start(true)?;
                 jnl.record("dcas-identity", &boot)?;
-                let allow_model = !write || allow_unverified_model;
+                // A dry run applies the same model policy as the write it previews.
+                let allow_model = allow_unverified_model;
                 let guard = (|| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
@@ -1358,7 +1360,7 @@ fn execute_firmware_command(
                         != crate::firmware::VerificationTier::HardwareVerified
                         || rx.retry_capable
                     {
-                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                        out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
                             ">> To execute live flash programming, add the --write flag.\n"
@@ -1724,7 +1726,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         d.metadata.kind.is_dcas() && m.metadata.kind == FirmwareKind::Renesas,
         "flash ble-pair requires D and M images"
     );
-    let allow_model = !*write || *allow_unverified_model;
+    // A dry run applies the same model policy as the write it previews.
+    let allow_model = *allow_unverified_model;
     if !allow_model {
         ensure!(
             d.metadata.series == 0x23 && d.metadata.unit == 0 && d.metadata.board == Some(1),
@@ -1872,7 +1875,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             );
             out_println!("- Flash State: UNMODIFIED (No bytes written)");
             if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
-                out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
             } else {
                 out_println!(">> To execute live flash programming, add the --write flag.\n");
             }

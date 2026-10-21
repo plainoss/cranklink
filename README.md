@@ -116,7 +116,7 @@ See [settings](docs/settings.md) for protected fields, backups, and batch plans,
 
 ### Recover a motor stuck in bootloader mode
 
-Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only EP800 (`23/00`, DCASX board 1) is tested; other families need `--allow-unverified-model`. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
+Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only EP800 (`23/00`, DCASX board 1) is tested; other families need `--allow-unverified-model`, for dry runs too. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
 
 ```sh
 # 1. Inspect the containers offline
