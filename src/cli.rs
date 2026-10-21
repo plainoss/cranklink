@@ -949,7 +949,19 @@ fn execute_firmware_command(
             match target.to_lowercase().as_str() {
                 "dcas" => {
                     if !recovery {
-                        let _ = s.normal_start(slot)?;
+                        let application = s.normal_start(slot)?;
+                        if let Some(expected) = expect_serial {
+                            let checked = hex::decode(expected)
+                                .map_err(anyhow::Error::from)
+                                .and_then(|serial| {
+                                    check_application_serial(&mut s, application.slot, &serial)
+                                });
+                            if let Err(e) = checked {
+                                s.normal_stop()
+                                    .context("serial check failed; PC-link stop failed")?;
+                                return Err(e);
+                            }
+                        }
                     }
                     let identity = s.boot_start_at(!recovery, slot)?;
                     if is_json {
@@ -1118,7 +1130,19 @@ fn execute_firmware_command(
                 };
                 if let Some(i) = &before {
                     jnl.record("application-before", i)?;
-                    fw.validate_companion_version_for_pair(&comp, parse_version(&i.rx_version)?)?;
+                    let preflight =
+                        check_application_serial(&mut s, i.slot, &serial).and_then(|()| {
+                            fw.validate_companion_version_for_pair(
+                                &comp,
+                                parse_version(&i.rx_version)?,
+                            )
+                        });
+                    if let Err(e) = preflight {
+                        jnl.record("preflight-rejected", &format!("{e:#}"))?;
+                        s.normal_stop()
+                            .context("preflight rejected image; PC-link stop failed")?;
+                        return Err(e);
+                    }
                 }
                 let boot = s.boot_start_at(!recovery, slot)?;
                 jnl.record("boot-identity", &boot)?;
@@ -1278,10 +1302,20 @@ fn execute_firmware_command(
                 s.initialize()?;
                 let before = start_rx_session(&mut s, slot, recovery)?;
                 if !recovery {
-                    ensure!(
-                        before.dcas_version == d.metadata.version.to_string(),
-                        "live D version differs from supplied companion; flash D first"
-                    );
+                    let preflight = check_application_serial(&mut s, before.slot, &serial)
+                        .and_then(|()| {
+                            ensure!(
+                                before.dcas_version == d.metadata.version.to_string(),
+                                "live D version differs from supplied companion; flash D first"
+                            );
+                            Ok(())
+                        });
+                    if let Err(e) = preflight {
+                        jnl.record("preflight-rejected", &format!("{e:#}"))?;
+                        s.normal_stop()
+                            .context("preflight rejected image; PC-link stop failed")?;
+                        return Err(e);
+                    }
                 }
                 jnl.record("application-before", &before)?;
                 let boot = s.boot_start(true)?;
@@ -2517,6 +2551,19 @@ fn execute_settings(
     }
 }
 
+/// Compare the application's serial with -s before entering any bootloader,
+/// so a wrong motor is never switched into boot mode.
+fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) -> Result<()> {
+    let live = crate::device::serial_bytes(&session.command(slot, 1, 0x3c, &[0], 0x3e)?)?;
+    ensure!(
+        live.as_slice() == expected,
+        "live serial {} differs from --expect-serial {}; bootloader not entered",
+        hex::encode(live),
+        hex::encode(expected)
+    );
+    Ok(())
+}
+
 fn start_rx_session(
     session: &mut Session,
     slot: Option<u8>,
@@ -2989,6 +3036,19 @@ mod cli_tests {
         assert_eq!(sanitize_serial("A1B2C3D4E5F6").unwrap(), "a1b2c3d4e5f6");
         assert!(sanitize_serial("short").is_err());
         assert!(sanitize_serial("01020304050G").is_err());
+    }
+
+    #[test]
+    fn application_serial_is_checked_before_bootloader_entry() {
+        use crate::device::tests::{frame, scripted};
+        let query = frame(0x48, &[13, 1, 0x3c, 0]);
+        let reply = frame(0x48, &[0, 1, 0x3e, 1, 2, 3, 4, 5, 6, 0xff]);
+        let (mut session, steps) = scripted(vec![(query.clone(), reply.clone())]);
+        check_application_serial(&mut session, 13, &[1, 2, 3, 4, 5, 6]).unwrap();
+        assert!(steps.borrow().is_empty());
+        let (mut session, _) = scripted(vec![(query, reply)]);
+        let error = check_application_serial(&mut session, 13, &[9, 9, 9, 9, 9, 9]).unwrap_err();
+        assert!(format!("{error:#}").contains("bootloader not entered"));
     }
 
     #[test]

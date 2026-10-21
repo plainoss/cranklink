@@ -1084,7 +1084,7 @@ pub(crate) fn dcas_buffer_packet(packet: u8, index: u16, block: &[u8; 64], sum: 
     p
 }
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     struct ScriptPort {
         steps: std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>,
@@ -1124,8 +1124,9 @@ mod tests {
             Ok(())
         }
     }
-    type ScriptSteps = std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>;
-    fn scripted(steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
+    pub(crate) type ScriptSteps = std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>;
+    /// A session over a port that asserts each request and answers it in order.
+    pub(crate) fn scripted(steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
         let steps = std::rc::Rc::new(std::cell::RefCell::new(steps.into()));
         let session = Session {
             port: Box::new(ScriptPort {
@@ -1144,7 +1145,7 @@ mod tests {
         };
         (session, steps)
     }
-    fn frame(control: u8, payload: &[u8]) -> Frame {
+    pub(crate) fn frame(control: u8, payload: &[u8]) -> Frame {
         Frame {
             control,
             payload: payload.to_vec(),
