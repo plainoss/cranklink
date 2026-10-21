@@ -60,11 +60,11 @@ To build from source (Rust 1.90+):
 ```sh
 git clone https://github.com/plainoss/cranklink.git
 cd cranklink
-cargo build --release --locked --bin cranklink --features ble
+cargo build --release --locked --bin cranklink
 ./target/release/cranklink --help
 ```
 
-Omit `--features ble` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
+Bluetooth support is a default feature; add `--no-default-features` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
 
 **Connecting the adapter**
 

@@ -1,6 +1,6 @@
 # Bluetooth (CLI)
 
-Requires a build with `--features ble` and a bike with an E-TUBE Bluetooth gateway (e.g. SC-EM800); a bare motor has no radio. macOS needs Bluetooth permission for the terminal; Linux needs BlueZ and D-Bus.
+Requires a build with the default `ble` feature (not `--no-default-features`) and a bike with an E-TUBE Bluetooth gateway (e.g. SC-EM800); a bare motor has no radio. macOS needs Bluetooth permission for the terminal; Linux needs BlueZ and D-Bus.
 
 Activate the gateway's connection mode shortly before scanning, and close other apps connected to the bike. The web app includes the same connection help.
 
