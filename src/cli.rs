@@ -1712,7 +1712,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         } else {
             session.authenticate()?;
         }
-        let (before, _) = ble_checked_start(&mut session, cli.slot, None, Some(serial_str))?;
+        let (before, _) = ble_checked_motor_start(&mut session, cli.slot, Some(serial_str))?;
         ensure!(
             parse_version(&before.dcas_version)? <= d.metadata.version
                 && parse_version(&before.rx_version)? <= m.metadata.version,
@@ -1730,7 +1730,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         jnl.record("rx-boot-before", &rx_boot)?;
         link.reset_rx()?;
         link.application_return()?;
-        let (checked, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+        let (checked, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
         ensure!(
             checked.cargo == before.cargo
                 && checked.dcas_version == before.dcas_version
@@ -1796,7 +1796,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
 
         let incomplete_pair = before.rx_version != m.metadata.version.to_string();
         if !incomplete_pair {
-            let (middle, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+            let (middle, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
             ensure!(
                 middle.cargo == before.cargo && middle.rx_version == before.rx_version,
                 "identity or RX changed after D operation"
@@ -1824,7 +1824,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         jnl.record("rx-finish-and-reset", &receipt)?;
         link.application_return()?;
 
-        let (after, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+        let (after, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
         ensure!(
             after.cargo == before.cargo,
             "cargo identity changed after pair operation"
@@ -1963,6 +1963,24 @@ fn ble_checked_start(
     expected: Option<&str>,
 ) -> Result<(crate::device::Identity, String)> {
     let id = session.start_component(slot, component)?;
+    ble_checked_serial(session, id, expected)
+}
+
+/// Firmware paths keep the motor gate even with an explicit slot.
+fn ble_checked_motor_start(
+    session: &mut crate::ble::BleSession,
+    slot: Option<u8>,
+    expected: Option<&str>,
+) -> Result<(crate::device::Identity, String)> {
+    let id = session.start(slot)?;
+    ble_checked_serial(session, id, expected)
+}
+
+fn ble_checked_serial(
+    session: &mut crate::ble::BleSession,
+    id: crate::device::Identity,
+    expected: Option<&str>,
+) -> Result<(crate::device::Identity, String)> {
     let serial = crate::device::UnitCommands::command(session, id.slot, 1, 0x3c, &[0], 0x3e)?;
     let serial = hex::encode(crate::device::serial_bytes(&serial)?);
     if let Some(expected) = expected {

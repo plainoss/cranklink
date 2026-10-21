@@ -2648,6 +2648,15 @@ mod tests {
             && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
     }
     #[test]
+    fn motor_start_with_explicit_slot_refuses_a_component_before_pc_link() {
+        let (mut session, state) = component_mock(2, 4);
+        assert!(session.start(Some(4)).is_err());
+        let writes = &state.borrow().writes;
+        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
+            && bytes.get(1..3) == Some(&[0x32, 0x10][..])
+            && bytes.get(3) == Some(&1)));
+    }
+    #[test]
     fn explicit_derailleur_ble_session_skips_motor_attributes_and_rx_version() {
         check_component_start(2, 4, "RD-6770");
     }
