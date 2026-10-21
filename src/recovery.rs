@@ -690,6 +690,10 @@ pub fn recover_bridge(
             "Key 2 did not complete. Adjust the bridge while the next connection attempt starts.",
         );
     }
+    journal.record(
+        "attempts-exhausted",
+        json!({"attempts":options.attempts,"firmware_written":false}),
+    )?;
     bail!("no complete recovery handshake; no firmware written; inspect journal and trace")
 }
 

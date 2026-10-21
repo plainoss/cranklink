@@ -420,7 +420,7 @@ enum FlashCommand {
         /// Recover the EP800 Key-2 stall with the documented temporary resistor bridge
         #[arg(long, conflicts_with = "recovery")]
         bridge_recovery: bool,
-        /// Maximum connection attempts before any flash write (bridge recovery only)
+        /// Maximum connection attempts before any flash write, 1-20 (bridge recovery only; default: 20)
         #[arg(long, requires = "bridge_recovery", value_parser = clap::value_parser!(u8).range(1..=20))]
         attempts: Option<u8>,
         /// Seconds to establish the bridge before connecting (default: 10)
