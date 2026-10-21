@@ -35,8 +35,14 @@ pub(crate) fn notice(message: &str) {
     eprintln!("{message}");
 }
 
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
+pub use std::thread::sleep;
 #[cfg(not(target_arch = "wasm32"))]
-pub use std::{thread::sleep, time::Instant};
+pub use std::time::Instant;
+/// Protocol pacing and settle delays are real-time waits on hardware. Unit
+/// tests run against scripted ports that answer immediately, so they skip them.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub fn sleep(_: std::time::Duration) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn now_ms() -> u64 {
