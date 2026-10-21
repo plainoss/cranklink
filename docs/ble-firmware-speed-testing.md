@@ -105,6 +105,9 @@ The wire trace adds `tx-complete` after individual D writes and start/complete
 markers around ordered D batches and M batches. Compare these timestamps with
 their dispatch records to measure host write-return latency. They describe host
 calls, not radio airtime; receive timestamps describe client consumption.
+In ordered-batch mode the four `tx` records are logged before the batch call;
+use the batch start/complete markers for its duration, not the spacing between
+those four records. Whole-stream time remains comparable across both modes.
 
 ```sh
 python3 tools/firmware-sim/analyze_d_transfer.py d-prefetch-wire.jsonl

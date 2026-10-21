@@ -3,7 +3,7 @@
   "passed": true,
   "hardware_access": false,
   "production_d_schedule_changed": true,
-  "production_behavior": "BLE DCASX uses one-upload prefetch; wired and older formats stay sequential. Both paths purge stale83/C0 before transfer dispatch.",
+  "production_behavior": "CLI selects sequential/prefetched BLE DCASX and optional ordered fragment batching; wired and older formats stay sequential. All paths purge stale83/C0 before transfer dispatch.",
   "timing_model": "Trace-calibrated mean upload and transfer phases; virtual events, not emulator wall time. ACK write return duration is assumed, not measured.",
   "timing_calibration_sha256": "446e02f2150690e8f267eae4540eac97d7f85ff92940fde1ec3fcb5f353568b4",
   "timings": [
@@ -11,6 +11,7 @@
       "gateway": "sc-em800-4.4.0",
       "image_bytes": 156300,
       "ack_write_ms": 0,
+      "fragment_batch": false,
       "sequential_seconds": 331.0219999999842,
       "prefetch_seconds": 172.931738027003,
       "speedup": 1.9141772573192761,
@@ -20,6 +21,7 @@
       "gateway": "sc-em800-4.4.0",
       "image_bytes": 156300,
       "ack_write_ms": 30,
+      "fragment_batch": false,
       "sequential_seconds": 331.0219999999842,
       "prefetch_seconds": 233.33500286533655,
       "speedup": 1.418655563610511,
@@ -29,6 +31,37 @@
       "gateway": "sc-em800-4.4.0",
       "image_bytes": 156300,
       "ack_write_ms": 60,
+      "fragment_batch": false,
+      "sequential_seconds": 331.0219999999842,
+      "prefetch_seconds": 306.5950028653321,
+      "speedup": 1.0796718697511887,
+      "time_saved_percent": 7.379266977618784
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "image_bytes": 156300,
+      "ack_write_ms": 0,
+      "fragment_batch": true,
+      "sequential_seconds": 331.0219999999842,
+      "prefetch_seconds": 172.931738027003,
+      "speedup": 1.9141772573192761,
+      "time_saved_percent": 47.75823418775451
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "image_bytes": 156300,
+      "ack_write_ms": 30,
+      "fragment_batch": true,
+      "sequential_seconds": 331.0219999999842,
+      "prefetch_seconds": 233.33500286533655,
+      "speedup": 1.418655563610511,
+      "time_saved_percent": 29.510726518072005
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "image_bytes": 156300,
+      "ack_write_ms": 60,
+      "fragment_batch": true,
       "sequential_seconds": 331.0219999999842,
       "prefetch_seconds": 306.5950028653321,
       "speedup": 1.0796718697511887,
@@ -38,6 +71,17 @@
       "gateway": "sc-em800-4.6.0",
       "image_bytes": 156300,
       "ack_write_ms": 0,
+      "fragment_batch": false,
+      "sequential_seconds": 331.0219999999842,
+      "prefetch_seconds": 172.931738027003,
+      "speedup": 1.9141772573192761,
+      "time_saved_percent": 47.75823418775451
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "image_bytes": 156300,
+      "ack_write_ms": 0,
+      "fragment_batch": true,
       "sequential_seconds": 331.0219999999842,
       "prefetch_seconds": 172.931738027003,
       "speedup": 1.9141772573192761,
@@ -98,7 +142,7 @@
         "-v"
       ],
       "passed": true,
-      "output_sha256": "d1ba84a20b1a05943574cd983b027a38cacf9bff4102a3d0065a28561fafe325"
+      "output_sha256": "725a6ce91c4418a1b1d121bd5eb14c2fd99adb5821b74ef71b2b1c92250b52e2"
     },
     {
       "command": [
@@ -112,14 +156,15 @@
         "--nocapture"
       ],
       "passed": true,
-      "output_sha256": "bbee0ee33c57cbcbae846c423a89dfc0801efec231cff0bbf2012ac46fd28bb7"
+      "output_sha256": "94feb468ddc188a2a27f2f6f60a70215e6ea584f06d7f1a39d24408dd1b4ae43"
     }
   ],
-  "rust_cases": 76,
+  "rust_cases": 152,
   "cases": [
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "none",
       "image_bytes": 156300,
@@ -141,6 +186,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 30,
       "fault": "none",
       "image_bytes": 156300,
@@ -162,6 +208,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 60,
       "fault": "none",
       "image_bytes": 156300,
@@ -183,6 +230,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "reorder",
       "image_bytes": 269,
@@ -204,6 +252,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate",
       "image_bytes": 8333,
@@ -225,6 +274,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-82",
       "image_bytes": 269,
@@ -246,6 +296,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-83",
       "image_bytes": 269,
@@ -267,6 +318,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-c0",
       "image_bytes": 269,
@@ -288,6 +340,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-motor",
       "image_bytes": 269,
@@ -309,6 +362,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-82",
       "image_bytes": 269,
@@ -330,6 +384,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-motor",
       "image_bytes": 269,
@@ -351,6 +406,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "corrupt-fragment",
       "image_bytes": 269,
@@ -372,6 +428,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-terminal",
       "image_bytes": 269,
@@ -393,6 +450,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-fragment",
       "image_bytes": 269,
@@ -414,6 +472,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-83-at-wrap",
       "image_bytes": 8333,
@@ -435,6 +494,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-c0-at-wrap",
       "image_bytes": 8333,
@@ -456,6 +516,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-prefetch-82",
       "image_bytes": 269,
@@ -477,6 +538,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-prefetch-82",
       "image_bytes": 269,
@@ -498,6 +560,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-prefetch",
       "image_bytes": 269,
@@ -519,6 +582,447 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": false,
+      "fragment_batch": false,
+      "ack_write_ms": 0,
+      "fault": "corrupt-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.2707086728934869,
+        "transfers": 2,
+        "uploads": 2,
+        "write_calls": 22
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 472.1740548966759,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 331.0219999999842,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 30,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 30.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 472.1740548966759,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 331.0219999999842,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 60,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 60.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 472.1740548966759,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 331.0219999999842,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "reorder",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 320,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 394.31049508856216,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 0.6822035004155357,
+        "transfers": 5,
+        "uploads": 5,
+        "write_calls": 39
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8384,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 469.4651522348609,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 17.74998625634139,
+        "transfers": 131,
+        "uploads": 131,
+        "write_calls": 669
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-83",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-c0",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "corrupt-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-terminal",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 14
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-83-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 17.47898970466003,
+        "transfers": 129,
+        "uploads": 129,
+        "write_calls": 657
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-c0-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 17.47898970466003,
+        "transfers": 129,
+        "uploads": 129,
+        "write_calls": 657
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 19
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": false,
+      "fragment_batch": true,
       "ack_write_ms": 0,
       "fault": "corrupt-prefetch",
       "image_bytes": 269,
@@ -540,6 +1044,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "none",
       "image_bytes": 156300,
@@ -561,6 +1066,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 30,
       "fault": "none",
       "image_bytes": 156300,
@@ -582,6 +1088,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 60,
       "fault": "none",
       "image_bytes": 156300,
@@ -603,6 +1110,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "reorder",
       "image_bytes": 269,
@@ -624,6 +1132,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate",
       "image_bytes": 8333,
@@ -645,6 +1154,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-82",
       "image_bytes": 269,
@@ -666,6 +1176,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-83",
       "image_bytes": 269,
@@ -687,6 +1198,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-c0",
       "image_bytes": 269,
@@ -708,6 +1220,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-motor",
       "image_bytes": 269,
@@ -729,6 +1242,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-82",
       "image_bytes": 269,
@@ -750,6 +1264,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-motor",
       "image_bytes": 269,
@@ -771,6 +1286,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "corrupt-fragment",
       "image_bytes": 269,
@@ -792,6 +1308,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-terminal",
       "image_bytes": 269,
@@ -813,6 +1330,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-fragment",
       "image_bytes": 269,
@@ -834,6 +1352,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-83-at-wrap",
       "image_bytes": 8333,
@@ -855,6 +1374,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-c0-at-wrap",
       "image_bytes": 8333,
@@ -876,6 +1396,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-prefetch-82",
       "image_bytes": 269,
@@ -897,6 +1418,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-prefetch-82",
       "image_bytes": 269,
@@ -918,6 +1440,7 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-prefetch",
       "image_bytes": 269,
@@ -939,6 +1462,447 @@
     {
       "gateway": "sc-em800-4.4.0",
       "prefetch": true,
+      "fragment_batch": false,
+      "ack_write_ms": 0,
+      "fault": "corrupt-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.20597064587752276,
+        "transfers": 2,
+        "uploads": 3,
+        "write_calls": 26
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 903.8248373794404,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 172.931738027003,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 30,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 30.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 669.852349971704,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 233.33500286533655,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 60,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 60.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 509.7930446982946,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 306.5950028653321,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "reorder",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 320,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 635.5560899761634,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 0.42325139235167875,
+        "transfers": 5,
+        "uploads": 5,
+        "write_calls": 39
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8384,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 892.7535718773975,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 9.33404274426625,
+        "transfers": 131,
+        "uploads": 131,
+        "write_calls": 669
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-83",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-c0",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "corrupt-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-terminal",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 14
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-83-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 9.192522246616816,
+        "transfers": 129,
+        "uploads": 130,
+        "write_calls": 661
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-c0-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 9.192522246616816,
+        "transfers": 129,
+        "uploads": 130,
+        "write_calls": 661
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.06473802701596412,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.06473802701596412,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 19
+      }
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "prefetch": true,
+      "fragment_batch": true,
       "ack_write_ms": 0,
       "fault": "corrupt-prefetch",
       "image_bytes": 269,
@@ -960,6 +1924,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "none",
       "image_bytes": 156300,
@@ -981,6 +1946,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "reorder",
       "image_bytes": 269,
@@ -1002,6 +1968,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate",
       "image_bytes": 8333,
@@ -1023,6 +1990,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-82",
       "image_bytes": 269,
@@ -1044,6 +2012,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-83",
       "image_bytes": 269,
@@ -1065,6 +2034,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-c0",
       "image_bytes": 269,
@@ -1086,6 +2056,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-motor",
       "image_bytes": 269,
@@ -1107,6 +2078,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-82",
       "image_bytes": 269,
@@ -1128,6 +2100,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-motor",
       "image_bytes": 269,
@@ -1149,6 +2122,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "corrupt-fragment",
       "image_bytes": 269,
@@ -1170,6 +2144,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-terminal",
       "image_bytes": 269,
@@ -1191,6 +2166,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-fragment",
       "image_bytes": 269,
@@ -1212,6 +2188,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-83-at-wrap",
       "image_bytes": 8333,
@@ -1233,6 +2210,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-c0-at-wrap",
       "image_bytes": 8333,
@@ -1254,6 +2232,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-prefetch-82",
       "image_bytes": 269,
@@ -1275,6 +2254,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-prefetch-82",
       "image_bytes": 269,
@@ -1296,6 +2276,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-prefetch",
       "image_bytes": 269,
@@ -1317,6 +2298,403 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": false,
+      "fragment_batch": false,
+      "ack_write_ms": 0,
+      "fault": "corrupt-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.2707086728934869,
+        "transfers": 2,
+        "uploads": 2,
+        "write_calls": 22
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 472.1740548966759,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 331.0219999999842,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "reorder",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 320,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 394.31049508856216,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 0.6822035004155357,
+        "transfers": 5,
+        "uploads": 5,
+        "write_calls": 39
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8384,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 469.4651522348609,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 17.74998625634139,
+        "transfers": 131,
+        "uploads": 131,
+        "write_calls": 669
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-83",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-c0",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "corrupt-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 17
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-terminal",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 14
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-83-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 17.47898970466003,
+        "transfers": 129,
+        "uploads": 129,
+        "write_calls": 657
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-c0-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 17.47898970466003,
+        "transfers": 129,
+        "uploads": 129,
+        "write_calls": 657
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 19
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": false,
+      "fragment_batch": true,
       "ack_write_ms": 0,
       "fault": "corrupt-prefetch",
       "image_bytes": 269,
@@ -1338,6 +2716,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "none",
       "image_bytes": 156300,
@@ -1359,6 +2738,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "reorder",
       "image_bytes": 269,
@@ -1380,6 +2760,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate",
       "image_bytes": 8333,
@@ -1401,6 +2782,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-82",
       "image_bytes": 269,
@@ -1422,6 +2804,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-83",
       "image_bytes": 269,
@@ -1443,6 +2826,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-c0",
       "image_bytes": 269,
@@ -1464,6 +2848,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-motor",
       "image_bytes": 269,
@@ -1485,6 +2870,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-82",
       "image_bytes": 269,
@@ -1506,6 +2892,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-motor",
       "image_bytes": 269,
@@ -1527,6 +2914,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "corrupt-fragment",
       "image_bytes": 269,
@@ -1548,6 +2936,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-terminal",
       "image_bytes": 269,
@@ -1569,6 +2958,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-fragment",
       "image_bytes": 269,
@@ -1590,6 +2980,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-83-at-wrap",
       "image_bytes": 8333,
@@ -1611,6 +3002,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "duplicate-drop-c0-at-wrap",
       "image_bytes": 8333,
@@ -1632,6 +3024,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "drop-prefetch-82",
       "image_bytes": 269,
@@ -1653,6 +3046,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "nak-prefetch-82",
       "image_bytes": 269,
@@ -1674,6 +3068,7 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
       "ack_write_ms": 0,
       "fault": "disconnect-prefetch",
       "image_bytes": 269,
@@ -1695,6 +3090,403 @@
     {
       "gateway": "sc-em800-4.6.0",
       "prefetch": true,
+      "fragment_batch": false,
+      "ack_write_ms": 0,
+      "fault": "corrupt-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.20597064587752276,
+        "transfers": 2,
+        "uploads": 3,
+        "write_calls": 26
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "none",
+      "image_bytes": 156300,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 156352,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 903.8248373794404,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 172.931738027003,
+        "transfers": 2443,
+        "uploads": 2443,
+        "write_calls": 12229
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "reorder",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 320,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 635.5560899761634,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 0.42325139235167875,
+        "transfers": 5,
+        "uploads": 5,
+        "write_calls": 39
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8384,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": true,
+        "image_bytes_per_second": 892.7535718773975,
+        "ok": true,
+        "reset": true,
+        "stream_seconds": 9.33404274426625,
+        "transfers": 131,
+        "uploads": 131,
+        "write_calls": 669
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-83",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-c0",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 1,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-motor",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "corrupt-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-terminal",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 16
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-fragment",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": null,
+        "transfers": 0,
+        "uploads": 0,
+        "write_calls": 14
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-83-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 9.192522246616816,
+        "transfers": 129,
+        "uploads": 130,
+        "write_calls": 661
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "duplicate-drop-c0-at-wrap",
+      "image_bytes": 8333,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 8256,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 9.192522246616816,
+        "transfers": 129,
+        "uploads": 130,
+        "write_calls": 661
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "drop-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 64,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.13521039705280408,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "nak-prefetch-82",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.06473802701596412,
+        "transfers": 1,
+        "uploads": 2,
+        "write_calls": 21
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
+      "ack_write_ms": 0,
+      "fault": "disconnect-prefetch",
+      "image_bytes": 269,
+      "stats": {
+        "ack_write_ms": 0.0,
+        "bytes": 0,
+        "early_starts": 0,
+        "erases": 1,
+        "finish": false,
+        "image_bytes_per_second": null,
+        "ok": true,
+        "reset": false,
+        "stream_seconds": 0.06473802701596412,
+        "transfers": 1,
+        "uploads": 1,
+        "write_calls": 19
+      }
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "prefetch": true,
+      "fragment_batch": true,
       "ack_write_ms": 0,
       "fault": "corrupt-prefetch",
       "image_bytes": 269,

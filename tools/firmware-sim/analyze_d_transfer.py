@@ -90,7 +90,7 @@ def analyze(path):
                 padded_bytes=len(complete) * 64, stream_ms=stream_ms,
                 padded_bytes_per_second=round(len(complete) * 64000 / stream_ms, 3),
                 phases={key: summary(values) for key, values in phases.items()},
-                caveat="Host log timestamps; receive time is consumption time, not radio arrival. No ATT write-mode metadata.")
+                caveat="Host log timestamps; receive time is consumption time, not radio arrival. No ATT write-mode metadata. Ordered-batch tx records precede actual writes; inspect batch start/complete markers for host call duration.")
 
 
 if __name__ == "__main__":
