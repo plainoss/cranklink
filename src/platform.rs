@@ -251,15 +251,20 @@ pub fn available_ports() -> Result<Vec<PortInfo>> {
             port_type: format!("{:?}", p.port_type),
         })
         .collect();
-    let devices = native_usb::devices()?;
-    if !devices.is_empty() {
-        ports.push(PortInfo {
+    // A missing USB stack (containers, sandboxes) must not hide serial ports.
+    match native_usb::devices() {
+        Ok(devices) if devices.is_empty() => {}
+        Ok(devices) => ports.push(PortInfo {
             port_name: "usb".into(),
             port_type: format!(
                 "Direct SM-PCE02 FTDI USB ({} device(s); no COM driver required)",
                 devices.len()
             ),
-        });
+        }),
+        Err(error) => ports.push(PortInfo {
+            port_name: "usb".into(),
+            port_type: format!("Direct USB enumeration unavailable: {error:#}"),
+        }),
     }
     Ok(ports)
 }
