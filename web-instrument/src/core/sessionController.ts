@@ -284,6 +284,7 @@ export class SessionController {
       ...simOpts,
     };
 
+    this.state.mcpApproval?.resolve(false);
     this.startOperation({
       phase: "connecting",
       transport,
@@ -576,6 +577,8 @@ export class SessionController {
       throw err;
     } finally {
       this.speedDestinationBeforeAuto = null;
+      // A review shown for this session must not authorize a write in the next one.
+      this.state.mcpApproval?.resolve(false);
       this.update({
         phase: "disconnected",
         transport: null,
@@ -1092,6 +1095,11 @@ export class SessionController {
     diff: Array<{ name: string; before: any; after: any }>,
   ): Promise<boolean> {
     return new Promise((resolve, reject) => {
+      const identity = this.state.identity;
+      if (!identity) {
+        reject(new Error("Select a connected component first."));
+        return;
+      }
       const enrichedDiff = diff.map((d) => {
         const spec = this.state.schema.find((s) => s.name === d.name);
         return {
@@ -1107,6 +1115,7 @@ export class SessionController {
           tool,
           params,
           diff: enrichedDiff,
+          target: { model: identity.model, slot: identity.slot, serial: identity.serial },
           resolve: (ok: boolean) => {
             this.update({ mcpApproval: null });
             resolve(ok);

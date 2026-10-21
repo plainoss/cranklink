@@ -224,6 +224,14 @@ export class WebMCPServer {
     }
   }
 
+  /** Device tools must not interleave with a flash, a save or a dead link. */
+  private requireConnectedIdle(): void {
+    const { phase, linkLost } = this.controller.getState();
+    if (phase !== "ready" || linkLost) {
+      throw new Error("Wait for a connected, idle component before using device tools.");
+    }
+  }
+
   private async callTool(name: string, args: any): Promise<any> {
     const state = this.controller.getState();
 
@@ -245,11 +253,13 @@ export class WebMCPServer {
     }
 
     if (name === "cranklink_read_settings" || name === "esteps_read_settings") {
+      this.requireConnectedIdle();
       const entries = await this.controller.readAllParameters();
       return Object.fromEntries(Object.entries(entries).map(([k, v]) => [k, v.value]));
     }
 
     if (name === "cranklink_create_backup" || name === "esteps_create_backup") {
+      this.requireConnectedIdle();
       const filename = await this.controller.captureManualSnapshot();
       return { filename };
     }
@@ -280,6 +290,7 @@ export class WebMCPServer {
       ) {
         await new Promise((r) => setTimeout(r, 50));
       }
+      this.requireConnectedIdle();
 
       if (Object.keys(this.controller.getState().stagedValues).length) {
         throw new Error("Save or discard staged changes before requesting an agent write.");

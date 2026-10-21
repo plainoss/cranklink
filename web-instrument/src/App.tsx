@@ -183,6 +183,9 @@ export function App({ controller }: AppProps) {
       </Alert.Indicator>
       <Alert.Content className="min-w-0">
         <Alert.Title>External agent request · {state.mcpApproval.tool}</Alert.Title>
+        <Alert.Description className="[overflow-wrap:anywhere] text-xs font-medium" data-testid="mcp-approval-target">
+          Target: {state.mcpApproval.target.model} · slot {state.mcpApproval.target.slot} · serial {state.mcpApproval.target.serial}
+        </Alert.Description>
         <Alert.Description className="[overflow-wrap:anywhere] text-xs">
           {state.mcpApproval.diff.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ")}
         </Alert.Description>

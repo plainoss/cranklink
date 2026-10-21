@@ -380,6 +380,33 @@ describe("Agent write review boundaries", () => {
     return h;
   }
 
+  it("names the target in the review and drops a pending review on disconnect", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    const pending = request(serverFor(h.controller));
+    const identity = h.controller.getState().identity!;
+    assert.deepEqual(h.controller.getState().mcpApproval?.target, { model: LEVER, slot: 4, serial: identity.serial });
+    await h.controller.disconnect();
+    await assert.rejects(pending, /rejected by operator/);
+    assert.equal(h.controller.getState().mcpApproval, null);
+    assert.ok(!h.commands.some((line) => line.includes("settings batch")));
+  });
+
+  it("refuses device tools on a lost link before asking the operator", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    (h.controller as any).update({ linkLost: true });
+    const server = serverFor(h.controller);
+    const commands = [...h.commands];
+    for (const name of ["cranklink_read_settings", "cranklink_create_backup"]) {
+      await assert.rejects(server.handleRequest("tools/call", { name, arguments: {} }), /connected, idle component/);
+    }
+    await assert.rejects(request(server), /connected, idle component/);
+    assert.equal(h.controller.getState().mcpApproval, null);
+    assert.equal(h.controller.getState().linkLost, true);
+    assert.deepEqual(h.commands, commands);
+  });
+
   it("refuses an agent write while other changes are staged", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
