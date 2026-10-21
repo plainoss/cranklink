@@ -246,43 +246,25 @@ try {
   cachedBlePasskey = sessionStorage.getItem("esteps_ble_passkey");
 } catch {}
 
-function requestBlePasskey(signal) {
+// The UI registers how to ask the operator; the host owns caching and the timeout.
+let passkeyPrompt = null;
+const PASSKEY_PROMPT_TIMEOUT_MS = 120000;
+
+async function requestBlePasskey(signal) {
   if (cachedBlePasskey && /^[0-9]{6}$/.test(cachedBlePasskey)) {
-    return Promise.resolve(cachedBlePasskey);
+    return cachedBlePasskey;
   }
-  const dialog = document.querySelector("#ble-passkey-dialog");
-  const field = document.querySelector("#ble-passkey");
-  const cancel = document.querySelector("#ble-passkey-cancel");
-  if (dialog.open) throw new Error("A passkey prompt is already open");
-  field.value = "";
-  dialog.returnValue = "";
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => dialog.close("timeout"), 120000);
-    const onCancel = () => dialog.close("cancel");
-    const onAbort = () => dialog.close("cancel");
-    const close = () => {
-      clearTimeout(timer);
-      cancel.removeEventListener("click", onCancel);
-      signal?.removeEventListener("abort", onAbort);
-      const value = field.value;
-      field.value = "";
-      if (dialog.returnValue === "authenticate" && /^[0-9]{6}$/.test(value)) {
-        cachedBlePasskey = value;
-        try {
-          sessionStorage.setItem("esteps_ble_passkey", value);
-        } catch {}
-        resolve(value);
-      } else {
-        reject(new Error("Bluetooth authentication cancelled or timed out"));
-      }
-    };
-    cancel.addEventListener("click", onCancel);
-    signal?.addEventListener("abort", onAbort, { once: true });
-    dialog.addEventListener("close", close, { once: true });
-    dialog.showModal();
-    field.focus();
-    if (signal?.aborted) dialog.close("cancel");
-  });
+  if (!passkeyPrompt) throw new Error("No passkey prompt is available");
+  const timeout = AbortSignal.timeout(PASSKEY_PROMPT_TIMEOUT_MS);
+  const value = await passkeyPrompt(signal ? AbortSignal.any([signal, timeout]) : timeout);
+  if (!/^[0-9]{6}$/.test(value ?? "")) {
+    throw new Error("Bluetooth authentication cancelled or timed out");
+  }
+  cachedBlePasskey = value;
+  try {
+    sessionStorage.setItem("esteps_ble_passkey", value);
+  } catch {}
+  return value;
 }
 function clearBlePasskey() {
   cachedBlePasskey = null;
@@ -589,6 +571,9 @@ window.estepsTerminal = {
     transport: selectedTransport,
   }),
   selectGranted,
+  setPasskeyPrompt: (prompt) => {
+    passkeyPrompt = prompt;
+  },
   ...(import.meta.env.DEV ? {
     get simulator() {
       return activeSimulator;

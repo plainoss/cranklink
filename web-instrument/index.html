@@ -8,7 +8,7 @@
     />
     <meta name="theme-color" content="#f4f3ef" />
     <title>cranklink — Drive Unit Field Instrument</title>
-    <script src="./coi-serviceworker.js"></script>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231c1917'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='ui-monospace,Menlo,monospace' font-size='13' font-weight='700' fill='%23fbbf24'%3ECL%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./css/instrument.css" />
   </head>
   <body>
@@ -22,31 +22,6 @@
       </form>
       <input id="file-picker" type="file" multiple />
     </div>
-
-    <!-- Native Bluetooth 6-digit Passkey Dialog -->
-    <dialog id="ble-passkey-dialog" aria-labelledby="ble-passkey-title" aria-describedby="ble-passkey-help">
-      <form method="dialog">
-        <h2 id="ble-passkey-title">Bluetooth passkey</h2>
-        <p id="ble-passkey-help">
-          Enter the 6-digit passkey for the Shimano E-TUBE Bluetooth gateway.
-        </p>
-        <label for="ble-passkey">Passkey</label>
-        <input
-          id="ble-passkey"
-          type="password"
-          inputmode="numeric"
-          pattern="[0-9]{6}"
-          minlength="6"
-          maxlength="6"
-          autocomplete="off"
-          required
-        />
-        <div class="ble-passkey-actions">
-          <button id="ble-passkey-cancel" type="button">Cancel</button>
-          <button type="submit" value="authenticate">Authenticate</button>
-        </div>
-      </form>
-    </dialog>
 
     <script type="module" src="./src/main.ts"></script>
   </body>

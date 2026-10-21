@@ -8,7 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   use: {
-    baseURL: deployed || "http://127.0.0.1:8031/cranklink/",
+    baseURL: deployed || "http://127.0.0.1:8031/",
     trace: "retain-on-failure",
     viewport: { width: 1280, height: 840 },
   },
@@ -21,7 +21,7 @@ export default defineConfig({
   ],
   webServer: deployed ? undefined : {
     command: "python3 ../.github/scripts/serve-web-build.py --port 8031",
-    url: "http://127.0.0.1:8031/cranklink/",
+    url: "http://127.0.0.1:8031/",
     reuseExistingServer: false,
     timeout: 15_000,
   },

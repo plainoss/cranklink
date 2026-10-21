@@ -1,8 +1,10 @@
 # Offline firmware simulator
 
+The [E-TUBE protocol reference](etube-protocol.md) describes the packet formats, routing and integration boundaries exercised here. Packet-matrix success and complete client probe success are separate checks; see the native-verification limitation below.
+
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
-This implementation covers the packet engine, native/Bluetooth transports and a limited persistent-write path from the [simulator plan](firmware-simulator-plan.md). Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
+This implementation covers the packet engine, native/Bluetooth transports, a limited persistent-write path and a separate EP800 resident-bootloader regression. Persistent writes currently require the exact EP800 D4.2.0 profile and support lamp and wheel circumference; complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
 
 ## Verified firmware coverage
 
@@ -35,16 +37,35 @@ Use Python 3.10+ and the optional pinned runtime:
 python3 -m venv /tmp/cranklink-firmware-sim
 /tmp/cranklink-firmware-sim/bin/pip install -r tools/firmware-sim/requirements.txt
 
-/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py profiles
+# Inspect executable profiles and check local cache status
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py pull --list
+
+# Auto-pull and cache firmware for given hardware (e.g. EP800)
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py pull --hardware ep800
+
+# Run 9 fault scenarios directly using the hardware preset (auto-pulls if needed)
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py run \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
+  --output /tmp/firmware-run.json
+
+# Or specify profile IDs or custom local file paths explicitly
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py run \
+  --gateway sc-em800-4.6.0 \
+  --motor ep800-4.2.0 \
   --output /tmp/firmware-run.json
 ```
 
 `run` executes all nine scenarios at the recovered slot 13. Output contains deterministic packet traces, instruction counts, cleanup results and modeled peripheral details. Unknown hashes, unhandled execution, instruction/event limits and failed invariants produce a nonzero exit. Tests remain enabled with `python -O`.
 
-The files must already be decoded. A `.dat` that contains plaintext is accepted when its hash matches. Encrypted containers must first be decoded; firmware and decoding downloads are not performed by this tool.
+### Firmware auto-pulling and local caching
+
+Firmware containers can be auto-pulled directly by profile ID, model name, or Shimano filename from official Shimano endpoints (`https://api.shimano.com/etube/public/data/upload/published/`). Downloaded images are validated against hash-pinned SHA-256 profiles, automatically decrypted (if container-encrypted) into plaintext binaries, and cached locally in `tools/firmware-sim/.cache/firmware/` (gitignored, never committed). You can also override the cache path via `--cache-dir` or `CRANKLINK_FW_CACHE`.
+
+- `sim.py pull --list`: Lists all 18 profiled targets, models, versions, and local cache status.
+- `sim.py pull [NAMES...]`: Pulls and decodes specific profile IDs (e.g. `ep800-4.2.0`, `sc-em800-4.6.0`) or filenames.
+- `sim.py pull --hardware <name>`: Pulls the default matching gateway and motor pair for hardware (e.g. `ep800`, `ep600`, `ep500`, `e6100`, `e5000`, `e5100`).
+- `sim.py pull --all --fixtures-output /tmp/firmware-fixtures.json`: Pulls all 18 profiled firmware images and generates a fixture manifest ready for `sim.py matrix`.
+- `sim.py run` and `sim.py serve` accept `--hardware <model>` or profile names directly in `--gateway` / `--motor`, automatically fetching and decoding missing images on demand. Existing local `.decoded.bin` or plaintext `.dat` file paths remain fully supported.
 
 ### Inventory and test a local collection
 
@@ -69,12 +90,11 @@ On macOS or Linux, start a local endpoint:
 
 ```sh
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py serve \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
   --socket /tmp/cranklink-firmware.sock
 ```
 
-In another terminal:
+Or pass explicit profiles/paths (`--gateway sc-em800-4.6.0 --motor ep800-4.2.0`). In another terminal:
 
 ```sh
 cargo build --locked --bin cranklink
@@ -94,8 +114,7 @@ Start the same server with `--gatt` and a separate socket:
 
 ```sh
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py serve --gatt \
-  --gateway /path/to/SCEM800.4.6.0.decoded.bin \
-  --motor /path/to/DUEP800-D.4.2.0.decoded.bin \
+  --hardware ep800 \
   --socket /tmp/cranklink-gatt.sock
 ./target/debug/cranklink --json --port ble-sim:/tmp/cranklink-gatt.sock --ble-master probe
 ./target/debug/cranklink --json --port ble-sim:/tmp/cranklink-gatt.sock --ble-master settings read lamp
@@ -105,7 +124,7 @@ This native Unix transport works without the `ble` Cargo feature. It runs the ac
 
 Radio pairing, gateway PIN challenge delivery, notifications, motor logical-address relocation during role handoff and the slave-radio stop acknowledgment are modeled topology boundaries. The actual motor stop handler must confirm disconnection. Passing cleanup does not validate physical role handoff or RF. This socket service remains read-only. Use `--drop-replies`, or `--gatt-fault stale-free|duplicate-free`, to exercise response loss and notification handling. The separate persistent browser peer below enables narrowly scoped writes.
 
-The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. See [feature findings](simulator-feature-findings.md) and the [past PR assessment](simulator-pr-review.md). A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
+The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
 
 ## Persistent writes and retained browser sessions
 
@@ -115,7 +134,7 @@ The unavailable physical EEPROM commit/ready boundary is modeled with an atomic 
 
 The browser regression runner uses unchanged historical Rust/WASM, `worker.js`, `host.js`, `WebBleGatt` and `BrowserFiles` in Chromium. A test peripheral forwards GATT operations to stock gateway/motor execution. The same master-routed commands save lamp `1 → 2`, or protected wheel circumference `2150 → 2151`, before reading again and explicitly disconnecting. It verifies actual changed receipts, durable IndexedDB backups before each SET, commit counts, ownership release, retained routing, cleanup, a new motor instance and a firmware GET after disk reload. Both source versions run with fresh state under always-advertising and connection-mode-ending controls.
 
-The [lamp report](../tools/firmware-sim/browser-pr11-lamp-validation.json) and [protected wheel report](../tools/firmware-sim/browser-pr11-tire-validation.json) reproduce PR #11's repeated-save failure under the explicit connection-mode model: the old version shuts down after save one and cannot reconnect for save two; the fixed version completes both saves on one connection. In the always-advertising control, both versions save successfully, but only the fixed version retains the connection. This is browser-worker/protocol/storage integration, not complete UI clicking or RF validation. See the [detailed PR assessment](simulator-pr-review.md#would-it-have-caught-pr-11s-bluetooth-issue).
+The [lamp report](../tools/firmware-sim/browser-pr11-lamp-validation.json) and [protected wheel report](../tools/firmware-sim/browser-pr11-tire-validation.json) reproduce PR #11's repeated-save failure under the explicit connection-mode model: the old version shuts down after save one and cannot reconnect for save two; the fixed version completes both saves on one connection. In the always-advertising control, both versions save successfully, but only the fixed version retains the connection. This is browser-worker/protocol/storage integration, not complete UI clicking or RF validation.
 
 ### Run the pinned browser comparison
 
@@ -163,9 +182,52 @@ CRANKLINK_SIM_FIXTURES=/tmp/firmware-fixtures.json \
   --output /tmp/native-verification.json
 ```
 
-Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fixtures.json --output /tmp/gatt-verification.json` in the same Python environment for the real Bluetooth client and stock GATT lifecycle matrix. `verify_features.py` adds snapshot, batch and preflight checks; its commands are documented in [feature findings](simulator-feature-findings.md).
+Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fixtures.json --output /tmp/gatt-verification.json` in the same Python environment for the real Bluetooth client and stock GATT lifecycle matrix. `verify_features.py` adds snapshot, batch and preflight checks:
 
-The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600 and SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. The [native results](../tools/firmware-sim/native-validation.json) record successful probes, settings reads and the expected E6100 model rejection. Firmware metadata checks and the virtual endpoint never weaken those CLI gates.
+```sh
+python tools/firmware-sim/verify_features.py --binary target/debug/cranklink \
+  --fixtures /absolute/path/fixtures.local.json --output /tmp/cranklink-feature-results.json
+```
+
+Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contain raw CLI output and should stay local.
+
+The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600, SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. Firmware metadata checks and the virtual endpoint never weaken CLI gates.
+
+The [archived native results](../tools/firmware-sim/native-validation.json) predate the current E6100 probe path: they record an expected model rejection, rather than a successful full E6100 probe. On the current SC-E7000 4.1.0 / E6100 D4.8.0 fixture, `probe` instead reaches `01/2C 00` and receives error `01 2F 39 00 FF FF`. `verify_native.py` does not accept this version-query rejection, so a manifest containing that pair makes it exit nonzero before writing its summary. The pair still passes the normal handshake/read/cleanup packet matrix. Treat this as an unresolved client/fixture compatibility gap; do not use the archived report as evidence that the current native verifier passes.
+
+## EP800 resident bootloader and Key 2 recovery
+
+The recovery investigation added a separate regression using the 64 KiB resident bootloader read from a working EP800. It reproduces how repeated empty SPI replies can keep Key 2 queued, and how a first SPI byte of `0xff` lets the queued key advance. The physical bridge procedure is documented in the [recovery guide](ep800-hardware-recovery.md).
+
+Supply your own acquired resident dump; no donor dump is included or downloaded. The harness accepts only the exact `ep800-resident-5.0.6.1` image, SHA-256 `59cc3fc007ca0b3595d8ba8e8207cc5257b05be84da8fd80278303d165488d9f`. A matching version string alone is insufficient because the code and RAM addresses are specific to those bytes.
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py resident \
+  --image /path/to/resident.bin --output /tmp/resident-regression.json
+
+# Include the acquired-image tests alongside the synthetic tests.
+CRANKLINK_RESIDENT_IMAGE=/path/to/resident.bin \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+  -s tools/firmware-sim -p 'test_*.py'
+```
+
+The five scenarios check:
+
+| Modeled condition | Required result |
+| --- | --- |
+| SPI polling inhibited | Key 2 is acknowledged. |
+| SPI input stays zero | Empty `0x70` replies repeat; Key 2 remains queued. |
+| SPI input stays `0xff` | Key 2 is acknowledged. |
+| SPI changes from zero to `0xff` after stalling | The already queued Key 2 is consumed, then all five keys are acknowledged in order. |
+| UART transmission never completes | Only the first transmission starts; later replies do not bypass the busy flag. |
+
+The real RAM initializer, FIFO parser, key validators, SPI polling/checksum and UART transmit/busy routines execute. Unlike the first investigation fixture, UART transmit is observed without replacing its return path. The harness supplies decoded frames at the RX FIFO, a constant SPI receive-register value and UART completion between service slices. It does not run M firmware, erase/write/reset operations, full boot, interrupts or physical E-TUBE timing. The `0xff` case establishes a software escape condition; it does not predict which board voltage or resistor produces that condition.
+
+### CPU model and instruction compatibility
+
+Execution now selects a named Unicorn CPU model instead of relying on an implicit default. Existing application profiles use `cortex-m3` unless their `cpu` field specifies another supported model; `resident --cpu` accepts `cortex-m0`, `cortex-m3` and `cortex-m4`. These are execution settings, not identification of the physical processor.
+
+Selecting Cortex-M0 in Unicorn 2.1.4 still permits the Thumb-2 `MOVW` sequence `41 f2 70 70`. A successful emulation therefore does **not** prove ARMv6-M instruction compatibility or that a modified binary boots on hardware. Check instruction encodings separately when changing firmware, and keep hardware boot verification distinct from a simulator pass.
 
 ## Execution boundaries and remaining work
 

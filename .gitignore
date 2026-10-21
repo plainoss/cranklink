@@ -21,4 +21,9 @@ web-instrument/test-results/
 
 # Optional firmware simulator local inputs and Python cache
 tools/firmware-sim/*.local.json
+tools/firmware-sim/.cache/
+.firmware-cache/
 __pycache__/
+
+# Wrangler local state
+web-instrument/.wrangler/

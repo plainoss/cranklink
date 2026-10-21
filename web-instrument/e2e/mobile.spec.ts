@@ -6,7 +6,7 @@ async function openInstrument(page: Page) {
     try {
       return await page.evaluate(() => window.crossOriginIsolated &&
         Boolean((window as any).estepsTerminal?.status().ready));
-    } catch { return false; } // The service worker reloads a first visit.
+    } catch { return false; }
   }, { timeout: 30_000 }).toBe(true);
   const dismissBtn = page.getByTestId("btn-dismiss-warning");
   if (await dismissBtn.isVisible()) {
@@ -59,7 +59,9 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await checkResponsiveBounds(page, "disconnected");
   // Exercise the small-screen passkey layout without requesting any radio access.
   await page.setViewportSize({ width: 320, height: 851 });
-  await page.locator("#ble-passkey-dialog").evaluate((element: HTMLDialogElement) => element.showModal());
+  await page.evaluate(() => {
+    (window as any).testPasskeyAnswer = (window as any).cranklinkInstrumentController.requestPasskey(new AbortController().signal);
+  });
   const passkeyDialog = page.getByRole("dialog", { name: "Bluetooth passkey", exact: true });
   const dialogBounds = await passkeyDialog.boundingBox();
   expect(dialogBounds).not.toBeNull();
@@ -68,8 +70,10 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(852);
   await expect(passkeyDialog.getByLabel("Passkey", { exact: true })).toBeFocused();
-  await checkTouchTarget(page.locator("#ble-passkey-cancel"));
-  await passkeyDialog.evaluate((element: HTMLDialogElement) => element.close());
+  await checkTouchTarget(page.getByTestId("btn-passkey-cancel"));
+  await page.getByTestId("btn-passkey-cancel").tap();
+  await expect(passkeyDialog).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).testPasskeyAnswer)).toBeNull();
   await page.setViewportSize({ width: 393, height: 851 });
 
   await checkTouchTarget(page.getByTestId("btn-more-menu"));
@@ -93,6 +97,7 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   const geometryBtn = page.getByTestId("nav-group-geometry");
   await checkTouchTarget(geometryBtn);
   await geometryBtn.tap();
+  await page.getByTestId("btn-open-search").tap();
   const search = page.getByTestId("search-filter-input");
   await search.fill("tire");
   expect(await search.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
@@ -102,7 +107,7 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await checkTouchTarget(increment);
   await increment.tap();
   await increment.tap();
-  await expect(tire).toContainText("Staged: 2300 mm");
+  await expect(tire).toContainText("Staged: 2282 mm");
   await checkResponsiveBounds(page, "staged");
   await page.screenshot({ path: testInfo.outputPath("mobile-staged.png"), fullPage: true });
 
@@ -111,19 +116,24 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await expect(review).toBeInViewport();
   await checkTouchTarget(review);
   await review.tap();
-  const transaction = page.getByTestId("transaction-rail");
-  await expect(transaction).toBeInViewport({ ratio: 0.2 });
-  await expect(transaction).toContainText("2280 mm → 2300 mm");
+  const reviewDialog = page.getByTestId("review-dialog");
+  await expect(reviewDialog).toBeInViewport({ ratio: 0.2 });
+  await expect(reviewDialog.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
+  // Measure after the dialog's entry animation settles.
+  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+  await checkTouchTarget(page.getByTestId("btn-commit-batch"));
   await page.getByTestId("btn-commit-batch").tap();
-  await expect(transaction).toBeHidden();
-  await expect(tire).toContainText("Live: 2300 mm");
-  await expect(page.getByTestId("status-message")).toContainText("Committed 1 change");
+  await expect(reviewDialog).toBeHidden();
+  await expect(tire).toContainText("Live: 2282 mm");
+  await expect(page.getByRole("region").getByText("Saved 1 setting")).toBeVisible();
 
   await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-section-journal").tap();
   await expect(page.getByTestId("journal-section")).toBeVisible();
   await checkResponsiveBounds(page, "journal");
   await page.locator('[data-action="restore-snapshot"]').first().tap();
+  await page.getByTestId("btn-confirm-restore").tap();
+  await expect(page.getByRole("region").getByText("Restored the backup")).toBeVisible();
   await page.getByLabel("Open navigation menu").tap();
   await page.getByTestId("nav-group-geometry").tap();
   await expect(tire).toContainText("Live: 2280 mm");

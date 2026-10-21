@@ -132,7 +132,7 @@ class MachineTests(unittest.TestCase):
 
     def test_hash_mismatch_fails_before_mapping_or_execution(self):
         image, profile = self.image()
-        with patch('fw_sim.machine.Uc') as emulator:
+        with patch('fw_sim.machine.new_cpu') as emulator:
             with self.assertRaisesRegex(RuntimeError, 'hash mismatch'):
                 Machine(image + b'\x00', profile)
             emulator.assert_not_called()
@@ -142,7 +142,7 @@ class MachineTests(unittest.TestCase):
             with self.subTest(size=size):
                 image = b'\x00' * size
                 profile = {'id': 'oversize-test', 'sha256': hashlib.sha256(image).hexdigest()}
-                with patch('fw_sim.machine.Uc') as emulator:
+                with patch('fw_sim.machine.new_cpu') as emulator:
                     with self.assertRaisesRegex(RuntimeError, 'invalid mapped image size'):
                         Machine(image, profile)
                     emulator.assert_not_called()
@@ -256,6 +256,7 @@ class FramingAndAdmissionTests(unittest.TestCase):
     def test_write_reset_and_auth_commands_do_not_execute(self):
         motor = Motor.__new__(Motor)
         motor.u, motor.call, motor.output, motor.profile = Mock(), Mock(), [], {}
+        motor.speed_patch_ceiling = None
         for payload in ('16ad01', '16ab00', '16a800', '101000', '321101'):
             with self.subTest(payload=payload), self.assertRaisesRegex(RuntimeError, 'only normal read'):
                 motor.receive(bytes.fromhex(payload), 0)

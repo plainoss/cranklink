@@ -42,7 +42,6 @@ declare module "@tanstack/react-router" {
   }
 }
 
-(window as any).estepsInstrumentController = controller;
 (window as any).cranklinkInstrumentController = controller;
 (window as any).webMcpServer = mcpServer;
 (window as any).mcp = mcpServer;

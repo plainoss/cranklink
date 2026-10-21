@@ -19,6 +19,9 @@ CLI_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
+    "tools/firmware-sim/**",
+    "tools/patch_motor_speed.py",
+    "tools/patch_ep800_speed.py",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
 ]
@@ -28,7 +31,7 @@ WEB_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "web-instrument/**",
-    ".github/workflows/deploy-pages.yml",
+    ".github/workflows/web.yml",
     ".github/scripts/check-web-assets.py",
     ".github/scripts/serve-web-build.py",
     ".github/scripts/check-changed-paths.py",
