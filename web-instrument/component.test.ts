@@ -164,6 +164,16 @@ describe("Catalogued component discovery and schema binding", () => {
     assert.deepEqual(fetched, []);
   });
 
+  it("accepts catalogued names containing a slash, such as SW-M8150-R/IR", async () => {
+    const h = harness();
+    h.config.inventory = [...units, { slot: 6, model_series: 0x2e, model_unit: 1, model: "SW-M8150-R/IR", model_candidates: ["SW-M8150-R/IR"] }];
+    await h.controller.connectAndSync("ble");
+    assert.equal(h.controller.getState().identity?.model, LEVER);
+    assert.equal(h.controller.getState().units.length, units.length + 1);
+    assert.deepEqual(detectDeviceIdentity({ model_series: 0x2e, model_unit: 1, model_name: "SW-M8150-R/IR", settings_model: "SW-M8150-R/IR" }).model, "SW-M8150-R/IR");
+    assert.throws(() => detectDeviceIdentity({ model_series: 0x2e, model_unit: 1, model_name: "SW-M8150-R'IR", settings_model: "SW-M8150-R'IR" }), /do not match/);
+  });
+
   it("keeps unknown stock visible without choosing it as a settings target", async () => {
     const h = harness();
     h.config.inventory = [{ slot: 9, model_series: 0x99, model_unit: 4, model: null, model_candidates: [] }];

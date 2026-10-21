@@ -22,7 +22,7 @@ import type {
 import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
 import { formatValue, formatSetting, settingLabel } from "../domain/settingFormat.ts";
 import { isLinkLost } from "../domain/errors.ts";
-import { detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
+import { CATALOG_NAME, detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
@@ -376,7 +376,7 @@ export class SessionController {
     if (!Array.isArray(parsed?.units)) throw new Error("Component discovery returned no valid inventory.");
     const slots = new Set<number>();
     const units: ComponentUnit[] = parsed.units.map((unit: any) => {
-      const validName = (name: unknown) => typeof name === "string" && /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(name);
+      const validName = (name: unknown) => typeof name === "string" && CATALOG_NAME.test(name);
       if (!Number.isInteger(unit.slot) || unit.slot < 0 || unit.slot > 31 || slots.has(unit.slot)
           || !Number.isInteger(unit.model_series) || unit.model_series < 0 || unit.model_series > 255
           || !Number.isInteger(unit.model_unit) || unit.model_unit < 0 || unit.model_unit > 255
