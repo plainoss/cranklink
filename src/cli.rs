@@ -527,7 +527,11 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             }
         }
     }
-    if cli.passkey.is_none() && cli.passkey_file.is_none() {
+    // Only a Bluetooth port uses the passkey; an exported one must not break wired use.
+    if cli.port.as_deref().is_some_and(crate::ble::is_port)
+        && cli.passkey.is_none()
+        && cli.passkey_file.is_none()
+    {
         if let Ok(pk) = std::env::var("CRANKLINK_PASSKEY") {
             if !pk.trim().is_empty() {
                 cli.passkey = Some(pk.trim().to_string());
