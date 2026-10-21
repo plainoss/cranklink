@@ -34,12 +34,19 @@ pub struct BridgeOptions<'a> {
     pub port: &'a str,
     pub dcas: &'a Path,
     pub companion: &'a Path,
-    pub serial: &'a str,
+    pub serial: Option<&'a str>,
     pub journal: &'a Path,
     pub trace: Option<&'a Path>,
     pub countdown: u64,
     pub attempts: u8,
     pub write: bool,
+}
+
+/// A preflight can leave the serial unknown; an executed restore reads it from
+/// the connected motor's bootloader and binds the writer to that identity.
+pub struct BridgeReport {
+    pub serial: Option<String>,
+    pub transferred: bool,
 }
 
 struct Journal(File);
@@ -542,9 +549,11 @@ fn validate_stock(d: &Firmware, m: &Firmware) -> Result<()> {
     d.validate_companion(m)
 }
 
-fn validate_live(boot: &BootIdentity, serial: &[u8; 6]) -> Result<()> {
+fn validate_live(boot: &BootIdentity, expected_serial: Option<&[u8; 6]>) -> Result<()> {
     ensure!(
-        boot.serial == *serial
+        expected_serial.is_none_or(|serial| boot.serial == *serial)
+            && boot.serial != [0; 6]
+            && boot.serial != [0xff; 6]
             && boot.version == [5, 0, 6, 1]
             && boot.board == 1
             && boot.series == 0x23
@@ -569,7 +578,10 @@ fn output_path(path: &Path) -> Result<PathBuf> {
 /// Validate offline unless `write` is requested. A write opens only native USB,
 /// completes all five keys, checks identity, then calls the regular D writer.
 /// No M firmware or settings write is performed.
-pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) -> Result<()> {
+pub fn recover_bridge(
+    options: BridgeOptions<'_>,
+    mut notify: impl FnMut(&str),
+) -> Result<BridgeReport> {
     ensure!(
         options.port == "usb",
         "bridge recovery requires --port usb (native USB)"
@@ -582,10 +594,15 @@ pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) 
         options.countdown <= 300,
         "bridge countdown must be at most 300 seconds"
     );
-    let serial: [u8; 6] = hex::decode(options.serial)
-        .context("serial must contain 12 hexadecimal digits")?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("serial must contain exactly 12 hexadecimal digits"))?;
+    let serial: Option<[u8; 6]> = options
+        .serial
+        .map(|serial| {
+            hex::decode(serial)
+                .context("serial must contain 12 hexadecimal digits")?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("serial must contain exactly 12 hexadecimal digits"))
+        })
+        .transpose()?;
     let d = Firmware::load(options.dcas)?;
     let m = Firmware::load(options.companion)?;
     validate_stock(&d, &m)?;
@@ -598,7 +615,13 @@ pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) 
     );
     if !options.write {
         notify("Bridge recovery preflight passed. D 4.2.0.0 will be restored; M is validated only. No hardware opened. Add --write to execute.");
-        return Ok(());
+        if serial.is_none() {
+            notify("Motor serial will be read from the bootloader after the recovery connection is established.");
+        }
+        return Ok(BridgeReport {
+            serial: serial.map(hex::encode),
+            transferred: false,
+        });
     }
     let mut journal = Journal::new(&journal_path)?;
     let trace = OpenOptions::new()
@@ -607,7 +630,7 @@ pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) 
         .open(&trace_path)
         .context("trace must be a new file")?;
     trace.sync_all()?;
-    journal.record("inputs", json!({"d":d.metadata,"m":m.metadata,"serial":hex::encode(serial),"trace":trace_path,"attempts":options.attempts,"countdown":options.countdown,"scope":"stock D only; M compatibility check; no settings write"}))?;
+    journal.record("inputs", json!({"d":d.metadata,"m":m.metadata,"expected_serial":serial.map(hex::encode),"trace":trace_path,"attempts":options.attempts,"countdown":options.countdown,"scope":"stock D only; M compatibility check; no settings write"}))?;
     notify(&format!(
         "Journal: {}\nWire trace: {}",
         journal_path.display(),
@@ -651,9 +674,9 @@ pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) 
         };
         journal.record("key-attempt-result", json!({"attempt":attempt,"complete":complete,"acks":wire.seq.acks,"epochs":wire.seq.epoch,"tx":wire.seq.tx_count}))?;
         if complete {
-            notify("All five keys acknowledged. Restoring stock D now; keep holding the bridge.");
+            notify("All five keys acknowledged. Checking motor identity; keep holding the bridge.");
             let session = wire.into_session()?;
-            return restore(session, &d, &serial, &mut journal, &mut notify);
+            return restore(session, &d, serial.as_ref(), &mut journal, &mut notify);
         }
         notify(
             "Key 2 did not complete. Adjust the bridge while the next connection attempt starts.",
@@ -665,14 +688,19 @@ pub fn recover_bridge(options: BridgeOptions<'_>, mut notify: impl FnMut(&str)) 
 fn restore(
     mut session: Session,
     d: &Firmware,
-    serial: &[u8; 6],
+    serial: Option<&[u8; 6]>,
     journal: &mut Journal,
     notify: &mut impl FnMut(&str),
-) -> Result<()> {
+) -> Result<BridgeReport> {
     let boot = session.boot_identity()?;
     journal.record("fresh-boot-identity", json!(boot))?;
     validate_live(&boot, serial)?;
     d.validate_target(boot.series, boot.unit, boot.board, Version(boot.version))?;
+    let detected_serial = hex::encode(boot.serial);
+    journal.record("verified-motor-serial", json!({"serial":detected_serial,"source":"connected motor bootloader","expected_serial":serial.map(hex::encode)}))?;
+    notify(&format!(
+        "Motor serial: {detected_serial}. Restoring stock D; keep the bridge connected."
+    ));
     journal.record("destructive-start", json!({"d":d.metadata,"boot":boot,"note":"regular D writer rechecks identity before erase; no M/settings write"}))?;
     let receipt = match session.flash_dcas(&d.data, &boot, |done, total| {
         if done == total || done % 8192 == 0 {
@@ -699,7 +727,10 @@ fn restore(
     );
     journal.record("post-verification-pending", json!({"required":"remove bridge; verify normal communication, original serial, D4.2.0.0/M4.1.11.0 and saved settings"}))?;
     notify("Stock transfer finish/reset acknowledged. Remove the resistor, then verify normal communication and settings.");
-    Ok(())
+    Ok(BridgeReport {
+        serial: Some(detected_serial),
+        transferred: true,
+    })
 }
 
 #[cfg(test)]
@@ -893,7 +924,7 @@ mod tests {
         assert!(wire.handshake(&mut |_| {}).unwrap());
         let mut session = wire.into_session().unwrap();
         let boot = session.boot_identity().unwrap();
-        validate_live(&boot, &SERIAL).unwrap();
+        validate_live(&boot, Some(&SERIAL)).unwrap();
         assert!(steps.borrow().is_empty());
         drop(session);
         fs::remove_file(path).unwrap();
@@ -908,7 +939,7 @@ mod tests {
         let (path, file) = temp_file();
         let mut journal = Journal(file);
         let (d, _) = stock();
-        assert!(restore(session, &d, &SERIAL, &mut journal, &mut |_| {}).is_err());
+        assert!(restore(session, &d, Some(&SERIAL), &mut journal, &mut |_| {}).is_err());
         assert!(steps.borrow().is_empty());
         drop(journal);
         fs::remove_file(path).unwrap();
@@ -925,9 +956,44 @@ mod tests {
         let (path, file) = temp_file();
         let mut journal = Journal(file);
         let (d, _) = stock();
-        assert!(restore(session, &d, &SERIAL, &mut journal, &mut |_| {}).is_err());
+        assert!(restore(session, &d, Some(&SERIAL), &mut journal, &mut |_| {}).is_err());
         assert!(steps.borrow().is_empty());
         drop(journal);
+        fs::remove_file(path).unwrap();
+        fs::remove_file(trace).unwrap();
+    }
+    #[test]
+    fn unknown_serial_is_read_on_same_port_and_bound_to_writer_identity() {
+        let mut script = keys();
+        script.extend(identity_steps(&SERIAL));
+        // Detection must not turn the writer's fresh identity check into an
+        // unchecked write. A changed serial must stop before erase.
+        script.extend(identity_steps(&[9, 2, 3, 4, 5, 6]));
+        let (mut wire, steps, trace) = mock(script);
+        assert!(wire.handshake(&mut |_| {}).unwrap());
+        let session = wire.into_session().unwrap();
+        let (path, file) = temp_file();
+        let mut journal = Journal(file);
+        let (d, _) = stock();
+        let mut notices = Vec::new();
+        assert!(restore(session, &d, None, &mut journal, &mut |s| {
+            notices.push(s.to_owned());
+        })
+        .is_err());
+        assert!(steps.borrow().is_empty());
+        assert!(notices.iter().any(|s| s.contains("010203040506")));
+        drop(journal);
+        let events: Vec<Value> = fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let detected = events
+            .iter()
+            .find(|event| event["stage"] == "verified-motor-serial")
+            .unwrap();
+        assert_eq!(detected["data"]["serial"], "010203040506");
+        assert!(detected["data"]["expected_serial"].is_null());
         fs::remove_file(path).unwrap();
         fs::remove_file(trace).unwrap();
     }
@@ -1126,7 +1192,8 @@ mod tests {
             unit: 0,
             serial: SERIAL,
         };
-        validate_live(&boot, &SERIAL).unwrap();
+        validate_live(&boot, Some(&SERIAL)).unwrap();
+        validate_live(&boot, None).unwrap();
         let mut wrong_board = boot.clone();
         wrong_board.board = 2;
         let mut wrong_series = boot.clone();
@@ -1136,13 +1203,20 @@ mod tests {
         let mut wrong_slot = boot.clone();
         wrong_slot.slot = 13;
         for other in [wrong_board, wrong_series, wrong_unit, wrong_slot] {
-            assert!(validate_live(&other, &SERIAL).is_err());
+            assert!(validate_live(&other, Some(&SERIAL)).is_err());
+            assert!(validate_live(&other, None).is_err());
         }
         let mut other = boot.clone();
         other.version[3] = 2;
-        assert!(validate_live(&other, &SERIAL).is_err());
+        assert!(validate_live(&other, Some(&SERIAL)).is_err());
+        assert!(validate_live(&other, None).is_err());
         other = boot.clone();
         other.serial[0] = 9;
-        assert!(validate_live(&other, &SERIAL).is_err());
+        assert!(validate_live(&other, Some(&SERIAL)).is_err());
+        validate_live(&other, None).unwrap();
+        for invalid in [[0; 6], [0xff; 6]] {
+            other.serial = invalid;
+            assert!(validate_live(&other, None).is_err());
+        }
     }
 }

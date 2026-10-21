@@ -93,9 +93,8 @@ the viewing orientation when comparing your wiring.
 
 ## 3. Prepare the CLI and original firmware
 
-You need Rust, your motor's known **12-digit hexadecimal serial**, and
-your own stock firmware files. Close other programs using the adaptor. Save any
-existing settings backup.
+You need Rust and your own stock firmware files. Close other programs using the
+adaptor. Save any existing settings backup.
 
 This mode accepts only **D 4.2.0.0** with **M 4.1.11.0**. Confirm from your records
 that M already has that version. The supplied M file is checked for compatibility
@@ -108,30 +107,36 @@ From the repository root, build the CLI:
 cargo build --locked --bin cranklink
 ```
 
-Replace the paths and serial below with your own. Run this preparation check
+Replace the paths below with your own. Run this preparation check
 first; without `--write`, this mode does not connect to hardware:
 
 ```sh
-./target/debug/cranklink --port usb -s YOUR12HEXUID firmware flash dcas \
+./target/debug/cranklink --port usb firmware flash dcas \
   /path/to/DUEP800-D.4.2.0.dat \
   --companion /path/to/DUEP800-M.4.1.11.dat --bridge-recovery
 ```
 
 No firmware files are included in this repository.
 
+You do not need to know the motor's serial beforehand. Once the recovery
+connection works, the CLI reads it from the motor's bootloader, displays it and
+records it in the journal. If you know the 12-digit hexadecimal serial, add
+`-s YOUR12HEXUID` before `firmware` to require a match. The CLI checks the
+bootloader and board identity in either case.
+
 ## 4. Run the restore
 
 With the wiring and resistor secured, connect USB. Run:
 
 ```sh
-./target/debug/cranklink --port usb -s YOUR12HEXUID firmware flash dcas \
+./target/debug/cranklink --port usb firmware flash dcas \
   /path/to/DUEP800-D.4.2.0.dat \
   --companion /path/to/DUEP800-M.4.1.11.dat --bridge-recovery --write
 ```
 
 The countdown gives you ten seconds to establish contact. The CLI tries the
 connection up to twenty times, then starts one stock restore when all five keys
-are acknowledged and the motor's identity matches. Use `--countdown` or
+are acknowledged and the motor's identity is checked. Use `--countdown` or
 `--attempts` to change those defaults.
 
 **Keep the resistor connected through erase, the entire transfer, finish and
@@ -150,7 +155,8 @@ Only then remove the temporary resistor, leaving USB and E-TUBE connected.
   --output settings-after.json
 ```
 
-Check the original serial and cargo identity, D **4.2.0.0**, and M **4.1.11.0**.
+Use the serial printed during recovery for `YOUR12HEXUID`. Check that `probe`
+reports the same serial and expected cargo identity, D **4.2.0.0**, and M **4.1.11.0**.
 Compare the settings with your original backup.
 
 The successful recovery verified normal communication and **74/74 original
@@ -170,6 +176,26 @@ power.
 
 Use `--bridge-recovery` for this procedure; ordinary `--recovery` uses a different
 connection sequence.
+
+## Read a working motor's bootloader
+
+For further investigation, this read-only command extracts the 64 KiB resident
+window from a working EP800-CRG. Keep the bike powered normally and connect the
+SM-PCE02 through its E-TUBE wiring. It supports D 4.1.11.0 or 4.2.0.0,
+M 4.1.11.0, and bootloader 5.0.6.1.
+
+```sh
+./target/debug/cranklink --port usb --read-only firmware dump-bootloader \
+  --output donor-read-01
+```
+
+The new directory contains `resident.bin`, its SHA256 and identity receipt in
+`result.json`, and a wire trace. The command makes one complete pass and keeps
+partial output if a read fails. It does not flash firmware or change settings.
+Add `-s YOUR12HEXUID` to select a motor if several are found.
+
+This requires a responsive application; it cannot extract a dump from the
+stalled bootloader. A donor dump is not needed for the restore above.
 
 ## For developers
 

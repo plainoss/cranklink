@@ -360,6 +360,12 @@ enum SettingsCommand {
 
 #[derive(Subcommand)]
 enum FirmwareCommand {
+    /// Read the 64 KiB bootloader from a working, powered EP800-CRG (no motor writes)
+    DumpBootloader {
+        /// New directory for resident.bin, wire trace and result receipt
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Decode and validate firmware container file offline
     Inspect {
         /// Firmware container file (.dat)
@@ -816,6 +822,42 @@ fn execute_firmware_command(
     is_json: bool,
 ) -> Result<()> {
     match command {
+        FirmwareCommand::DumpBootloader { output } => {
+            ensure!(
+                slot.is_none(),
+                "bootloader extraction selects a unique motor; use -s to select by serial"
+            );
+            ensure!(
+                trace.is_none(),
+                "bootloader extraction saves its wire trace in --output"
+            );
+            ensure!(
+                port.is_none() || port == Some("usb"),
+                "bootloader extraction requires the native SM-PCE02 USB connection"
+            );
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = output;
+                anyhow::bail!("bootloader extraction requires the native CLI");
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let receipt = crate::bootloader_dump::dump("usb", expect_serial, &output)?;
+                if is_json {
+                    out_println!("{}", serde_json::to_string_pretty(&receipt)?);
+                } else {
+                    out_println!(
+                        "Read {} bootloader bytes to {}",
+                        receipt.bytes,
+                        output.join("resident.bin").display()
+                    );
+                    out_println!("Motor serial: {}", receipt.serial);
+                    out_println!("SHA256: {}", receipt.sha256);
+                    out_println!("Matches known donor image: {}", receipt.matches_known_dump);
+                }
+                Ok(())
+            }
+        }
         FirmwareCommand::Inspect {
             file,
             companion,
@@ -944,8 +986,6 @@ fn execute_firmware_command(
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let serial = expect_serial
-                            .context("bridge recovery requires motor serial (-s <12-HEX>)")?;
                         if let Some(expected) = expect_sha256 {
                             let fw = Firmware::load(&file)?;
                             ensure!(
@@ -956,16 +996,16 @@ fn execute_firmware_command(
                         let journal = journal.unwrap_or_else(|| {
                             PathBuf::from(format!(
                                 "cranklink-flash-dcas-{}-{}.journal.jsonl",
-                                serial,
+                                expect_serial.unwrap_or("unknown-serial"),
                                 crate::platform::now_ms()
                             ))
                         });
-                        crate::recovery::recover_bridge(
+                        let report = crate::recovery::recover_bridge(
                             crate::recovery::BridgeOptions {
                                 port: port.as_deref().unwrap_or("usb"),
                                 dcas: &file,
                                 companion: &companion,
-                                serial: &serial,
+                                serial: expect_serial,
                                 journal: &journal,
                                 trace: trace.as_deref(),
                                 countdown: countdown.unwrap_or(10),
@@ -979,8 +1019,8 @@ fn execute_firmware_command(
                                 "{}",
                                 serde_json::json!({
                                     "mode": "bridge-recovery",
-                                    "status": if write { "transfer-finished" } else { "preflight-passed" },
-                                    "serial": serial,
+                                    "status": if report.transferred { "transfer-finished" } else { "preflight-passed" },
+                                    "serial": report.serial,
                                     "application_verified": false,
                                     "journal": if write { Some(&journal) } else { None },
                                 })
@@ -1963,7 +2003,10 @@ fn read_only_command_allowed(command: &Command) -> bool {
             command,
             SettingsCommand::Read { .. } | SettingsCommand::Schema { .. }
         ),
-        Command::Firmware { command } => matches!(command, FirmwareCommand::Inspect { .. }),
+        Command::Firmware { command } => matches!(
+            command,
+            FirmwareCommand::Inspect { .. } | FirmwareCommand::DumpBootloader { .. }
+        ),
         Command::Adapter { command } => matches!(command, AdapterCommand::Status),
         Command::Ble { command } => {
             matches!(command, BleCommand::Scan { .. } | BleCommand::TestLink)
@@ -3010,6 +3053,52 @@ mod cli_tests {
                 "{extra:?}"
             );
         }
+    }
+
+    #[test]
+    fn bootloader_dump_is_read_only_and_rejects_unsupported_transport_before_output() {
+        let cli = Cli::try_parse_from([
+            "cranklink",
+            "--read-only",
+            "firmware",
+            "dump-bootloader",
+            "--output",
+            "not-created",
+        ])
+        .unwrap();
+        assert!(read_only_command_allowed(&cli.command));
+        for (extra, expected) in [
+            (vec!["--port", "sim:/not-opened"], "native SM-PCE02 USB"),
+            (vec!["--port", "ble:dummy"], "Use wired connection"),
+            (vec!["--slot", "13"], "selects a unique motor"),
+            (vec!["--trace", "not-created.jsonl"], "saves its wire trace"),
+        ] {
+            let mut args: Vec<String> = [
+                "cranklink",
+                "firmware",
+                "dump-bootloader",
+                "--output",
+                "not-created",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+            args.extend(extra.into_iter().map(String::from));
+            let error = execute(args).unwrap_err();
+            assert!(format!("{error:#}").contains(expected), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn bridge_recovery_accepts_unknown_serial_and_validates_files_offline() {
+        let mut args = bridge_args(&["--bridge-recovery"]);
+        args.drain(1..3); // No -s: read the motor serial after the recovery keys.
+        let cli = Cli::try_parse_from(&args).unwrap();
+        assert!(cli.expect_serial.is_none());
+        // A missing file must fail in offline validation, before opening USB;
+        // absence of -s must not fail first or trigger identity probing.
+        let error = execute(args).unwrap_err();
+        assert!(format!("{error:#}").contains("missing-d.dat"), "{error:#}");
     }
 
     #[test]

@@ -1,4 +1,6 @@
 pub mod ble;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bootloader_dump;
 pub mod device;
 pub mod firmware;
 mod firmware_io;
