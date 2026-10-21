@@ -75,7 +75,7 @@ insulated, secure connection that can stay in place for the entire transfer.
 
 ## 2. Connect E-TUBE
 
-![E-TUBE contact connections on the connector board](images/ep800-recovery/etube-wiring-cleaned.png)
+![E-TUBE wiring overview with the full cable harness](images/ep800-recovery/etube-wiring-cleaned.png)
 
 For the breakout used in this recovery:
 
