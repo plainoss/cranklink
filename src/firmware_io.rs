@@ -95,7 +95,7 @@ pub(crate) fn flash_dcas(
 /// separate `[next_packet, 03, data_packet]` transfer request. Packet IDs wrap
 /// modulo 256. DCAS2i/X indexes are one-based LE16; older DCAS sends index zero
 /// and selects a second page at 64 KiB. The block checksum includes padding;
-/// the final image checksum includes only real bytes (after user-info changes).
+/// the final image checksum includes only real bytes (after any user-info change).
 ///
 /// Before data, `21 00 erase_code 00` erases/starts programming, `0A page 00 00`
 /// selects a page and `24 00 40 00` sets logical address 0x4000. DCASX erase code
@@ -162,14 +162,22 @@ pub(crate) fn flash_dcas_with_user_info(
         "image/motor compatibility mismatch"
     );
 
-    let payload: Cow<'_, [u8]> = if dcas_ver <= 2 {
-        let mut buf = image.to_vec();
-        let ui = user_info.unwrap_or([0, 0]);
-        buf[0xc8] = ui[1];
-        buf[0xc9] = ui[0];
-        Cow::Owned(buf)
-    } else {
-        Cow::Borrowed(image)
+    // Firmware::from_bytes reads 0xc6..0xca as the u32 image size, so the
+    // user-info bytes are its upper half. Only patch them when explicitly asked
+    // and when the size leaves them zero; images over 64 KiB are sent unchanged.
+    let payload: Cow<'_, [u8]> = match user_info {
+        Some(ui) if dcas_ver <= 2 => {
+            ensure!(
+                image.len() <= 0xffff,
+                "DCAS2 user info overlaps the size of a {}-byte image; nothing erased",
+                image.len()
+            );
+            let mut buf = image.to_vec();
+            buf[0xc8] = ui[1];
+            buf[0xc9] = ui[0];
+            Cow::Owned(buf)
+        }
+        _ => Cow::Borrowed(image),
     };
 
     if crate::firmware::Version(live.version) >= crate::firmware::Version([3, 2, 3, 0]) {
@@ -347,8 +355,7 @@ mod tests {
             image[11] = 0;
             image[15] = 0;
             image[0xc0] = 0x05;
-            image[0xc8] = 0x11;
-            image[0xc9] = 0x22;
+            image[0xc6..0xca].copy_from_slice(&(n as u32).to_le_bytes());
             image[0xca] = identity.series;
             image[0xcb] = identity.unit;
             image[0xcc] = dcas_ver;
@@ -412,8 +419,7 @@ mod tests {
                     }
                     0x27 => {
                         let mut expected_payload = self.image.clone();
-                        if self.dcas_ver <= 2 {
-                            let ui = self.expected_user_info.unwrap_or([0, 0]);
+                        if let Some(ui) = self.expected_user_info {
                             expected_payload[0xc8] = ui[1];
                             expected_payload[0xc9] = ui[0];
                         }
@@ -439,8 +445,7 @@ mod tests {
                 let offset = (index - 1) * 64;
                 let n = (self.image.len() - offset).min(64);
                 let mut expected_payload = self.image.clone();
-                if self.dcas_ver <= 2 {
-                    let ui = self.expected_user_info.unwrap_or([0, 0]);
+                if let Some(ui) = self.expected_user_info {
                     expected_payload[0xc8] = ui[1];
                     expected_payload[0xc9] = ui[0];
                 }
@@ -584,7 +589,7 @@ mod tests {
             .all(|f| !(f.control == 0x88 && f.payload.starts_with(&[0x0a, 1]))));
     }
     #[test]
-    fn dcas2_flashing_patches_user_info_switches_pages_and_uses_unindexed_packets() {
+    fn dcas2_large_image_switches_pages_and_keeps_its_size_header() {
         let id = identity_dcas2();
         let mut link = Replay::new_dcas2(65600, 2, id.clone());
         let image = link.image.clone();
@@ -630,12 +635,29 @@ mod tests {
             assert_eq!(&b.payload[68..70], &[0, 0]);
         }
 
-        // Verify SetUserInfo patching: in original image image[0xc8] == 0x11 and image[0xc9] == 0x22,
-        // but sent buffer packet has 0 at those positions.
-        // 0xc8 is index 200, which is in block 3 (0-indexed: block 3 covers 192..256, offset 200 is index 3 + 8 = 11 in payload)
-        let block_containing_user_info = &buffer_blocks[3];
-        assert_eq!(block_containing_user_info.payload[3 + (0xc8 - 192)], 0);
-        assert_eq!(block_containing_user_info.payload[3 + (0xc9 - 192)], 0);
+        // The upper size bytes at 0xc8/0xc9 are non-zero above 64 KiB; the
+        // transmitted image must be byte-identical to the parsed one.
+        let sent: Vec<u8> = buffer_blocks
+            .iter()
+            .flat_map(|b| b.payload[3..67].to_vec())
+            .take(image.len())
+            .collect();
+        assert_eq!(&sent[0xc6..0xca], &65600u32.to_le_bytes());
+        assert_eq!(sent, image);
+    }
+    #[test]
+    fn dcas2_user_info_that_overlaps_the_size_is_refused_before_erase() {
+        let id = identity_dcas2();
+        let mut link = Replay::new_dcas2(65600, 2, id.clone());
+        let image = link.image.clone();
+        let error =
+            flash_dcas_with_user_info(&mut link, &image, &id, Some([0x55, 0x66]), |_, _| {})
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("overlaps the size"));
+        assert!(link
+            .sent
+            .iter()
+            .all(|f| !(f.control == 0x88 && f.payload.first() == Some(&0x21))));
     }
     #[test]
     fn dcas2_flashing_with_custom_user_info() {
