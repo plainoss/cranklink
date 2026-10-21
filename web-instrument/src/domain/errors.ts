@@ -7,6 +7,8 @@ import { settingLabel } from "./settingFormat.ts";
 
 const CLEANUP_UNCONFIRMED = /PC-link stop.*not.*confirmed|stop could not be confirmed|cleanup.*(?:failed|not.*confirmed)/i;
 const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetooth connection is closed|BLE session failed|disconnect and inspect/i;
+/** WebUSB and Web Serial ports report an unplugged SM-PCE02 this way (usb.js, serial.js). */
+const WIRED_CLOSED = /USB device disconnected|Serial device disconnected|USB port is closed/i;
 
 /** Concise operator message for a raw error. */
 export function userFacingError(error: string, transport: TransportType | null = null): string {
@@ -26,6 +28,9 @@ export function userFacingError(error: string, transport: TransportType | null =
   if (/BLE response timeout|notification overflow/i.test(error)) {
     return `${link} stopped responding. Reconnect to read the bike’s current settings.`;
   }
+  if (WIRED_CLOSED.test(error)) {
+    return "The USB adapter disconnected. Plug it back in and reconnect to read the bike’s current settings.";
+  }
   if (LINK_CLOSED.test(error)) {
     return `${link} closed. Turn on the bike’s connection mode and reconnect.`;
   }
@@ -44,7 +49,7 @@ export function userFacingError(error: string, transport: TransportType | null =
 
 /** True when the transport is gone and further commands need a reconnect. */
 export function isLinkLost(error: string): boolean {
-  return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error);
+  return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error);
 }
 
 export interface FailureDescription {

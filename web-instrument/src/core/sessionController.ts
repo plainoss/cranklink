@@ -143,7 +143,9 @@ export class SessionController {
     const failure: OperationFailure = settings ? { kind, error, settings } : { kind, error };
     this.update({
       failure,
-      linkLost: isLinkLost(error),
+      // Sticky: an unrelated rejection (e.g. staging while offline) must not
+      // mark a dead link healthy. Connecting or a successful read clears it.
+      linkLost: this.state.linkLost || isLinkLost(error),
       statusMessage: status ? status(error) : error,
       ...rest,
     });

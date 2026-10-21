@@ -598,6 +598,20 @@ describe("Concise connection errors", () => {
     assert.equal(userFacingError("error: Invalid value\n    at host_call (host.js:1)\n[exit 1]"), "Invalid value");
   });
 
+  it("treats an unplugged USB or serial adapter as a lost link", () => {
+    for (const error of ["error: USB device disconnected; device outcome may be uncertain", "error: Serial device disconnected"]) {
+      assert.match(userFacingError(error), /USB adapter disconnected/);
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true);
+    }
+  });
+
+  it("keeps a lost link lost when a later, unrelated operation is rejected", () => {
+    const controller = new SessionController();
+    (controller as any).update({ phase: "ready", linkLost: true });
+    assert.throws(() => controller.stageParameter("lamp", 1));
+    assert.equal(controller.getState().linkLost, true);
+  });
+
   it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
     for (const original of ["BLE authentication failed: rejected", "drive-unit authentication challenge rejected"]) {
       const message = userFacingError(`error: ${original}\nThis cleanup also failed: BLE PC-link stop was not confirmed\n    at host_call (host.js:1)\n[exit 1]`);
