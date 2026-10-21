@@ -160,6 +160,23 @@ pub struct Session {
     unit_auth_attempted: bool,
 }
 impl Session {
+    /// Continue the same exclusive USB connection after the bounded bridge
+    /// handshake. The caller has consumed every received frame and selected
+    /// target 31; initialization or reopening here would lose that state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn from_bridge_port(port: Box<dyn Port>, trace: File) -> Self {
+        Self {
+            port,
+            decoder: Decoder::default(),
+            incoming: VecDeque::new(),
+            trace: Some(trace),
+            pc_slot: 0,
+            normal_slot: None,
+            target_slot: Some(31),
+            adapter_supply: true,
+            unit_auth_attempted: false,
+        }
+    }
     pub fn open(port: &str, trace: Option<&Path>) -> Result<Self> {
         ensure!(!crate::ble::is_port(port), "Bluetooth requires the settings-only BLE session; firmware/boot operations are disabled");
         let port = platform::open_port(port)?;
@@ -429,6 +446,13 @@ impl Session {
     pub fn normal_start(&mut self, slot: Option<u8>) -> Result<Identity> {
         self.normal_start_inner(slot, true, None)
     }
+    /// Start PC linking at a motor selected from the current discovery map.
+    /// The caller must not run PnP between selecting its identity and this call:
+    /// another discovery can reassign slots on a multi-component bike.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn normal_start_discovered(&mut self, slot: u8) -> Result<Identity> {
+        self.normal_start_selected(slot, true)
+    }
     pub fn normal_start_component(
         &mut self,
         slot: Option<u8>,
@@ -471,6 +495,9 @@ impl Session {
                 None => select_current_motor(&self.inventory_slots(&slots)?)?,
             }
         };
+        self.normal_start_selected(slot, require_versions)
+    }
+    fn normal_start_selected(&mut self, slot: u8, require_versions: bool) -> Result<Identity> {
         self.target(slot)?;
         let motor = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         motor.require_motor()?;
@@ -880,11 +907,12 @@ impl Session {
     }
 }
 fn fast_idle_frame(f: &Frame) -> bool {
-    f.control == 0xa8
-        && f.payload.len() == 16
-        && f.payload[0] < 32
-        && f.payload[1] == 0x70
-        && f.payload[2..].iter().all(|&b| b == 0)
+    (f.control == 0x88 && f.payload == [0x70, 0, 0, 0x78])
+        || (f.control == 0xa8
+            && f.payload.len() == 16
+            && f.payload[0] < 32
+            && f.payload[1] == 0x70
+            && f.payload[2..].iter().all(|&b| b == 0))
 }
 fn fast_boot_response_matches(f: &Frame, slot: u8, command: u8, param: u8, response: u8) -> bool {
     f.control == 0xa8
@@ -1110,6 +1138,85 @@ mod tests {
         assert!(select_current_motor(&[unit(4, 0x23, 1)]).is_err());
         assert!(select_current_motor(&[unit(4, 0x23, 0), unit(13, 0x35, 0)]).is_err());
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn discovered_motor_starts_and_stops_without_a_second_pnp_or_supply_setup() {
+        let idle = frame(0x88, &[0x70, 0, 0, 0x78]);
+        let mut script = vec![
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (
+                frame(0x48, &[13, 1, 0x1c, 0]),
+                frame(0x48, &[0, 1, 0x1e, 0x23, 0]),
+            ),
+            (frame(4, &[]), frame(0x24, &[0xe0])),
+            (frame(0x48, &[13, 0x32, 0x10, 1, 0, 0, 0]), idle.clone()),
+        ];
+        for (index, key) in [
+            [0xa2, 0x2b],
+            [0x30, 0x0e],
+            [0x7a, 0x4d],
+            [0x62, 0x2b],
+            [0x85, 0xb4],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            script.push((
+                frame(0x48, &[13, 0x32, 0x30, key[0], key[1], 0, 0]),
+                if index == 4 {
+                    frame(0x48, &[0, 0x32, 0x12, 1])
+                } else {
+                    idle.clone()
+                },
+            ));
+        }
+        script.extend([
+            (
+                frame(0x48, &[13, 0x16, 0x7c, 0]),
+                frame(
+                    0x48,
+                    &[0, 0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0],
+                ),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x2c, 0]),
+                frame(0x48, &[0, 1, 0x2e, 0x42, 0, 0]),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x84, 1]),
+                frame(0x48, &[0, 1, 0x86, 0x41, 11, 0]),
+            ),
+            (
+                frame(0x48, &[13, 0x32, 0x10, 0, 0, 0, 0]),
+                frame(0x48, &[0, 0x32, 0x12, 0]),
+            ),
+        ]);
+        // This script accepts no reset, supply, protocol-selection or PnP
+        // command: any re-discovery before PC linking fails the test.
+        let (mut session, steps) = scripted(script);
+        let identity = session.normal_start_discovered(13).unwrap();
+        assert_eq!(identity.slot, 13);
+        assert_eq!(identity.cargo, "00-CRG");
+        assert_eq!(identity.dcas_version, "4.2.0.0");
+        assert_eq!(identity.rx_version, "4.1.11.0");
+        session.normal_stop().unwrap();
+        assert!(session.normal_slot.is_none());
+        assert!(steps.borrow().is_empty());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn discovered_slot_still_requires_motor_identity_before_pc_linking() {
+        let (mut session, steps) = scripted(vec![
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (
+                frame(0x48, &[13, 1, 0x1c, 0]),
+                frame(0x48, &[0, 1, 0x1e, 0x23, 2]),
+            ),
+        ]);
+        assert!(session.normal_start_discovered(13).is_err());
+        assert!(session.normal_slot.is_none());
+        assert!(steps.borrow().is_empty());
+    }
     #[test]
     fn names_do_not_grant_motor_access_and_selectors_require_unique_resolved_models() {
         let display = UnitIdentity::from_reply(4, vec![4, 0x23, 2]).unwrap();
@@ -1172,6 +1279,19 @@ mod tests {
         f.payload[15] = 0;
         f.control = 0x48;
         assert!(!fast_idle_frame(&f));
+    }
+    #[test]
+    fn only_exact_empty_legacy_spi_notifications_are_discarded() {
+        assert!(fast_idle_frame(&frame(0x88, &[0x70, 0, 0, 0x78])));
+        for f in [
+            frame(0x88, &[0x70, 0, 1, 0x79]),
+            frame(0x88, &[0x70, 0, 0]),
+            frame(0x88, &[0x70, 0, 0, 0x78, 0]),
+            frame(0xa8, &[0x70, 0, 0, 0x78]),
+            frame(0x88, &[0x31, 0, 0]),
+        ] {
+            assert!(!fast_idle_frame(&f));
+        }
     }
     #[test]
     fn fast_slot_switch_uses_55_and_echoes_assignment() {
