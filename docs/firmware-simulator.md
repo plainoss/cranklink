@@ -1,6 +1,6 @@
 # Offline firmware simulator
 
-The [E-TUBE protocol reference](etube-protocol.md) describes the packet formats, routing and integration boundaries exercised here. Packet-matrix success and complete client probe success are separate checks; see the native-verification limitation below.
+The [E-TUBE guide](etube-protocol.md) explains discovery, routing and component-specific operations, with links to the implementation's exact encodings. Packet-matrix success and complete client probe success are separate checks; see the native-verification limitation below.
 
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
@@ -194,6 +194,11 @@ Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contai
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600, SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. Firmware metadata checks and the virtual endpoint never weaken CLI gates.
 
 The [archived native results](../tools/firmware-sim/native-validation.json) predate the current E6100 probe path: they record an expected model rejection, rather than a successful full E6100 probe. On the current SC-E7000 4.1.0 / E6100 D4.8.0 fixture, `probe` instead reaches `01/2C 00` and receives error `01 2F 39 00 FF FF`. `verify_native.py` does not accept this version-query rejection, so a manifest containing that pair makes it exit nonzero before writing its summary. The pair still passes the normal handshake/read/cleanup packet matrix. Treat this as an unresolved client/fixture compatibility gap; do not use the archived report as evidence that the current native verifier passes.
+
+Bounded queries on that motor image reject `01/2C` selectors 0–3 with the same
+error. `01/84 00` instead returns `01 86 48 00 00 00` (4.8.0.0), differing from
+the newer dual-MCU selector convention. These observations identify the gap;
+they do not establish a complete replacement probe sequence.
 
 ## EP800 resident bootloader and Key 2 recovery
 

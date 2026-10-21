@@ -1,7 +1,11 @@
 //! Renesas RX firmware writer for the documented DU-EP800 family.
+//! Byte literals in wire layouts are hexadecimal; byte counts are decimal.
 //!
-//! SM-PCE02 uses the A8 command envelope and control11 buffered60-byte
-//! transfers. It must not be mixed with the retained control48/0B legacy path.
+//! SM-PCE02 fast mode uses addressed `A8` command envelopes and control `11`
+//! buffers with 60 image bytes. The normal application relay instead uses
+//! control `48` with `F0` commands and `F8` four-byte data fragments; its
+//! retained retry path uses control `0B` buffers with 64 image bytes. These
+//! layouts and checksum windows are distinct even when RX opcodes agree.
 //!
 //! RX update entry changes the MCU's operating mode. Even `read_boot` enters
 //! firmware mode; it is not a normal application identity read. Never repeat an
@@ -174,8 +178,8 @@ pub fn reset(session: &mut Session) -> Result<bool> {
 
 /// Return the fast boot bridge to the normal application. The modern
 /// updater passes isSendReset=false to its RX writer and resets the surrounding
-/// DCAS session instead. An RX-specific28 is not reliably acknowledged on the
-/// measured2.0.7.2 bootloader; final RX status requires normal application readback.
+/// DCAS session instead. An RX-specific `28` is not reliably acknowledged on the
+/// measured 2.0.7.2 bootloader; final RX status requires normal application readback.
 pub fn reset_fast(session: &mut Session, slot: u8) -> Result<bool> {
     session
         .fast_finish(slot)
@@ -183,6 +187,9 @@ pub fn reset_fast(session: &mut Session, slot: u8) -> Result<bool> {
     sleep(Duration::from_secs(1));
     Ok(true)
 }
+/// `A8` command payloads are 16 bytes, starting
+/// `[slot, 60, F0, 05, 00, cmd, p0, p1, p2]`; replies start `[slot, 70, F2]`.
+/// The addressed slot remains part of this envelope during reply correlation.
 fn fast_payload(slot: u8, cmd: u8, params: [u8; 3]) -> [u8; 16] {
     let mut p = [0u8; 16];
     p[..9].copy_from_slice(&[slot, 0x60, 0xf0, 5, 0, cmd, params[0], params[1], params[2]]);
@@ -226,6 +233,9 @@ fn fast(
     Ok(f)
 }
 
+/// Control `11` data: `[packet, 11, sequence, F8, slot, data60, FF, FF, FF, FF]`.
+/// Pad the final data fragment to 60 bytes with `FF`; its checksum includes
+/// those bytes but excludes the four additional adapter padding bytes.
 fn fast_data_payload(packet: u8, sequence: u8, slot: u8, data: &[u8]) -> Vec<u8> {
     assert!(data.len() <= 60);
     let mut p = vec![0xff; 69];
@@ -233,6 +243,7 @@ fn fast_data_payload(packet: u8, sequence: u8, slot: u8, data: &[u8]) -> Vec<u8>
     p[5..5 + data.len()].copy_from_slice(data);
     p
 }
+// Fragment index restarts within each checksum window; decimal stride is six.
 fn fast_sequence(index: usize) -> u8 {
     ((index % 43) * 6) as u8
 }
@@ -262,7 +273,7 @@ fn flash_fast(
 ) -> Result<Receipt> {
     validate_fast_capabilities(&boot, allow_unverified_model)?;
     // Both protocol variants share the transfer wrapper and erase value. The
-    // retry capability changes the checksum block from1080 to2100 bytes.
+    // retry capability changes the checksum block from 1080 to 2100 bytes.
     let block_len = if boot.retry_capable { 2100 } else { 1080 };
     ensure!(
         BASE + image.data.len().div_ceil(60) * 60 <= 0x1000000,
@@ -300,7 +311,7 @@ fn flash_fast(
         for (index, chunk) in block.chunks(60).enumerate() {
             let id = counter.next();
             let p = fast_data_payload(id, fast_sequence(index), slot, chunk);
-            // The partial checksum covers the60-byte fragment including EOF
+            // The partial checksum covers the 60-byte fragment including EOF
             // FF padding, but excludes the four trailing adapter padding bytes.
             partial = partial.wrapping_add(sum(&p[5..65]));
             let loaded = session.exchange(0x11, &p, Duration::from_secs(2), |f| {
@@ -315,10 +326,9 @@ fn flash_fast(
                 hex::encode(&loaded.payload)
             );
             let transfer_id = counter.next();
-            // Hardware sends an intermediate83 acceptance and a separateC0
-            // completion. Consume both; leaving83 queued over2137 fragments
-            // otherwise exhausts the unsolicited-frame queue near122700bytes.
-            // C0 may arrive first: exchange preserves it for the followingwait.
+            // Hardware sends an intermediate 83 acceptance and a separate C0
+            // completion. Consume both; 83 names the transfer ID and C0 names
+            // the data ID. C0 may arrive first: exchange preserves it for wait.
             let accepted = session
                 .exchange(0x11, &[transfer_id, 3, id], Duration::from_secs(2), |f| {
                     fast_transfer_reply(f, slot, 0x83, transfer_id)
@@ -375,8 +385,10 @@ fn flash_fast(
 }
 
 /// BLE uses the stock unaccelerated F0/F2 bridge in the running DCAS app.
-/// The same application relay can be carried by ordinary SM-PCE02 control48
-/// records without entering its separate 2MHz boot bridge.
+/// The same application relay can be carried by ordinary SM-PCE02 control `48`
+/// records without entering its separate 2 MHz boot bridge. `FirmwareIo`
+/// records use a zero address placeholder; this bridge substitutes the selected
+/// component slot before sending them.
 pub struct NormalBridge<'a> {
     session: &'a mut Session,
     slot: u8,
@@ -493,6 +505,10 @@ fn legacy_body(f: &Frame) -> Option<&[u8]> {
     let p = f.payload.get(1..)?;
     (p.first() == Some(&0xf2)).then_some(p)
 }
+/// Normal relay command `[slot, F0, 00, cmd, p0, p1, p2]`; replies retain a
+/// route byte before `[F2, capability, reply, ...]`. `FirmwareIo` uses slot zero
+/// here and transport bridges substitute the live slot. This is an RX envelope,
+/// not an ordinary component group/opcode pair.
 fn legacy(
     session: &mut impl FirmwareIo,
     cmd: u8,
@@ -542,6 +558,11 @@ fn padded_window(data: &[u8], offset: usize, length: usize) -> Vec<u8> {
     window[..real].copy_from_slice(&data[offset..offset + real]);
     window
 }
+/// Stream four-byte `48 [slot, F8, sequence, data4]` fragments. Sequence starts
+/// at one and wraps modulo eight across windows. Boot 2.0.2+ uses 1024-byte
+/// checksum windows, older versions 64; EOF pads only to a 64-byte packet.
+/// Command `25` checks each padded window and `26` advances it. Finish uses
+/// the original image checksum, excluding EOF padding.
 fn transfer_ordinary(
     session: &mut impl FirmwareIo,
     data: &[u8],
@@ -572,6 +593,7 @@ fn transfer_ordinary(
     Ok(())
 }
 #[derive(Default)]
+// RX adapter packet IDs wrap modulo 255, excluding FF (unlike DCAS's modulo 256).
 struct PacketCounter(u16);
 impl PacketCounter {
     fn next(&mut self) -> u8 {

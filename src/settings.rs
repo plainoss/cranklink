@@ -185,6 +185,18 @@ pub fn capabilities_for_model(model: SettingsModel) -> Value {
         "unsupported_features":if model.modern(){vec!["fine-tune profiles", "free-shift/modern automatic shifting", "OEM light-output and maximum-power tuning", "OEM torque-bound writes"]}else if model == SettingsModel::Ep800Crg {vec![]}else{vec!["assist profiles", "drivetrain and shifting settings", "OEM torque and power tuning"]}})
 }
 
+/// One model-specific setting and its parameter layout.
+///
+/// `query` is the complete GET parameter list, including selectors. `template`
+/// is the complete SET parameter list with required reserved/default bytes.
+/// `offset` and `width` select the numeric field within reply/SET parameters,
+/// after route, group and opcode have been removed; multi-byte values are
+/// little-endian. `scale` is raw wire units per displayed input unit.
+///
+/// Several named settings share one reply. A write copies only its meaningful
+/// prefix into the SET template, changes the chosen field, and reconstructs
+/// reserved bytes from the template. `preserve` overrides that prefix length
+/// for a model; it is not the total reply length, which can include filler.
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingSpec {
     pub name: String,
@@ -342,6 +354,11 @@ impl SettingSpec {
         Ok(n)
     }
 }
+/// Base EP800 layouts; use `schema_for_model` for another supported drive unit.
+/// In assist tuples, profiles 0/1 are OEM defaults and 2/3 are user profiles;
+/// modes 1/2/3 mean ECO / TRAIL-or-NORMAL / BOOST-or-HIGH. Torque is raw Nm,
+/// not a five-Nm index (for example, 27 Nm is representable). OEM torque-bound
+/// controls have their own step constraints, separate from per-mode torque.
 pub fn schema() -> Vec<SettingSpec> {
     let mut v = vec![
         SettingSpec::new("lamp", "enum", (0, 2, 1), 0x10, 0x10, &[0], &[0], 0, 1),
@@ -842,6 +859,11 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
             .any(|s| s.group == group && (s.get == command || s.set == command))
     })
 }
+/// Profile names use two five-byte text chunks, selected by hex `50/51` or
+/// `60/61`. GET `17/24 [selector]` returns `[selector, ASCII5, ...]`; only the
+/// five text bytes belong to the name. SET `17/20` uses `[selector, ASCII5, 00]`
+/// in the legacy schema and `[selector, ASCII5]` in the modern schema. Short
+/// names are zero-filled to ten bytes before the two chunks are written.
 fn read_raw(session: &mut dyn UnitCommands, slot: u8, s: &SettingSpec) -> Result<Vec<u8>> {
     if s.width != 0 || s.value_type == "date" {
         return session.command(slot, s.group, s.get, &s.query, s.get + 2);
@@ -941,6 +963,10 @@ pub fn set(
         SettingsModel::Ep800Crg,
     )
 }
+/// Back up, issue the model-specific SET, and verify the current value by GET.
+/// The implemented setting path sends no additional generic EEPROM commit.
+/// A successful readback confirms the live value; persistence across power
+/// cycles needs a separate GET after the component restarts.
 pub fn set_for_model(
     session: &mut dyn UnitCommands,
     slot: u8,
@@ -1087,8 +1113,9 @@ pub fn set_for_model(
     })
 }
 
-// Read OEM destination first. Modern models fall back to the factory selector
-// when unset; legacy EP800 rejects that selector. Never infer region from speed.
+// Read OEM destination first. FF means unset, not EU. Modern models fall back
+// to the factory selector when unset; legacy EP800 rejects that selector.
+// Never infer region from speed.
 fn effective_destination(
     session: &mut dyn UnitCommands,
     slot: u8,
@@ -1113,8 +1140,9 @@ fn effective_destination(
 }
 
 fn validate_speed_destination(n: i64, destination: u8) -> Result<()> {
-    // The live speed is not an independent OEM ceiling. Validate permitted
-    // maxima against the model and destination table.
+    // On tested EP800 firmware, speed GET 16/B4 selector 00 aliases effective
+    // speed rather than returning an independent OEM ceiling. Validate permitted
+    // maxima against the model and destination table, not that readback.
     let (minimum, maximum) = match destination {
         1 => (1900, 3200),
         0 | 3 | 4 => (1500, 2500),
@@ -1188,6 +1216,7 @@ fn validate_modern_torque(n: i64, mode: u8, minimum: u8, maximum: u8) -> Result<
 }
 
 // GET often fills reserved bytes with FF while SET requires model-specific 00/FF defaults.
+// These lengths preserve sibling fields, not arbitrary trailing reply padding.
 fn meaningful_len(s: &SettingSpec) -> usize {
     if let Some(length) = s.preserve {
         return length;
@@ -1512,6 +1541,10 @@ pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// A name spans two independently acknowledged five-byte SETs. Failure after
+/// the first chunk can leave a partially changed name; retain the pre-write
+/// backup and read both chunks before deciding how to recover. There is no
+/// atomic name transaction or automatic replay after an uncertain outcome.
 fn set_name(
     session: &mut dyn UnitCommands,
     slot: u8,

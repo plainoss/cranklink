@@ -1,4 +1,13 @@
 //! SM-PCE02 framing; retains routing bytes for command correlation.
+//!
+//! A serial frame is `BB || escape(control || payload || FCS) || BB`, where
+//! the unescaped bytes sum to zero modulo 256. Escape `BB` as `BD 9B` and
+//! `BD` as `BD 9D`, including either value in the FCS. Host writes are padded
+//! to at least 128 bytes with `FF` after the closing delimiter; this is not a
+//! receive-record size. An `FF` inside a frame remains payload data.
+//!
+//! Reads may split a frame or escape, or contain multiple frames. The decoder
+//! retains partial state and validates the FCS before exposing a frame.
 use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Frame {
@@ -6,6 +15,10 @@ pub struct Frame {
     pub payload: Vec<u8>,
 }
 impl Frame {
+    /// View an ordinary `48` payload after its leading routing byte. Retain
+    /// the original payload when correlating a reply with a target/session.
+    /// Other controls keep their complete payload: in particular, `A8` fast
+    /// bridge records contain an addressed slot that must not be stripped.
     pub fn normalized(&self) -> &[u8] {
         if self.control == 0x48 {
             self.payload.get(1..).unwrap_or_default()

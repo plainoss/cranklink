@@ -1,609 +1,523 @@
-# E-TUBE protocol reference
+# Understanding E-TUBE with Cranklink
 
-Revision: 2026-10-21. Scope: component integration, service traffic, identity,
-settings and update transport. Hexadecimal byte strings omit `0x`; quantities
-and times are decimal unless explicitly marked. `||` means concatenation.
-`LE16/LE32` mean unsigned little-endian integers. Preserve unknown bytes.
-Indices and slices are zero-based. In the settings table, "original bytes"
-refer to GET reply parameters after removing route, group and opcode headers.
+When Cranklink inspects a bike, it first discovers the connected components
+and asks them to identify themselves. The answers establish which component
+is a derailleur, a switch, a display or a drive unit. Cranklink can then choose
+the operations it implements for that component.
 
-This is an implementation reference, not a complete specification of every
-released Shimano product. The strongest coverage is the normal service path
-between gateways and drive units. Product recognition, command support, firmware
-execution, electrical interoperability and riding behavior are separate claims.
+That distinction runs through E-TUBE: reaching a component, identifying it and
+knowing how to operate it are separate steps. This guide follows those steps,
+explains how they appear in traffic, and points to the implementation for exact
+byte layouts. Read it in order for the command lifecycle, or use the
+[wire reference](#wire-reference) to interpret a capture or implement a host.
 
-Jump to [USB framing](#2-sm-pce02-host-stream), [identity](#3-addressing-discovery-and-identity),
-[PC-link](#4-normal-motor-pc-link-lifecycle), [Bluetooth](#5-bluetooth-service-and-routing),
-[authorization](#6-protected-drive-unit-settings-authentication),
-[settings](#7-settings-wire-dictionary), [updates](#8-firmwareupdate-traffic-recognition),
-[bus fragments](#9-external-packet-fragments-and-missing-physical-specification),
-[coverage](#10-product-and-simulator-coverage) and [decoding](#11-traffic-decoding-and-implementation-checklist).
+## The components and their roles
 
-## 1. Layers and integration boundaries
+E-TUBE connects electronic components in Di2 shifting systems and Shimano
+e-bike systems. A Di2 bike can contain levers, switches, derailleurs and a
+battery unit; an e-bike can add a drive unit, assist controls and a display.
+The allowed combination depends on the system and its firmware.
 
-| Boundary | Encoding | Established scope |
-| --- | --- | --- |
-| Host ↔ SM-PCE02 | Serial stream, delimiter/escape/additive FCS | Normal service and selected motor update paths |
-| Host ↔ Bluetooth gateway | Shimano GATT service and characteristic records | Authentication, normal routing, selected update relay |
-| Gateway ↔ external E-TUBE nodes | Addressed packets; firmware FIFO fragments | Bounded packet processing in supported firmware |
-| Motor D ↔ motor M | Separate internal interprocessor protocol | Some EP800 application exchanges; not an external E-TUBE port |
-| Traction battery ↔ motor/charger | Product-specific battery interface | Not described by the USB or GATT framing rules |
-| Wireless shifter / ANT / D-FLY / CAN accessory | Separate radio or accessory interface | Not established by a successful E-TUBE service query |
+Cranklink reaches the network through a connection device. Over USB, an
+SM-PCE02 carries its commands. Over Bluetooth, a compatible gateway provides
+the radio connection and forwards service commands to other components.
+A gateway can be part of another component, such as a display or wireless
+unit; the connection role and the component's everyday function are distinct.
 
-A host application can integrate through SM-PCE02 or a compatible BLE gateway
-using the formats below. A new physical E-TUBE component additionally needs the
-electrical transceiver, modulation, arbitration, discovery participation, power
-behavior and normal-running messages. These are not fully specified here. In
-particular, **2 Mbaud USB serial is not the external E-TUBE wire baud rate**.
-
-EW-SD50 and EW-SD300 designate wiring/connector systems; connector conversion
-does not establish functional compatibility. Follow the exact component and
-firmware combinations in Shimano's [electronic compatibility charts](https://productinfo.shimano.com/en/compatibility/C-473)
-and [e-bike charts](https://productinfo.shimano.com/en/compatibility/C-525).
-Passive wiring, satellite switches and battery mounts need not appear as
-independent service nodes. A Di2 BT-DN battery is not a STEPS traction BMS.
-
-## 2. SM-PCE02 host stream
-
-Serial configuration: **2,000,000 baud, 8N1, RTS asserted**, 500 ms write deadline.
-RTS assertion is not evidence that CTS flow control is required. SM-PCE1 and
-SM-BCR2 must not inherit this transport merely because they are PC interfaces.
-
-For control `C` and payload `P`:
-
-```text
-D   = C || P
-FCS = -sum(D) mod 256
-wire = BB || escape(D || FCS) || BB
-escape: BB → BD 9B; BD → BD 9D; every other byte unchanged
-if len(wire) < 128: append FF until len(wire) == 128
+```mermaid
+flowchart LR
+    Cranklink --> USB[SM-PCE02 over USB]
+    Cranklink --> BLE[Bluetooth gateway]
+    USB --> Network[E-TUBE network]
+    BLE --> Network
+    Network --> Controls[Levers and switches]
+    Network --> Shifting[Derailleurs and hub actuators]
+    Network --> Power[Di2 power units]
+    Network --> Ebike[Drive unit and display on an e-bike]
 ```
 
-There is no outer length field. Escape the FCS too. Padding is outside the
-delimiters/checksum; writes above 128 bytes are not rounded to 128-byte multiples.
-Receive padding length is not implied by this transmit rule. `FF` inside a frame
-is data. Retain partial frames/escapes across reads and parse multiple frames per
-read. Validate `sum(C || P || FCS) mod 256 == 0` before dispatch. Bound buffers,
-reject invalid escapes/checksums and resynchronize at delimiters.
+This shows the logical command path across different system types. It does
+not imply that all the pictured components belong on one compatible bike.
+Shimano's [Di2](https://productinfo.shimano.com/en/compatibility/C-473) and
+[e-bike](https://productinfo.shimano.com/en/compatibility/C-525) charts describe
+the permitted combinations. EW-SD50 and EW-SD300 identify wiring and connector
+systems; adapting a connector alone does not establish compatibility.
 
-Cranklink retains `control` and the full `payload`. Its convenience normalization
-removes the first payload byte **only for control `48`**. Do not normalize `A8`
-that way: its first payload byte is still an address. Correlate before discarding
-any route byte.
+Other conversations sit alongside E-TUBE service traffic. A traction battery
+has its own motor and charger interface. Some drive units contain separate
+controllers, called D and M, that communicate internally. Wireless shifters
+and cycle-computer broadcasts introduce radio protocols too. Each observation
+point needs its own interpretation: USB bytes, Bluetooth records and signals
+on a component's wiring expose different parts of the system.
 
-### Adapter commands
+## Discovering components
 
-These payloads are inside the framing above. Reply status layouts vary by command.
+`cranklink units` is the starting point for a component inventory. With an
+SM-PCE02 selected explicitly, the command is:
 
-| Request control | Payload | Reply control | Meaning / required interpretation |
-| --- | --- | --- | --- |
-| `10` | empty | `30` | Adapter initialization; first reply byte `00` |
-| `1A` | `01` | `3A` | Unlock power limit; reply byte 1 is `00` |
-| `1A` | `02` | `3A` | Power query: `02 state` |
-| `1A` | `03` | `3A` | Enable adapter supply; reply byte 1 is `00` |
-| `1C` | empty | `3C` | Capacitor level, first two bytes LE16 |
-| `03` | mode | `23` | Set protocol/role; normal accepted status `00` |
-| `04` | empty | `24` | Resulting protocol and local slot |
-| `05` | empty | `25` | Adapter/gateway revision |
-| `06` | slot | `26` | Select target, `00` success |
-| `1D` | `00` | `3D` | Master PnP; accepted reply starts `00 00` |
-| `1B` | empty | `3B` | Connected-slot bitmap, at least four bytes |
-| `07` | subcommand, optional LE32 mask | `27` | Fast-mode adapter control; separate from ordinary discovery |
-
-USB normal/master requests mode `20`, expecting readback `A0 | pc_slot`.
-UPDATE/master requests `60`, expecting `E0 | pc_slot`. The mode byte includes
-role/state bits; its low five bits are the local address, not a model identifier.
-This is the implemented subset, not an exhaustive adapter opcode allocation.
-
-Power state `01` denotes external supply and `02` permits adapter supply.
-States `03/04` require charging: the client polls every 3 s, waits for capacitor
-level ≥2703, then requires state `01/02`, with a 90 s limit. The level is a raw
-device quantity, not a stated voltage unit. Initialization waits 3 s after reset;
-protocol changes wait 1 s and PnP waits 5 s. These are host pacing policies, not
-measured minimum bus timings. Adapter power does not prove traction power or
-assist readiness.
-
-## 3. Addressing, discovery and identity
-
-Normal host requests are `48 [target, group, opcode, parameters…]`.
-Normal USB replies are `48 [pc_slot, group, reply_opcode, parameters…]`.
-The reply address is the **PC recipient**, not necessarily the requested node.
-The serialized request/session identifies the responding target.
-
-Slots are five-bit addresses, 0–31 in the host interface. Bitmap byte `i/8`, bit
-`i%8` denotes slot `i`. Slots may change after PnP or power cycles even when the
-occupied bitmap is unchanged. Resolve identities from the current map. Slot 13
-is a simulator fixture and observed example, never a universal motor address.
-The virtual packet bus also uses target 63 for broadcast; that does not make 63
-a valid USB target-selection argument.
-
-For the ordinary service families below, success opcode is request +2 and error
-opcode request +3. Validate address, group, opcode, length and echoed selector;
-do not apply this arithmetic to bootloader or adapter commands.
-
-| Group / request | Parameters | Success | Reply parameters / use |
-| --- | --- | --- | --- |
-| `01/1C` | `00` | `01/1E` | Stock identity; first bytes series, unit |
-| `04/0C` | `00` | `04/0E` | Switch/lever part discriminator where supported |
-| `16/7C` | `00` | `16/7E` | Seven-byte product/model attributes on supported motors |
-| `01/2C` | `00` on the supported newer path | `01/2E` | D application version; not universally accepted on older images |
-| `01/84` | `01` | `01/86` | M/RX application version/cache |
-| `01/3C` | `00` | `01/3E` | Six binary serial bytes; optional seventh reserved `FF` |
-| `01/A4`, `01/AC` | `00` | `01/A6`, `01/AE` | Product serial pieces on supported modern motors |
-| `32/9C` | `00` | `32/9E` | FD/RD part discriminator where supported; not a general ownership query |
-| `26/4C` | `00` | `26/4E` | Motor's battery type/product/fix diagnostic cache |
-| `26/44` | `00` | `26/46` | Battery-related diagnostic; full semantics not established here |
-
-Version bytes `v0 v1 v2` mean `(v0>>4).(v0&15).v1.v2`; e.g. `42 00 00`
-is 4.2.0.0 and `46 00 01` is 4.6.0.1. Filenames can omit the last revision.
-Serial bytes are not a BCD number or ASCII string; retain wire order. Modern
-product serial text is assembled from first reply bytes `[1:6]` and second reply
-bytes `[0:6]`, then checked as printable ASCII. It differs from the binary serial.
-
-Series/unit pairs can have multiple models. Match part and exact product
-attributes, retaining ambiguity if an optional query is unavailable. EP800 uses
-series/unit `23/00`, attributes `30 30 00 00 00 00 00` (standard) or
-`30 30 2D 43 52 47 00` (cargo). EP600 uses `30/00`, EP801 `35/00`, EP500
-`37/00`, E5100 `38/00`. EP600/EP801 share a firmware distribution family;
-the filename does not establish the live motor model.
-
-Older E6000-family identities need special care: sampled E6000 is `08/00`,
-E6001-family includes `0C/00` and a distinct `0A/00` variant, and E6002/E6012
-uses `15/00`. The current client catalog includes historical shared-`08` aliases;
-do not treat those aliases as an authoritative live-wire identity map. Older
-motor product attributes can be binary; decoding all such replies as text loses
-information. An unknown identity is not permission to use another model's writes.
-
-### Bounded EP800 memory-read service
-
-Normal `32/8C → 32/8E` reads 1–3 bytes on the working EP800-CRG application
-profiles admitted by [the resident-dump reader](../src/bootloader_dump.rs).
-Request parameters are `[addr_hi,addr_lo,addr_mid,count,00]`, where the three
-address bytes form a 24-bit address in the unusual high/low/middle order.
-Reply parameters echo `[addr_hi,addr_lo,addr_mid,data…]`; validate that echo
-and the six-byte record (or seven with reserved final `FF`). This read does
-not enter boot mode. The reader restricts model, board, D/M versions, fixed
-64 KiB resident range and reviewed application sample windows. It is not a
-universal memory-read capability of every E-TUBE node.
-
-## 4. Normal motor PC-link lifecycle
-
-For a directly addressed motor with PC source `p`, after discovery and target
-selection, send these logical group/opcode/parameter records in order:
-
-```text
-32 10 01 p 00 00             start
-32 30 A2 2B 00 00           key 1
-32 30 30 0E 00 00           key 2
-32 30 7A 4D 00 00           key 3
-32 30 62 2B 00 00           key 4
-32 30 85 B4 00 00           key 5
-← 32 12 01 ...              require matching start receipt
-... read identity / settings ...
-32 10 00 p 00 00             stop
-← 32 12 00 ...              require stop receipt
+```sh
+cranklink --port usb units
 ```
 
-The USB client waits 300 ms after start on adapter supply, otherwise 1 s, and
-100 ms between keys. Fixed PC-link keys establish a service session; they do
-**not** grant protected-setting authorization. Missing/reordered keys must not
-be interpreted as a successful link. Preserve asynchronous receipts while
-waiting for command replies. A second start on an already started motor is not
-an innocuous keepalive.
+The connection device discovers temporary addresses called **slots**.
+Cranklink reads the identity at each relevant slot and records the current
+map. A component can receive a different slot after another discovery or
+power cycle, even if the set of occupied slots looks unchanged.
 
-## 5. Bluetooth service and routing
+A stock identity contains a **series number** and **unit number**. These
+identify a model or a set of candidates. Some components need another query
+for a part code or product attributes before Cranklink can resolve the name.
+Unknown values remain unknown, and ambiguous identities retain their candidate
+list.
 
-Service UUID: `000018ff-5348-494d-414e-4f5f424c4500`.
-Characteristic UUIDs substitute the listed short value in the first eight hex
-digits: e.g. `00002afa-5348-494d-414e-4f5f424c4500`.
+A Di2 rear derailleur provides a useful example. In Cranklink's catalog, stock
+identity `07 04` leaves two candidates: RD-6870-GS and RD-6870-SS. A part query
+distinguishes them: part `01` selects GS and `00` selects SS. Cranklink has now
+identified the derailleur; it has not gained a gear-control implementation.
+The [component catalog and identity resolver](../src/unit_models.rs) contain
+the complete mapping and the queries used to refine it.
 
-| Short ID | Purpose | Record format / direction |
+The slot answers where the component is **in this discovery**. Its model
+answers what kind of component it is. Its serial, where available, identifies
+the individual component. None of those can substitute for the others.
+
+### What identification enables
+
+Cranklink's catalog covers more component types than its settings and firmware
+commands. These examples show how to interpret a recognized name:
+
+| Component type | Examples in the catalog | What Cranklink's recognition establishes |
 | --- | --- | --- |
-| `2AF3` | Authentication control | Write user/app proofs; subscribe for auth events |
-| `2AF4` | Authentication nonce | Read challenge |
-| `2AF9` | PCE response | Notify/indicate: `[reply_control, payload…]` |
-| `2AFA` | PCE command | Short write: `[00, control, payload…]` |
-| `2AFD` | FREE response | Notify/indicate: `[component_slot, group, opcode, params…]` |
-| `2AFE` | FREE command | Write: `[target_slot, group, opcode, params…]` |
-| `2AFF` | Feature control | Access check `FF 00`; other values can change operation mode |
+| Di2 derailleurs | Road, MTB and GRX front/rear derailleurs | Series/unit identity and applicable part refinement. |
+| Levers and switches | ST-6770, ST-R9270, SW-M8050, SW-EM800 | Component identity, including side or part code where defined. |
+| Di2 batteries and mounts | SM-BMR1/BMR2, BM-DN100, BT-DN110/DN300 | Identity of the electronic power unit. |
+| Hub and hub actuators | FH-U6060, MU-S705, MU-UR500/510/520 | Model identities from the component catalog. |
+| Displays, wireless units and suspension components | SC-EM800, EW-WU111 and numbered suspension units | Known model identities. |
+| Drive units | EP-series and E-series families | Stock identity and available product attributes. |
 
-Discover actual read/write/notify properties. Use write-with-response where
-required; `2AF3` requires it in the implemented authentication path. GATT payloads
-have **no USB BB delimiters, BD escapes, additive FCS or 128-byte padding**.
-FREE response byte 0 identifies the component, unlike the PC-recipient byte in
-USB `48`. The normal client limits gateway params to 16 and unit params to 15;
-these implementation limits do not establish every gateway's maximum record.
+A resolved name records identity. Gear control, settings and firmware updates
+need separate implementations and validation for the component. Cranklink's
+current settings and firmware paths are scoped to selected drive units.
 
-### Gateway authentication
+Even unit number `00` is insufficient to identify a motor: Di2 batteries and
+other components use it too. Cranklink's motor paths check the complete
+family identity. Some catalogued drive units, including E5000/E5080, are not
+admitted by the current motor-operation gate.
 
-If both auth characteristics exist, read a nonempty nonce of 1–16 bytes
-(one 100 ms retry for an empty read), subscribe to `2AF3`, then write
-`01 || user_proof` and `02 || app_proof`. Six ASCII passkey digits are required,
-including leading zeroes. Gateway proof calculation uses AES-128 ECB: pad a
-short nonce with PKCS#7 byte `16-n`, encrypt the first block and retain the first
-`n` ciphertext bytes. A 16-byte nonce uses the encrypted first block without
-appending a retained second block. The user key is a fixed ten-byte prefix plus
-the six passkey bytes; the application key is separate. The implementation and
-fixed test vectors are in [the BLE module](../src/ble.rs).
+Likewise, SM-PCE1 appearing in the catalog does not mean Cranklink implements
+its host transport. Catalog membership describes names Cranklink can resolve
+when an identity is available, rather than hardware certification of every
+listed component. See [`UnitIdentity` and the motor gate](../src/device.rs)
+and [motor capabilities](../src/motor_support.rs) for those decisions.
 
-After proof writes, send Feature `FF 00`, subscribe to PCE/FREE replies, select
-normal/slave with PCE `00 03 00` and require PCE `04` readback with high bits
-`80`. A successful write or OS pairing alone is not gateway authentication.
-Absence of both auth characteristics is a separate supported service shape;
-presence of only one is invalid. Authentication failure clears the credential.
+## Following an identity query
 
-### Normal/slave route
+Cranklink's ordinary component requests name a target, a command group and
+an operation, followed by parameters. Suppose discovery places a component
+at slot 4. Its stock-identity query is:
 
-1. Select mode `00`; query `04`, obtaining `80 | pc_slot`.
-2. PCE `0C 01` enters gateway PC-link mode; require `2C` receipt.
-3. PCE `0D 00` returns `[battery_status, master_series, compatibility_flag,…]`.
-   Byte 2 is **not** the master unit number. A literal battery-present status
-   from a gateway handler does not prove a real BMS handshake.
-4. If a master is announced, read its stock at logical slot 0 (`01/1C`).
-   Routed `01/14 00` returns at least six params; bitmap occupies bytes 2–5.
-   The master can be absent from that bitmap; include separately verified slot 0.
-5. Gateway cache `02/14 [slot] → 02/16 [slot,series,unit,…]` identifies slaves.
-   Select the target with PCE `06` before direct FREE commands. Cache reads via
-   slot 0 can change selection; restore target before subsequent direct traffic.
+```text
+04 01 1C 00
+```
 
-Do not substitute the USB master's PCE `1B` bitmap for this slave discovery path.
+Byte strings here are hexadecimal. The fields mean:
 
-### Normal/master route
-
-Master routing changes ownership and the address map. Query gateway revision
-(`05`) and local stock (`13 [01 1C 00] → 33 [01 1E series unit…]`), request
-mode `20`, and require `04 → 24 A0`. Then PnP `1D 00`, wait 5 s, obtain
-PCE `1B` bitmap, and start gateway PC-link `0C 01`.
-
-In this mode the gateway sends motor start plus all five keys. Consume its
-motor start receipt rather than replaying start. FREE receipt begins
-`[motor_slot,32,12,01,00,FF,FF]`, confirming owner zero. Direct FREE commands
-carry the new target slot; do not reject a motor solely because it reused the
-gateway's former slave slot. Read remote stock directly with `01/1C`.
-
-For repeated operations, retain gateway mode and ownership state until explicit
-disconnect; do not call gateway stop after each save. Cleanup order is motor
-stop → select slave mode `00` → confirm `04` high bits `80` → gateway `0C 00`
-→ close GATT. Slave restoration may acknowledge `23 10` asynchronously; only
-readback confirms the resulting mode. Gateway stop can end Bluetooth connection
-mode. A timeout fences subsequent dispatch; closing GATT does not prove that
-the motor acknowledged stop. See [Bluetooth usage](bluetooth.md).
-
-## 6. Protected drive-unit settings authentication
-
-This is separate from the gateway PIN and fixed PC-link keys. Bind the exchange
-to fresh stock identity, exact binary serial, model parameters and D version.
-Only one attempt is made per session; malformed/reordered fragments or a failed
-receipt stop the operation. Do not log keys, challenges or proofs.
-
-| Motor family | Protocol selection |
+| Bytes | Meaning |
 | --- | --- |
-| EP800 / cargo; E5100 | Legacy |
-| EP600 / EP801 / EP500 | Modern |
-| E8000 / E8080 | Legacy from D4.7.0, not required before |
-| E7000; standard E6100 / E6110 / E6180 | Legacy from D4.4.0, not required before |
-| E6100 cargo / E6180 trekking | Legacy |
-| Older E6000 families | Variant-dependent; unresolved modern identities block client protected writes |
+| `04` | Address the component currently at slot 4. |
+| `01` | Use the group containing the stock-identity command. |
+| `1C` | Request stock identity. |
+| `00` | Supply this query's parameter. |
 
-Legacy: `16/D8` carries a seven-byte serial-derived authentication value;
-`16/DA` returns a 16-byte challenge in three fragments. Encrypt the challenge as
-one AES-128 ECB block with the derived update key; send proof via `16/E0`.
-Require `16/E2` success. Modern: send encrypted authentication block via `33/68`,
-receive encrypted challenge via `33/6A`, decrypt with the encryption key and
-encrypt the resulting nonce with the update key, then send via `33/70` and
-require `33/72` success.
+A reply body beginning `01 1E 07 04` means the stock-identity reply (`01/1E`)
+reports series `07`, unit `04`, as in the RD-6870 example. The subsequent part
+query uses `32/9C 00` and expects `32/9E`. These are identity reads; they are
+unrelated to commanding the derailleur to move.
 
-Both block exchanges use selectors `16`, `26`, `34` for respectively 6, 6, 4
-bytes. The last fragment retains two trailing `FF` bytes in its six-byte data
-area. Logical challenge record is `[group,reply,selector,data6]`; unit/USB route
-adds another byte. Final success record is `[route,group,reply,FF,FF,FF,FF]`.
-BLE accepts that seven-byte record or a ten-byte notification with exactly the
-known extra three buffer bytes; do not mistake filler for a boolean status.
-
-Exact derivation and synthetic vectors are centralized in
-[unit_auth.rs](../src/ble/unit_auth.rs). Legacy uses the six binary serial bytes
-as three LE16 words and a 32-bit xorshift generator. Modern also uses the last
-six **ASCII** product-serial characters, without hex decoding or case conversion.
-Keys cannot be transferred across these schemes. Authorization permits the
-protected service; each command's range, ownership and model checks still apply.
-
-## 7. Settings wire dictionary
-
-This table specifies the implemented EP800 layouts. All queries use parameter
-`00` unless another selector is given. Success is SET/GET +2; replies may retain
-selectors and padding. Check the model schema before reusing a layout.
-
-| Field | Group | SET / GET | Parameters / interpretation |
-| --- | --- | --- | --- |
-| Lamp | `10` | `10 / 14` | Byte: 0 off, 1 switch, 2 always on |
-| Light output | `10` | `18 / 1C` | LE16 ×0.01 W; SET adds `FF FF` |
-| Lighting reserve | `16` | `A0 / A4` | LE16 minutes; SET adds `FF FF` |
-| Walk assist | `16` | `68 / 6C` | Byte: 0 disabled, 2 enabled |
-| Wheel circumference | `35` | `00 / 04` | LE16 mm; SET adds `00 00` |
-| Mounting angle | `16` | `58 / 5C` | LE16 degrees; EP800 SET adds `00 00` |
-| Destination | `16` | `A8 / AC` | GET `01`; reply selector, value; SET selector,value,`FF FF` |
-| Active profile | `16` | `80 / 84` | Byte 5 or 6; SET adds `00 00 00` |
-| Assist speed | `16` | `B0 / B4` | GET `01`; SET LE16 km/h×100,`01 FF` |
-| Assist tuple | `16` | `F8 / FC` | GET profile,mode; SET profile,mode,torque,character,start,`00 00` |
-| Assist labels | `17` | `28 / 2C` | GET profile; SET profile,label,`00 00` |
-| Profile name | `17` | `20 / 24` | GET selector; reply selector,ASCII5; legacy SET selector,ASCII5,`00`; selectors `50/51`, `60/61` |
-| OEM torque bounds | `17` | `18 / 1C` | Minimum,maximum,`00 00` |
-| Maximum power | `17` | `10 / 14` | GET mode `01/02/03`; reply mode,LE16 watts; SET mode,LE16 watts,`00` |
-| Display speed adjustment | `16` | `D0 / D4` | Signed byte, 0.1%; valid steps 5 raw units |
-| Shift system / gears | `0B` | `80 / 84` | System,gear count,`00 00` |
-| Front teeth | `0A` | `48 / 4C` | Front gear count,teeth,`00 00` |
-| Rear teeth | `0B` | `48 / 4C` | Gear selector,teeth,`00` |
-| Rear pattern | `0B` | `B0 / B4` | LE16 index,`FF FF` |
-| Start mode | `0B` | `88 / 8C` | SET start gear,original byte 1,`00 00` |
-| Auto shift mode | `0B` | `00 / 04` | Byte |
-| Auto cadence | `0B` | `90 / 94` | SET LE16 rpm×10,original bytes 2–5,`00` (7 bytes) |
-| Shift advice | `0B` | `D8 / DC` | Byte |
-| Shift limits | `0B` | `60 / 64` | SET up,down,original bytes 2–3; 255 unlimited |
-| Maintenance alert | `48` | `40 / 44` | Boolean byte |
-| Maintenance distance | `48` | `48 / 4C` | LE32 km; all `FF` means unset |
-| Maintenance date | `48` | `50 / 54` | Year−2000,month,day,reserved; all `FF` unset |
-
-Profile selectors 0/1 are OEM defaults, 2/3 editable user profiles. Modes 1/2/3
-are ECO / TRAIL-or-NORMAL / BOOST-or-HIGH. EP800 tuples expose torque in Nm,
-character 0–9 and start 0–4. Torque is not restricted to a five-Nm lattice;
-factory values can be 27 Nm. OEM torque-bound controls have their own steps.
-Labels 0/1 select ECO-NORMAL-HIGH / ECO-TRAIL-BOOST. Profile names allow up to
-ten printable ASCII characters and need D4.1.4 or later in the legacy schema.
-Each name chunk carries five text bytes, zero-filled for shorter names.
-
-EP800 ranges include wheel 1300–3000 mm, mounting 0–60°, light output
-135–2700 raw hundredths W and reserve 0–180 min. Destinations 0/3/4 permit
-15–25 km/h and destination 1 permits 19–32 km/h in this model schema. Destination
-3 caps maximum power at 400 W, other listed destinations at 500 W. These bounds
-describe service settings, not an electrical power-stage specification.
-
-Modern basic-mode assist tuples retain a sixth meaningful byte containing
-carry-over/cutoff data; preserve it when editing another field. Modern names
-use `[selector,ASCII5]` SET parameters, omitting the legacy trailing `00`;
-both layouts still carry five text bytes per chunk. Modern label SET has only
-profile and label. Modern character ranges differ by mode (ECO 0–9, TRAIL
-0–14, BOOST 4–14). Fine-tune profiles and
-free-shift are not implemented by this dictionary. E5100 and older E-series
-expose narrower schemas; older lamp is 0/1 and mounting SET can be two bytes.
-E6000 common wheel range is 2000–2400 mm, angle 0–45°.
-
-On tested EP800 firmware, speed GET selector 0 aliases the effective speed;
-it is not an independent OEM ceiling. Destination GET selector 0 can be rejected.
-An OEM destination `FF` is unset, not EU. EP600/EP801 may support the documented
-factory-selector fallback; do not copy it to EP800. Query current destination
-before destination-dependent validation and stop on rejected or malformed data.
-
-Read the full shared tuple, back up raw original plus identity, replace only the
-selected field, reconstruct SET-specific reserved bytes, send once, and read
-back. A GET echo verifies the live value; a fresh power-cycle GET verifies
-persistence. There is no general extra EEPROM commit in the implemented setting
-path. Multi-setting batches are ordered, not atomic. Profile names span two
-writes and can partially complete. See [settings behavior](settings.md).
-
-## 8. Firmware/update traffic recognition
-
-D and M firmware are different images with companion-version requirements.
-Container checksum, target series/unit, board, bootloader generation, complete
-image length and companion compatibility all matter. A valid filename or outer
-FCS does not establish a valid flash target. Normal version reads do not enter
-boot mode; boot-capability probing can do so.
-
-### D/DCAS family
-
-Application address retention uses `01/C0 [slot] → 01/C2`. UPDATE/master then
-uses outer `88` and five payloads:
+The connection adds its own packaging. Through SM-PCE02, the request becomes:
 
 ```text
-01 31 41 59    02 26 53 58    03 97 93 23
-04 84 62 64    05 33 83 27
-← 11 key_index ...           each key's distinct acknowledgment
+BB 48 04 01 1C 00 97 BB
 ```
 
-These differ from normal PC-link keys. App-to-boot handoff can require key 5
-again after a mode transition/delay. One key ACK is not a completed entry.
-Legacy `88` replies do not carry an explicit component slot; serialize access.
+`BB` marks each frame boundary, `48` identifies a normal routed command, and
+`97` is an additive checksum. A short USB write also has trailing `FF` padding
+outside the frame. The [frame codec](../src/protocol.rs) specifies escaping,
+checksum calculation, padding and decoding across arbitrary serial reads.
 
-| Boot payload prefix | Response prefix | Purpose |
+Over Bluetooth, the gateway offers a FREE command channel for component
+requests. In BLE terminology, that channel is a **characteristic**. A direct
+FREE query carries the target and command as one value, without USB framing.
+Some discovery queries instead use the gateway's cache; the
+[BLE session implementation](../src/ble.rs) selects the appropriate route.
+
+One detail is easy to miss in captures: **the reply address depends on the
+connection**. A normal USB reply is addressed to the PC's slot. A BLE FREE
+notification identifies the component whose reply it carries. Cranklink must
+retain the discovery map and connection context to interpret either correctly.
+
+## From discovery to a service session
+
+Discovery and identity form the shared starting point. What happens next
+depends on the component and operation. Cranklink's wired `units` inventory
+does not start a motor PC-link session. Bluetooth discovery can also require
+gateway setup and role changes, so its traffic is not identical to the wired
+inventory.
+
+Cranklink's `probe`, motor settings and motor firmware paths require a
+recognized drive unit. They are not generic commands for every component
+that `units` can name. For motor settings, the sequence is:
+
+```text
+Discover → select motor → open service session → finish identification
+         → read or change settings → close service session
+```
+
+The **PC-link session** is the motor's service connection. Startup includes a
+fixed sequence of keys and a motor acknowledgment. Cranklink completes the
+model and firmware checks needed for the requested operation, then sends the
+command. At the end, it asks the motor to stop and checks the acknowledgment.
+Opening a serial port or establishing Bluetooth is only the transport step.
+
+There can also be separate permissions. Bluetooth gateway authentication uses
+the bike's passkey to obtain gateway access. Motor authorization permits
+protected settings on families and firmware that require it. PC-link startup,
+gateway authentication and motor authorization are different exchanges.
+The [authorization policy](../src/motor_support.rs) and
+[key derivation and receipts](../src/ble/unit_auth.rs) define the motor-specific
+requirements; they should not be applied to Di2 components merely because
+those components share the network.
+
+Ownership matters during that session. A Bluetooth gateway in master mode can
+start the motor's session on Cranklink's behalf. Cranklink consumes the existing
+acknowledgment instead of starting twice. It retains the address and ownership
+state across related operations, then releases the motor and restores gateway
+routing during cleanup. The details live beside the
+[wired session](../src/device.rs) and [BLE lifecycle](../src/ble.rs).
+
+Ordinary service requests run one at a time. Their replies have no general
+transaction identifier to distinguish concurrent requests for the same
+operation. One session owner must coordinate discovery, routing, pending
+replies and cleanup.
+
+## Changing a value and confirming the result
+
+Each component-specific operation has its own read and write rules. Cranklink's
+named motor settings provide an example of how those rules affect a change.
+
+For example, the EP800 lamp setting uses values `0` for off, `1` for switch
+controlled and `2` for always on. Cranklink first reads and saves the original
+value with the motor identity, sends the requested value, and reads it again:
+
+```text
+Read lamp → reports 0
+Save the original value and motor identity
+Set lamp to 2 → receive the motor's response
+Read lamp again → reports 2
+```
+
+The write response reports the command's result. The following read checks
+the value now exposed by the motor. To check persistence, end the session,
+power-cycle the bike and read in a new session.
+
+Some settings share their payload with neighboring fields. Cranklink reads
+the complete group, changes the requested field and preserves its neighbors.
+Reserved bytes in a GET reply can differ from the bytes required by SET, so
+copying a reply back unchanged is insufficient. The [`SettingSpec` layouts,
+payload construction and profile-name handling](../src/settings.rs) keep these
+rules alongside the model schemas. The [settings guide](settings.md) explains
+the CLI's authorization, backup and restore behavior.
+
+A lost reply creates an uncertain outcome: the motor may have applied the
+write before communication failed. Cranklink must re-establish a known session
+and read the value before deciding whether another write is needed. The same
+reasoning matters for an external integration: automatically replaying a
+timed-out command can repeat an operation that already succeeded.
+
+## Reading traffic and recognizing updates
+
+Start with the recording's observation point. USB captures contain adapter
+frames; BLE captures contain characteristic records. Neither directly supplies
+the electrical frame format on the E-TUBE cable. In particular, the SM-PCE02
+host serial rate is not the cable's signaling rate.
+
+Keep direction, timestamps, model, board, firmware and the current discovery map
+with the raw recording. Retain unknown opcodes and status bytes without assigning
+them an invented meaning. Redact credentials and private identities before
+sharing traces.
+
+Next, find discovery and any startup required by the operation. Discovery
+establishes the current slot map; motor-session startup adds ownership context.
+Gateway role changes can also alter routing. Correlate a reply with its command group,
+operation, parameters and route. A single serial read can contain part of a
+frame or several frames, and fragmented messages need reassembly before their
+contents make sense.
+
+Firmware updates introduce another conversation: boot entry, numbered blocks,
+checksums, completion and application return. An adapter can acknowledge that
+it buffered data before the component has checked or programmed it. Cranklink
+therefore distinguishes transfer acceptance, transfer completion, component
+checksum, finish and reset receipts.
+
+Cranklink's implemented motor update paths include D/DCAS and M/RX. Ordinary
+RX relay and SM-PCE02 fast RX use different envelopes and block sizes; a BLE
+motor relay is also separate from updating the gateway's own radio. The exact
+contracts are documented beside the [shared D writer](../src/firmware_io.rs),
+[RX transports](../src/rx.rs) and [BLE motor relay](../src/ble/firmware.rs).
+The [firmware metadata and target checks](../src/firmware.rs) determine which
+images and families those writers admit.
+
+## Deciding what a custom integration needs
+
+The work depends on where the integration joins the system:
+
+| Integration | What it must implement |
+| --- | --- |
+| A host using SM-PCE02 | Host framing, discovery, routing and the sessions and commands for its chosen components. |
+| A host using an existing BLE gateway | GATT access, gateway authentication, routing and component-specific sessions and commands. |
+| A replacement display, switch or derailleur on the cable | The electrical interface, network participation, power behavior and normal operating messages, plus any service commands it exposes. |
+| A replacement traction battery | Its battery generation's startup, acceptance, telemetry, limits, faults and power-control behavior. |
+
+Cranklink's service implementation is a concrete starting point for the first
+two. A physical replacement also needs the operating traffic that makes the
+component function on a bike: switch events, gear requests and actuator status,
+or the corresponding assist, power and fault messages. These are separate
+from reading a component's identity or configuration.
+
+The gateway simulator's four-byte FIFO fragments describe one firmware
+boundary. They do not establish the complete wire format or electrical
+behavior needed for a drop-in component. The
+[gateway reassembly code](../tools/firmware-sim/fw_sim/gateway.py) shows exactly
+which boundary is modeled. Traction BMS, wireless shifting, ANT/D-FLY and the
+motor's internal D–M connection likewise need their own protocol treatment.
+
+## Wire reference
+
+Byte strings and command numbers below are hexadecimal; counts, ranges and
+times are decimal. `group/opcode` names an ordinary component command, while
+an adapter control belongs to the surrounding transport. `LE16` and `LE32`
+mean little-endian integers. Array offsets are zero-based.
+
+### USB adapter and discovery
+
+The SM-PCE02 serial path uses 2,000,000 baud, 8N1, asserted RTS and no CTS flow
+control. Cranklink uses a 500 ms write timeout. Its native USB path carries the
+same framed stream; these settings do not describe the E-TUBE cable. See
+[port configuration](../src/platform.rs#L1) and the [frame codec](../src/protocol.rs#L1).
+The codec escapes both data and FCS, pads short writes to 128 bytes, and accepts
+split or coalesced receive frames. Longer writes are not rounded to a multiple
+of 128. Invalid escapes, checksums and oversized frames are rejected.
+
+| Adapter control / parameters | Reply control | Interpretation |
 | --- | --- | --- |
-| `2E 00 00 00` | `3A` | First version bytes |
-| `2F 00 00 00` | `3B` | Last version byte and board |
-| `30 00 00 00` | `3C` | Series/unit |
-| `29 00 00 00`, `2A 00 00 00` | `35`, `36` | Two three-byte serial pieces |
-| `21 00 erase_code 00` | `31` | Erase/start; effectful |
-| `0A page 00 00` | `31` | Set page |
-| `24 00 40 00` | `31` | Initial logical write address `0x4000` |
-| `27 image_sum 00 00` | `31` | Finish |
-| `28 00 00 00` | `31` | Reset |
+| `10` | `30` | Initialize; first reply parameter must be `00`. |
+| `1A 01` | `3A` | Unlock power limit; reply parameter 1 must be `00`. |
+| `1A 02` | `3A` | Power query; parameters begin `02 state`. |
+| `1A 03` | `3A` | Enable adapter supply; reply parameter 1 must be `00`. |
+| `1C` | `3C` | Capacitor level, first two parameters LE16. |
+| `03 mode` | `23` | Select protocol/role; normal USB acceptance is `00`. |
+| `04` | `24` | Read resulting mode and local slot. |
+| `05` | `25` | Adapter revision. |
+| `06 slot` | `26` | Select component; `00` means success. |
+| `1D 00` | `3D` | Master discovery/PnP; accepted parameters begin `00 00`. |
+| `1B` | `3B` | Master connected-slot bitmap, at least four bytes. |
+| `07 subcommand [mask]` | `27` | Fast bridge control; masks, when present, are LE32. |
 
-DCASX erase code is `(length−1)//2048`; older DCAS uses size-class codes.
-Do not interchange them. Data relay uses outer `0B`:
-`[packet,02,00,data64,padded_sum,index_lo,index_hi]`, followed by
-`[next_packet,03,data_packet]`. Blocks are FF-padded to 64 bytes. Block checksum
-includes padding; image finish checksum includes real bytes only. DCAS2i/X
-block index is one-based LE16; legacy older layouts differ. Packet IDs for this
-DCAS path wrap modulo 256; successful no-retry pairs begin data 0 / transfer 1.
+Normal/master requests mode `20` and expects `A0 | pc_slot`; update/master
+requests `60` and expects `E0 | pc_slot`. Low five bits hold the local slot.
+Slot `i` occupies bitmap byte `i/8`, bit `i%8`, for slots 0–31. The simulator's
+virtual broadcast target 63 is outside this USB target-selection range.
 
-Buffer acceptance (`82`), transfer acceptance (`83`), transfer completion (`C0`)
-and motor checksum (`31`, with matching block index where supported) are distinct.
-They can arrive asynchronously. A transport ACK cannot substitute for motor
-checksum or finish. A stale unindexed `31 00 00` cannot prove block 2048.
-Preserve pending completion events rather than discarding them when starting
-the next wait. Unknown `12` or `70` responses are not successful key ACKs.
+Power state `01` indicates external supply, `02` permits adapter supply, and
+`03/04` require charging. Cranklink polls every 3 s for raw capacitor level
+at least 2703 and ready state `01/02`, with a 90 s limit. No voltage unit is
+established for that raw threshold. Reset, protocol change and PnP waits are
+3 s, 1 s and 5 s respectively: host pacing policies, not measured bus minima.
+Adapter supply does not establish traction power or assist readiness. The
+[initialization sequence](../src/device.rs#L298) preserves those distinctions.
 
-### Fast bridge and M/RX
+### Component identity and diagnostic reads
 
-The fast bridge uses addressed outer `A8` 16-byte payloads; do not strip its
-slot. It is reached after boot keys, not as a workaround for incomplete keys.
-Adapter `07` controls local masks and mode 5/6; D boot `4B` changes communication
-mode and `4C` assigns/confirms a slot. USB `88` four-byte Pi-key payloads can be
-converted by the adapter into three data bytes plus an inner checksum; host
-and bus bytes are therefore not necessarily identical.
+Normal USB requests contain `[target,group,opcode,parameters…]`; replies contain
+`[pc_slot,group,reply_opcode,parameters…]`. In the ordinary service families
+below, success is request opcode +2 and error is +3. Adapter and boot commands
+have their own reply rules. Validate route, group, opcode, length and echoed
+selectors together.
 
-Fast RX request body starts `[slot,60,F0,05,00,cmd,p0,p1,p2,…]` and reply starts
-`[slot,70,F2,…]`. Legacy RX instead uses outer `48`, request
-`[slot,F0,00,cmd,p0,p1,p2]`, reply `[route,F2,capability,reply,…]`.
-Do not parse either as an ordinary group/opcode setting.
+| Request / parameters | Success | Meaning and scope |
+| --- | --- | --- |
+| `01/1C 00` | `01/1E` | Stock series/unit identity. |
+| `04/0C 00` | `04/0E` | Switch/lever part discriminator where supported. |
+| `32/9C 00` | `32/9E` | Derailleur part discriminator where supported. |
+| `16/7C 00` | `16/7E` | Product/model attributes on supported motors. |
+| `01/2C 00` | `01/2E` | D application version on the newer supported path. |
+| `01/84 01` | `01/86` | M/RX application version/cache on that path. |
+| `01/3C 00` | `01/3E` | Six binary serial bytes; optional reserved seventh `FF`. |
+| `01/A4 00`, `01/AC 00` | `01/A6`, `01/AE` | Two product-serial pieces on supported modern motors. |
+| `26/4C 00` | `26/4E` | Motor's cached battery type/product/fix diagnostic. |
+| `26/44 00` | `26/46` | Battery-related diagnostic; full semantics remain unresolved. |
+| `32/8C address,count,00` | `32/8E` | Bounded EP800-CRG memory read, described below. |
 
-RX boot query `41 → 51` reports capability and version. The M image base is
-`0xFC0000`; legacy address command `24` uses three little-endian address bytes.
-The ordinary application relay streams `48 [slot,F8,sequence,data4]`; sequence
-increments modulo 8 starting at 1, then command `25` checks the window and `26` advances.
-Windows are 1024 bytes from boot 2.0.2, otherwise 64; final data ends at the
-last padded 64-byte packet, not a full artificial 1024-byte tail. The internal
-`FirmwareIo` records use an address placeholder of `00`; the normal USB bridge
-and BLE FREE relay replace it with the selected motor slot before dispatch.
-RX retry-mode adapter packet IDs wrap modulo 255 (never 255), unlike DCAS IDs. Unsupported
-retry capabilities must be rejected before erase. Finish/reset/return-to-app
-and fresh D/M version reads are separate outcomes.
+The battery diagnostic rows describe tested motor handlers, not generic commands
+implemented for every battery or a complete BMS exchange. Product attributes
+can be binary. Preserve their bytes rather than assuming text.
 
-SM-PCE02 fast RX instead buffers **60 data bytes** with outer control `11` and
-payload `[packet,11,sequence,F8,slot,data60,FF,FF,FF,FF]`. Within each checksum
-block, sequence is `(fragment_index mod 43) × 6` (decimal). Load receipt `91`,
-transfer-start acceptance `83` and completion `C0` are separate. Transfer start
-uses `[next_packet,03,data_packet]`; `83` correlates the transfer packet ID,
-whereas `C0` correlates the data packet ID. Replies retain slot and status;
-require status `00`. Fast checksum windows are 1080 bytes, or 2100 for the
-explicitly enabled retry-capable path. The checksum includes final 60-byte
-FF padding and excludes the extra four adapter-padding bytes. Command `25`
-verifies each window, `26` advances it, and retry-capable blocks reselect the
-address. These sizes and envelopes differ from the ordinary 4-byte relay.
+Three version bytes `v0 v1 v2` decode as `(v0>>4).(v0&15).v1.v2`:
+`42 00 00` is 4.2.0.0. Binary serial bytes retain wire order. Modern product
+serials instead join first-reply bytes `[1:6]` with second-reply bytes `[0:6]`
+and require printable ASCII without spaces. Filenames may omit a version
+revision; the shared EP600/EP801 distribution family does not establish the
+live component model.
 
-BLE D motor update relay uses PCE, not the gateway's own BOOT characteristic;
-the legacy RX `F0/F8` envelopes use FREE with the selected motor slot.
-Large PCE records repeat control after a sequence byte: offset `fragment_index * 0x20`,
-bit `80` when more fragments follow, up to 18 payload bytes per fragment.
-Here `20` is hexadecimal (32 decimal). Payload lengths 18/36/54 retain an
-empty terminal record `[sequence,control]` after the full data fragments.
-Prefer write-without-response for fragmented records when advertised; gateways
-offering only acknowledged writes use those with the same relay receipts.
-Exact terminal-record behavior is part of that codec;
-see [firmware transport implementation](../src/ble/firmware.rs). Gateway radio
-DFU is a different update family. The normal firmware simulator does not
-execute resident flash erase/program protocols. A separate hash-pinned EP800
-resident regression executes key-entry and SPI/UART routines: repeated zero
-SPI input stalls Key 2 and produces empty `70` replies, while an `FF` first
-SPI byte lets the queued key advance. That interpretation is bounded to the
-exact resident image and modeled state; it is not a generic meaning for every
-`70` frame. It does not execute erase/program/reset or full boot. See
-[resident regression setup](firmware-simulator.md#ep800-resident-bootloader-and-key-2-recovery).
+Older E6000-family identities also differ from some historical catalog aliases.
+The [catalog caveat](../src/unit_models.rs#L270) describes that limitation;
+an alias must not grant another model's operations. Version selectors are
+firmware-specific too: the [E6100 simulator limitation](firmware-simulator.md#run-the-real-native-cli-offline)
+includes a working `01/84 00` path where the newer `01/2C 00` query is rejected.
 
-## 9. External packet fragments and missing physical specification
+The [bounded memory reader](../src/bootloader_dump.rs#L259) uses
+`[addr_hi,addr_lo,addr_mid,count,00]`, with count 1–3. Reply parameters echo
+those three address bytes and carry the data in a six-byte record, optionally
+followed by reserved `FF`. This normal-application read does not enter boot
+mode. Its EP800-CRG model, board, D/M versions, 64 KiB resident range and
+reviewed sample windows are enforced by the reader.
 
-In the supported gateway receive fixture a normal reply is divided into
-three-byte data chunks. Each four-byte FIFO fragment is
-`[flags|sequence, data0,data1,data2]`; sequence starts at 1, first flag `80`,
-last flag `40`, unused final data bytes `FF`. Example for seven-byte model data
-plus group/opcode:
+### Bluetooth records and session ownership
+
+The service UUID is `000018ff-5348-494d-414e-4f5f424c4500`. Replace its first
+eight digits with `0000` plus a short ID below for each characteristic UUID.
+
+| Short ID | Role | Value format |
+| --- | --- | --- |
+| `2AF3` | Authentication control | Proof writes; authentication notifications. |
+| `2AF4` | Authentication nonce | Challenge read. |
+| `2AF9` | PCE response | `[reply_control,parameters…]`. |
+| `2AFA` | PCE command | Short record `[00,control,parameters…]`. |
+| `2AFD` | FREE response | `[component_slot,group,reply_opcode,parameters…]`. |
+| `2AFE` | FREE command | `[target_slot,group,opcode,parameters…]`. |
+| `2AFF` | Feature control | Access check `FF 00`; other values can change mode. |
+
+Discover each characteristic's actual properties. These values have no USB
+framing. Cranklink's ordinary parameter limits are 16 bytes for gateway commands
+and 15 for component commands; they are client limits, not universal GATT maxima.
+Large firmware records use a separate [fragment codec](../src/ble/firmware.rs#L1).
+
+The [gateway proof calculation](../src/ble.rs#L155) and
+[authentication sequence](../src/ble.rs#L410) document nonce padding,
+proof construction, subscriptions and receipts. A six-digit passkey preserves
+leading zeroes. When both auth characteristics are absent, the client uses the
+supported unauthenticated service shape; finding only one is an error.
+
+Slave discovery reads the master's routed `01/14` bitmap and `02/14` identity
+cache. Master discovery uses PCE PnP and `1B`, and can start motor PC-link itself.
+The [slave discovery](../src/ble.rs#L515) and [master discovery](../src/ble.rs#L569)
+methods explain master-slot inclusion, cache selection and the existing start
+receipt. [Cleanup](../src/ble.rs#L791) orders motor stop,
+slave-mode restoration/readback, gateway stop and GATT close; gateway stop can
+end connection mode. Keep ownership until explicit disconnect.
+
+### Motor settings and update traffic
+
+Motor PC-link uses `32/10` start/stop and `32/30` keys, with `32/12` receipts.
+The [wired startup sequence](../src/device.rs#L520) specifies the five keys, source
+address and timing. Protected settings use a separate exchange: legacy
+`16/D8,DA,E0,E2` or modern `33/68,6A,70,72`. The
+[authorization contract](../src/ble/unit_auth.rs#L1) describes derivation, fragment
+selectors and receipt filler; [motor policy](../src/motor_support.rs) selects
+the family and firmware rules.
+
+For setting names, choices, units and ranges, run
+`cranklink settings schema --model ep800`. For wire layouts, read
+[`SettingSpec`](../src/settings.rs#L190), the [base schema](../src/settings.rs#L357)
+and [model overrides](../src/settings.rs#L74):
+`group`, `set`, `get` and `query` select the exchange; `template`, `offset`,
+`width`, `scale` and `preserve` define the payload. Those wire fields are not
+exported by the CLI schema. [`updated_payload`](../src/settings.rs#L1241)
+reconstructs SET bytes, while [`read_raw`](../src/settings.rs#L862) and
+[`set_name`](../src/settings.rs#L1544) handle split names. This keeps every setting's layout
+beside its implementation rather than maintaining a second field dictionary.
+
+Read the complete shared payload and preserve sibling fields. On tested EP800,
+speed GET selector `0` aliases effective speed, and destination GET selector
+`0` can be rejected; modern factory fallback must not be copied to that path.
+The [destination validation](../src/settings.rs#L1116) handles unset `FF` explicitly.
+The implemented settings path has no extra generic EEPROM commit. Profile
+names span two writes and can partially complete; read both chunks after an
+interruption. A batch can also leave earlier writes applied.
+
+| Observed transport/control | Traffic to recognize | Detailed contract |
+| --- | --- | --- |
+| D boot `88` | Five update keys; identity, erase, address, finish and reset commands. | [Entry](../src/device.rs#L848), [boot identity](../src/firmware_io.rs#L60), [programming commands](../src/firmware_io.rs#L93). |
+| D data `0B` | 64-byte buffers; separate `82`, `83`, `C0` and motor `31` receipts (indexed on DCAS2i/X). | [DCAS writer](../src/firmware_io.rs#L93). |
+| Fast bridge `A8` | Addressed 16-byte command envelopes; slot stays in the record. | [Fast RX envelope](../src/rx.rs#L190). |
+| Normal RX `48` | `F0` command relay and `F8` four-byte fragments. | [Ordinary RX relay](../src/rx.rs#L561). |
+| Fast RX `11` | 60 image bytes plus four adapter filler bytes; separate receipt IDs. | [Fast RX data](../src/rx.rs#L236). |
+| BLE PCE / FREE | D relay on PCE; ordinary RX relay on FREE, distinct from gateway radio DFU. | [BLE relay and terminal fragments](../src/ble/firmware.rs#L1). |
+
+The writers document their block sizes, sequence wrap, padding, checksum windows
+and completion rules. Boot-capability reads can enter update mode. Match image
+family, board, bootloader and companion requirements before entry; fresh normal
+D/M reads after reset are a separate result from a finish receipt.
+
+### Worked capture fragments
+
+These USB records end at the closing delimiter; short writes append `FF` to
+128 bytes. Slot 13 is an example discovered address.
+
+```text
+motor attributes GET: BB 48 0D 16 7C 00 19 BB
+lamp GET:             BB 48 0D 10 14 00 87 BB
+escaping fixture:     BB 48 BD 9B BD 9D 40 BB
+```
+
+The escaping fixture carries literal payload `BB BD`; it is codec data. A
+gateway FIFO instead carries three data bytes per four-byte fragment:
+`[flags|sequence,data0,data1,data2]`, first flag `80`, last flag `40`, sequence
+starting at 1 and unused data filled with `FF`.
 
 ```text
 16 7E 30 30 2D 43 52 47 00
 → 81 16 7E 30 | 02 30 2D 43 | 43 52 47 00
-single fragment → C1 data0 data1 data2
+single-fragment lamp reply: C1 10 16 00
 ```
 
-This is a **firmware FIFO boundary**, not a complete physical capture frame.
-The fixture supplies routing separately and supports 2–9-byte messages at slot
-13. It does not establish preamble, address bit packing, line checksum, symbol
-rate, BPSK waveform, collision priority, wire timing or every message length.
-Do not build a raw-wire transmitter from these four bytes alone.
+The [FIFO fixture](../tools/firmware-sim/fw_sim/gateway.py#L5) supplies routing
+separately and admits 2–9-byte messages at slot 13. These fragments do not
+specify physical framing, modulation, checksum, arbitration or wire timing.
 
-Still missing for a drop-in switch/display/derailleur: normal operating-mode
-button events, acknowledgments and repeat/debounce timing; gear commands and
-actuator status; live speed/cadence/torque/assist broadcasts; sleep/wake and
-fault propagation; electrical loading and a complete network-management state
-machine. ANT+/wireless shifter payloads also require their own specification.
-The service dictionary above configures components; it is not a riding-traffic
-message catalog.
+## Testing and finding the implementation details
 
-## 10. Product and simulator coverage
+The firmware simulator executes selected gateway and motor images through a
+virtual connection. It exercises service exchanges, replies, cleanup and
+faults such as dropped keys or reordered fragments. Its current executable
+coverage is concentrated on motor and gateway firmware; Di2 identity tests
+establish catalog and query behavior, rather than executing every Di2 device.
 
-| Category | Documented boundary | Verification / gap |
-| --- | --- | --- |
-| SM-PCE02 | Host framing, power, discovery, selected boot bridges | Host integration; actual adapter CPU not part of normal co-sim |
-| SC-EM800 4.0.0/4.1.0/4.3.0/4.4.0/4.5.0/4.6.0 | Gateway packet routing and reassembly | Six exact firmware profiles; BLE model too |
-| SC-E6100 4.1.0; SC-E7000 4.1.0 | Wired packet gateway | Exact profiles; not claimed BLE coverage |
-| EP800 D4.1.10/4.1.11/4.2.0 | Normal D packet handlers | Exact profiles; D4.2.0 has narrow persistent lamp/wheel fixture |
-| EP800 resident 5.0.6.1 | Five-key entry and SPI/UART service | Separate exact 64 KiB hash profile; five bounded scenarios, no erase/program/reset or full boot |
-| EP600 D4.4.1/4.6.0; EP500 D4.1.0/4.1.1 | Normal D packet handlers | Exact profiles; no blanket persistent-write claim |
-| E5000 D4.5.0; E5100 D4.1.0; E6100 D4.8.0 | Normal D packet handlers | Exact profiles; model/schema gates remain separate |
-| EP801 | Identity and modern service implementation | Not separately proven by executing an EP600 image |
-| E6000/E6001/E6002/E6010/E6012/E6050 | Identity/version distinctions, limited service knowledge | Outside main ARM simulator; separate bounded older-CPU work |
-| E7000/E8000/E8080 and variants | Model/schema/auth policy | Not in current executable motor matrix |
-| SC-EN500/EN600/EN610, SC-E8000, SC-M9050/MT800, EW-EN100/WU gateways | Known product families | No inference of executable support from their names |
-| Di2 road/MTB/GRX, Alfine/Nexus MU units, switches, suspension, power meters | Broad identity catalog in source | No complete runtime command or radio specification |
-| BT-E / BT-EN / partner traction batteries, CAN adapters | Separate subsystem | No traction-BMS firmware execution or universal acceptance proof |
+Synthetic memory supplies some device state, and virtual transport replaces
+electrical and radio behavior. A passing exchange can establish useful
+protocol behavior without establishing physical interoperability. The
+[simulator guide](firmware-simulator.md) lists exact images, reproduction
+commands and the current E6100 native-probe limitation. A separate EP800
+resident regression covers bounded boot-entry behavior, not complete boot
+or flash programming.
 
-The compatibility matrix crosses eight gateway images with ten motor images:
-80 pairs × nine scenarios = 720 packet scenarios. It tests normal handshake,
-reads and cleanup; dropped/duplicated/reordered/delayed keys; dropped replies;
-and truncated/reordered/bad-sequence reply fragments. Single-fragment reordering
-is correctly a no-op. Delay uses logical events, not a physical watchdog clock.
-Synthetic RAM, transport acceptance, radio topology and EEPROM boundaries are
-modeled. The motor M version can be a behavior peer rather than executing M.
-Matrix success does not certify those combinations as real supported bikes.
-A fresh native SC-E7000/E6100 D4.8.0 probe rejects `01/2C 00` with error
-opcode `2F` even though its matrix handshake/read/cleanup scenarios pass.
-Bounded checks on that image return `01 2F 39 00 FF FF` for `01/2C`
-selectors 0–3, whereas `01/84 00` returns `01 86 48 00 00 00` (4.8.0.0).
-This differs from the newer dual-MCU selector convention in the identity table.
-Do not describe that pairing as a verified complete client probe.
+For an integration, begin with one complete discovery and identity exchange.
+Test ambiguity, missing replies and connection loss before adding a
+component-specific operation. Add writes once identity selection, readback
+and uncertain-outcome handling are reliable, then compare the same exchange
+with an identified component on hardware.
 
-See [simulator setup and exact boundaries](firmware-simulator.md). Adding a
-product requires a firmware hash, CPU/ABI and memory profile, bounded execution,
-positive and negative command tests, and explicit transport/storage limits.
-Listing a product in [the identity catalog](../src/unit_models.rs) is not a
-support promise. Shimano's current compatibility charts also include newer
-BT-DN320 and FH-U6060 systems; the present service reference does not establish
-their runtime protocol.
+Use these implementation points when a byte-level question arises:
 
-## 11. Traffic decoding and implementation checklist
-
-1. Record observation point, direction, timestamp, firmware/model/board and
-   discovery map. Preserve raw bytes alongside decoded fields.
-2. USB: unframe/unescape/check FCS, then interpret control. BLE: identify
-   characteristic first and retain record boundaries. Bus FIFO: reassemble only
-   after validating sequence/flags and retaining the route context.
-3. Correlate by transport, route, session, group/opcode and selector or block ID.
-   A matching opcode alone is insufficient. The normal protocol has no general
-   transaction ID to disambiguate concurrent identical requests.
-4. Separate adapter acceptance, component reply, authorization, live readback,
-   durable readback, firmware finish and normal application return.
-5. Serialize one session owner per port/gateway. On timeout or disconnect,
-   retain uncertain outcomes and invalidate routing/auth assumptions. Do not
-   replay a SET/erase automatically just because its reply was lost.
-6. Redact credentials and private identities from shareable traces. Keep unknown
-   opcodes/statuses as raw data instead of inventing semantics.
-
-Golden USB examples (TX before trailing padding):
-
-```text
-cargo GET slot 13: BB 48 0D 16 7C 00 19 BB
-lamp GET slot 13:  BB 48 0D 10 14 00 87 BB
-escaping fixture: BB 48 BD 9B BD 9D 40 BB
-```
-
-The first two require 120 trailing `FF` bytes on a short SM-PCE02 write.
-The escaping fixture is codec data, not a valid component command. A cargo
-reply example `BB 48 0D 16 7E 30 30 2D 43 52 47 00 AE BB` illustrates parsing;
-its route byte must be interpreted in the capture's session context, not copied
-as the expected recipient for every USB session.
-
-### Reproduce the checks
-
-With the [simulator environment and local firmware manifest](firmware-simulator.md)
-prepared, run from the repository root:
-
-```sh
-python tools/firmware-sim/sim.py matrix \
-  --fixtures /absolute/path/firmware-fixtures.json --output /tmp/etube-matrix.json
-CRANKLINK_SIM_FIXTURES=/absolute/path/firmware-fixtures.json \
-  python -m unittest discover -s tools/firmware-sim -p 'test_*.py'
-```
-
-Stock-image tests skip if their manifest is absent. Resident tests separately
-require `CRANKLINK_RESIDENT_IMAGE`; no resident dump is bundled or auto-pulled.
-The native and GATT client verifiers and their topology limits are documented
-in the simulator guide. A nonzero verifier exit remains a failure even when
-other matrix scenarios pass; the E6100 version-query limitation above is one
-such case. The codec golden vectors and all serial split boundaries are also
-covered by `cargo test --locked --lib protocol::`.
+| Detail | Source to read |
+| --- | --- |
+| USB checksum, escaping, padding and frame boundaries | [`encode`, `Decoder`, `Frame::normalized`](../src/protocol.rs) |
+| Serial and native USB opening | [`open_port`](../src/platform.rs), [native USB](../src/native_usb.rs) |
+| Stock identities, part queries and model candidates across component types | [`UNIT_MODELS`, `read_identification`](../src/unit_models.rs) |
+| Wired discovery, target selection and motor-session startup | [`Session::units`, `command`, `normal_start_inner`](../src/device.rs) |
+| BLE UUIDs, records, master/slave routing and cleanup | [`BleSession` and characteristic constants](../src/ble.rs) |
+| Motor model gates and authorization selection | [`motor_support`](../src/motor_support.rs), [`unit_auth`](../src/ble/unit_auth.rs) |
+| Settings fields, selectors, units, reserved bytes and shared payloads | [`schema_for_model`, `SettingSpec`, `updated_payload`, `set_name`](../src/settings.rs) |
+| Bounded EP800-CRG memory reads | [`request`, `decode`, `validate_identity`](../src/bootloader_dump.rs) |
+| Firmware containers, compatibility and update receipts | [`firmware`](../src/firmware.rs), [`firmware_io`](../src/firmware_io.rs), [`rx`](../src/rx.rs) |
+| Hash-pinned executable images and modeled packet boundaries | [Profiles](../tools/firmware-sim/profiles.json), [gateway](../tools/firmware-sim/fw_sim/gateway.py), [motor](../tools/firmware-sim/fw_sim/motor.py) |

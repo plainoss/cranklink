@@ -1,4 +1,11 @@
 //! Exclusive transport session. Commands are serialized and full frames journaled.
+//!
+//! `Session::units` discovers arbitrary catalogued component types and refines
+//! their stock identities without motor PC-link startup. Motor `probe` and
+//! settings startup require `UnitIdentity::require_motor`; firmware paths apply
+//! their own application/boot identity and image checks. A resolved Di2 name
+//! does not grant these operations. Normal routed requests carry
+//! the target slot, while control-0x48 replies carry this session's PC slot.
 use crate::protocol::{self, Decoder, Frame};
 use crate::{
     platform::{self, sleep, Instant, Port},
@@ -210,6 +217,9 @@ impl Session {
     pub(crate) fn normal_pc_slot(&self) -> u8 {
         self.pc_slot
     }
+    /// Use a 500 ms write timeout, then restore 100 ms read polling. Neither
+    /// transport completion nor a successful flush establishes a device receipt;
+    /// callers must still match the operation's protocol response.
     pub fn send(&mut self, control: u8, payload: &[u8]) -> Result<()> {
         let bytes = protocol::encode(control, payload);
         self.log("tx", &bytes)?;
@@ -285,6 +295,14 @@ impl Session {
         );
         Ok(())
     }
+    /// Reset, unlock the adapter power limit, and establish its supply state.
+    /// State 01 means external supply; 02 permits adapter supply; 03/04 mean
+    /// charging. The LE16 capacitor threshold 2703 is a raw device quantity,
+    /// with no established voltage unit. Supply readiness here says nothing
+    /// about traction power or assist readiness.
+    ///
+    /// The reset, charging, protocol-change and PnP sleeps in this session are
+    /// Cranklink's pacing policies, not measured minimum E-TUBE bus timings.
     pub fn initialize(&mut self) -> Result<PowerInfo> {
         self.ack(0x10, &[], 0x30)?;
         sleep(Duration::from_secs(3));
@@ -351,6 +369,8 @@ impl Session {
         );
         p.get(1).copied().context("short power reply")
     }
+    /// Request master role and confirm it by readback: normal 20 -> A0|slot,
+    /// update 60 -> E0|slot. Low five bits identify this PC, not a model.
     pub fn set_protocol(&mut self, protocol: u8) -> Result<()> {
         self.ack(3, &[protocol | 0x20], 0x23)?;
         sleep(Duration::from_secs(1));
@@ -497,6 +517,11 @@ impl Session {
         };
         self.normal_start_selected(slot, require_versions)
     }
+    /// Start 32/10 with the current PC source, send all five ordered 32/30 keys,
+    /// and require 32/12 start receipt before further service queries. The keys
+    /// establish PC-link, independently of protected-setting authorization.
+    /// Wait 300 ms after start on adapter supply, otherwise 1 s, then 100 ms
+    /// between keys. Repeating start is not a keepalive for an active session.
     fn normal_start_selected(&mut self, slot: u8, require_versions: bool) -> Result<Identity> {
         self.target(slot)?;
         let motor = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
@@ -699,6 +724,8 @@ impl Session {
         }
         Ok(())
     }
+    /// Stop with the same PC source and require 32/12 parameter 00 before
+    /// releasing local session state. A transport close alone proves no stop.
     pub fn normal_stop(&mut self) -> Result<()> {
         if let Some(slot) = self.normal_slot {
             let reply = self.command(slot, 0x32, 0x10, &[0, self.pc_slot, 0, 0], 0x12)?;
@@ -740,7 +767,7 @@ impl Session {
         }
         self.normal_slot = None;
         // DCASX-specific second pass in sendStartUpdateForConnectedUnits:
-        // wait at least1000ms after key5 dispatch, then repeat key5 and require
+        // wait at least 1000 ms after key5 dispatch, then repeat key5 and require
         // its bootloader acknowledgment at the explicitly retained slot.
         sleep(Duration::from_secs(1));
         self.target(slot)?;
@@ -750,8 +777,8 @@ impl Session {
         self.fast_adapter_slots(0, 1)?;
         self.fast_adapter_mode(5)?;
         self.target(slot)?;
-        // First 4B is sent at1MHz without waiting; the acknowledgment is
-        // received at2MHz after the adapter switches its own bus modulation.
+        // First 4B is sent at 1 MHz without waiting; the acknowledgment is
+        // received at 2 MHz after the adapter switches its own bus modulation.
         self.send(0x88, &[0x4b, 0, 0, 0])?;
         sleep(Duration::from_millis(100));
         self.fast_adapter_mode(6)?;
@@ -818,6 +845,16 @@ impl Session {
     pub fn boot_start(&mut self, from_application: bool) -> Result<BootIdentity> {
         self.boot_start_at(from_application, None)
     }
+    /// Application entry first sends 01/C0 [slot] -> C2 to retain its address;
+    /// recovery uses the explicit slot or 31. Then select UPDATE/master (60),
+    /// restore the target, and send the five Pi key records over control 88.
+    /// Each receipt is 11,key-index, distinct from ordinary service +2 replies.
+    ///
+    /// On application handoff, dispatch key 5, restore protocol/target after the
+    /// transition, and repeat key 5 for its boot receipt. Recovery sends it once.
+    /// These keys and subsequent legacy boot queries have no payload slot byte:
+    /// correlation depends on exclusive selected-target state and serialized
+    /// requests, not on a universally addressed 88 reply.
     pub fn boot_start_at(
         &mut self,
         from_application: bool,
