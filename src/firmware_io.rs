@@ -1,4 +1,12 @@
 //! Logical firmware messages shared by wired and BLE motor transports.
+//! Byte literals in wire layouts are hexadecimal; byte counts are decimal.
+//!
+//! DCAS programming distinguishes four receipts: adapter buffer acceptance
+//! (`82`, data packet ID), transfer acceptance (`83`, transfer packet ID),
+//! transfer completion (`C0`, data packet ID), and the motor's checksum receipt
+//! (`31`, block index on DCAS2i/X). None substitutes for another or for finish.
+//! Completion/checksum events can arrive before the current wait completes;
+//! implementations must retain unmatched events for subsequent waits.
 use crate::{
     device::{BootIdentity, FlashReceipt},
     platform::sleep,
@@ -49,6 +57,11 @@ pub(crate) fn boot_query(
     );
     Ok(f.payload)
 }
+/// Read D boot identity after entry: `2E -> 3A` supplies packed version bytes,
+/// `2F -> 3B` the last version byte and board, `30 -> 3C` series/unit, and
+/// `29/2A -> 35/36` the two three-byte serial pieces. Each request has three
+/// trailing zero bytes. These are boot payload opcodes, not normal group/opcodes;
+/// `88` replies have no component route, so the caller must serialize ownership.
 pub(crate) fn boot_identity(link: &mut impl FirmwareIo, slot: u8) -> Result<BootIdentity> {
     let lo = boot_query(link, &[0x2e, 0, 0, 0], 0x3a, 3, 3000)?;
     let hi = boot_query(link, &[0x2f, 0, 0, 0], 0x3b, 3, 3000)?;
@@ -77,6 +90,21 @@ pub(crate) fn flash_dcas(
     flash_dcas_with_user_info(link, image, identity, None, progress)
 }
 
+/// Program DCAS2/2i/X using 64-byte, `FF`-padded blocks. The `0B` buffer payload
+/// is `[packet, 02, 00, data64, block_sum, index_lo, index_hi]`, followed by a
+/// separate `[next_packet, 03, data_packet]` transfer request. Packet IDs wrap
+/// modulo 256. DCAS2i/X indexes are one-based LE16; older DCAS sends index zero
+/// and selects a second page at 64 KiB. The block checksum includes padding;
+/// the final image checksum includes only real bytes (after user-info changes).
+///
+/// Before data, `21 00 erase_code 00` erases/starts programming, `0A page 00 00`
+/// selects a page and `24 00 40 00` sets logical address 0x4000. DCASX erase code
+/// is `(length - 1) / 2048`; older layouts use size classes 0 (<=32 KiB),
+/// 1 (<=64 KiB), or 2 (>64 KiB). Newer boot versions first receive target
+/// series/unit and serial via commands 06 and 07..09. Do not interchange the
+/// erase rules or replay erase after an uncertain outcome. Finish uses
+/// `27 image_sum 00 00`, reset `28 00 00 00`; all expect `31`, but neither
+/// receipt establishes that the normal application returned successfully.
 pub(crate) fn flash_dcas_with_user_info(
     link: &mut impl FirmwareIo,
     image: &[u8],
@@ -225,6 +253,8 @@ pub(crate) fn flash_dcas_with_user_info(
                     && u16::from_le_bytes([f.payload[1], f.payload[2]]) == index
             })
             .with_context(|| format!("motor checksum block {index}; outcome uncertain"))?;
+            // Generic `31 00 00` receipts do not prove an indexed block. Drop
+            // those only after the matching LE16 index has been acknowledged.
             link.discard_unindexed();
         } else {
             link.wait(Duration::from_secs(25), |f| {

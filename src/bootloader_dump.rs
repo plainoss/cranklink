@@ -2,6 +2,13 @@
 //!
 //! This is the bounded read path used for the donor acquisition. It does not
 //! enter firmware update mode, change adapter power, or write motor memory.
+//!
+//! Normal application service `32/8C -> 32/8E` reads 1-3 bytes per request.
+//! It is admitted here only for EP800-CRG D4.1.11.0/4.2.0.0 with M4.1.11.0,
+//! with model/board header `23 00 04 01` (hex) and resident version 5.0.6.1 checked
+//! before acquisition. Reads cover the fixed 64 KiB resident window plus the
+//! reviewed application version/model sample windows in `request`; this does
+//! not establish a general memory-read capability of other E-TUBE components.
 use crate::device::{serial_bytes, Identity, Session, UnitCommands, UnitIdentity};
 use anyhow::{ensure, Context, Result};
 use serde::Serialize;
@@ -249,6 +256,9 @@ fn validate_vectors(prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Parameters are `[address_high, address_low, address_middle, count, 00]`.
+/// The address is 24-bit but its bytes are neither ordinary LE nor BE order.
+/// Validate count and allowed windows before sending any command.
 fn request(address: u32, count: usize) -> Result<[u8; 5]> {
     // The only reads outside the resident window are the reviewed application
     // version and model/board samples needed to verify the read handler.
@@ -271,6 +281,9 @@ fn request(address: u32, count: usize) -> Result<[u8; 5]> {
     ])
 }
 
+/// Replies echo the three address bytes in request order, then three data
+/// positions, even for a 1- or 2-byte read. Accept exactly six parameters or
+/// seven with reserved final FF; return only the requested data positions.
 fn decode(address: u32, count: usize, params: &[u8]) -> Result<Vec<u8>> {
     request(address, count)?;
     ensure!(

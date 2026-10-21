@@ -1,6 +1,6 @@
 //! Component names derived from E-TUBE stock identity and optional discriminators.
 //!
-//! Component selection and read commands: `docs/settings.md`.
+//! Discovery, component scope and read commands: `docs/etube-protocol.md`.
 //! Naming a component does not imply any settings/authentication support.
 
 #[derive(Debug, Clone, Copy)]
@@ -267,6 +267,10 @@ pub const UNIT_MODELS: &[UnitModel] = &[
         part: Some(0),
         model_params: None,
     },
+    // Historical E6000-family aliases share 08/00 in this catalog. Observed
+    // application identities also distinguish E6001-family 0C/00 and 0A/00,
+    // and E6002/E6012 15/00, from E6000 08/00. The aliases below are retained
+    // candidates, not an authoritative live-wire identity map for that family.
     UnitModel {
         series: 0x08,
         unit: 0x00,
@@ -1377,6 +1381,9 @@ pub const UNIT_MODELS: &[UnitModel] = &[
 
 /// Resolve only with identity data supplied by the current discovery session.
 /// `part` is ST_PART_GET/PCA_PART_GET; `model_params` is PU_MD_MODEL_GET.
+/// Compare model parameters as bytes: older product attributes need not be
+/// text. Firmware distribution names are not discriminators; EP600 and EP801,
+/// for example, share a distribution family but have distinct stock identities.
 pub fn candidates(
     series: u8,
     unit: u8,
