@@ -2188,6 +2188,36 @@ mod tests {
             .is_err());
     }
     #[test]
+    fn committed_web_schemas_match_the_rust_tables() {
+        // The web app prefers these static files over the WASM schema; regenerate
+        // them with `node tools/sync-schemas.ts` after changing a table.
+        macro_rules! schemas {
+            ($($slug:literal),*) => {
+                [$(($slug, include_str!(concat!("../web-instrument/schemas/", $slug, ".json")))),*]
+            };
+        }
+        for (slug, committed) in schemas!(
+            "ep800-crg",
+            "ep600",
+            "ep801",
+            "ep500",
+            "e5100",
+            "e8000",
+            "e7000",
+            "e6100",
+            "e6000"
+        ) {
+            let model = SettingsModel::from_name(slug).unwrap();
+            assert_eq!(model.slug(), slug);
+            let committed: Value = serde_json::from_str(committed).unwrap();
+            assert_eq!(
+                serde_json::to_value(schema_for_model(model)).unwrap(),
+                committed,
+                "web-instrument/schemas/{slug}.json is stale; run node tools/sync-schemas.ts"
+            );
+        }
+    }
+    #[test]
     fn unsetting_any_calendar_component_clears_the_date() {
         struct Calendar {
             date: Vec<u8>,
