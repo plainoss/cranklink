@@ -119,6 +119,8 @@ cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion.
 
+For the specific EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, see the experimental [opened-board E-TUBE recovery guide](docs/ep800-hardware-recovery.md), including bridge photos and the dedicated stock-only tools.
+
 `cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts.
 
 ## Documentation
