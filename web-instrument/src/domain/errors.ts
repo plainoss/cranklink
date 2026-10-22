@@ -11,6 +11,11 @@ const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetoot
 const WIRED_CLOSED = /(?:USB|Serial) (?:device )?disconnected|(?:USB|Serial) port is closed/i;
 /** usb.js and serial.js close the port for good after an uncertain write or a receive error. */
 const WIRED_POISONED = /(?:USB|Serial) session (?:cannot reopen|changed during write)|(?:USB|Serial) write (?:timed out|incomplete|failed|returned)|(?:USB|Serial) receive |Serial close (?:timed out|interrupted)|FTDI UART line error|Truncated FTDI status header|Invalid FTDI USB packet size/i;
+/** Every core message for a motor that refused the drive-unit authentication handshake. */
+const AUTH_REJECTED = /authentication (?:challenge|reply) rejected/i;
+/** motor_support refuses these before any write. */
+const IDENTITY_UNSUPPORTED = /unsupported for this motor identity/i;
+const FIRMWARE_UNSUPPORTED = /protected writes require an unambiguous/i;
 /** The CLI's interrupted-flash warning; its full text carries the recovery command. */
 const FLASH_INTERRUPTED = /FLASH WRITE INTERRUPTED|DO NOT POWER CYCLE/i;
 /** The CLI's probe-then-reset steps after a bootloader entry or return failed. */
@@ -55,10 +60,17 @@ export function userFacingError(error: string, transport: TransportType | null =
   if (/BLE authentication failed|BLE passkey must|passkey.*(?:invalid|incorrect)/i.test(error)) {
     return "Bluetooth PIN was not accepted. Reconnect and enter the bike’s six-digit PIN again.";
   }
-  if (/drive-unit authentication is not verified/i.test(error)) {
+  if (IDENTITY_UNSUPPORTED.test(error)) {
+    return "Settings aren’t supported for this motor identity yet. No change was sent.";
+  }
+  if (FIRMWARE_UNSUPPORTED.test(error)) {
     return "Saving this setting isn’t supported on this motor firmware yet. No change was sent.";
   }
-  if (/drive.unit authentication|modern authentication.*(?:reject|fail)|authentication challenge rejected/i.test(error)) {
+  // Outside a flash, which isFlashCritical reports first, only pre-write checks report a mismatch this way.
+  if (/serial mismatch/i.test(error)) {
+    return "The connected motor’s serial doesn’t match the one this session expects. No change was sent.";
+  }
+  if (AUTH_REJECTED.test(error)) {
     return "The motor rejected authorization for this change. Nothing was retried; check Diagnostics for details.";
   }
   if (/BLE response timeout|notification overflow/i.test(error)) {
@@ -148,7 +160,7 @@ export function describeFailure(
     outcome = "The motor may be left in recovery mode. Do not power-cycle it. The web app cannot recover it: on a computer "
       + "with an SM-PCE02, follow the recovery steps with the cranklink CLI"
       + (FLASH_INTERRUPTED.test(error) ? ", using the command below with that computer’s --port." : ".");
-  } else if (kind === "save" && /authentication is not verified|authentication challenge rejected|authentication failed/i.test(error)) {
+  } else if (kind === "save" && (IDENTITY_UNSUPPORTED.test(error) || FIRMWARE_UNSUPPORTED.test(error) || AUTH_REJECTED.test(error) || /authentication failed/i.test(error))) {
     outcome = "No change was written. Your staged values are kept.";
   }
   if (failure.stagedDiscarded) outcome = `${outcome ? `${outcome} ` : ""}Your unsaved changes were discarded.`;

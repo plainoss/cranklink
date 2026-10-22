@@ -929,11 +929,36 @@ describe("Web Bluetooth Availability & Globally Disabled Error Handling", () => 
 describe("Concise connection errors", () => {
   it("keeps known connection failures actionable without backend details", () => {
     assert.match(userFacingError("error: BLE authentication failed: rejected\n[exit 1]"), /PIN was not accepted/);
-    assert.match(userFacingError("error: drive-unit authentication is not verified for series 23 D4.1.9.0"), /isn’t supported/);
     const cleanup = userFacingError("error: cleanup also failed: BLE PC-link stop was not confirmed: BLE response timeout or notification overflow; reconnect before another command\n[exit 1]");
     assert.equal(cleanup, "The Bluetooth link closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.");
     assert.doesNotMatch(cleanup, /overflow|PC-link|exit/);
     assert.equal(userFacingError("error: Invalid value\n    at host_call (host.js:1)\n[exit 1]"), "Invalid value");
+  });
+
+  it("maps the core's motor support and authorization refusals", () => {
+    assert.match(userFacingError("error: settings/authentication is unsupported for this motor identity"), /aren’t supported for this motor identity/);
+    assert.match(userFacingError("error: protected writes require an unambiguous E6000-family model identity on this firmware"), /isn’t supported on this motor firmware/);
+    assert.equal(
+      describeFailure({ kind: "save", error: "error: settings/authentication is unsupported for this motor identity" }, "ble", []).outcome,
+      "No change was written. Your staged values are kept.",
+    );
+    for (const error of [
+      "error: modern drive-unit authentication challenge rejected, malformed or out of order; no retry",
+      "error: drive-unit authentication reply rejected, misrouted or malformed; no retry",
+      "error: modern authentication challenge rejected or malformed; no retry",
+    ]) {
+      assert.match(userFacingError(error), /rejected authorization/, error);
+      assert.equal(describeFailure({ kind: "save", error }, "ble", []).outcome, "No change was written. Your staged values are kept.");
+    }
+    // Refusals that mention the handshake are not the motor rejecting it.
+    assert.match(userFacingError("error: drive-unit authentication motor serial mismatch"), /serial doesn’t match/);
+    for (const error of [
+      "error: drive-unit authentication already attempted; no automatic retry",
+      "error: setting requires drive-unit authentication, but --no-auth was specified",
+      "error: EP800 OEM destination is unset (255); factory destination GET selector 0 is unsupported by the verified legacy firmware. Set an explicit destination using drive-unit authentication before changing speed or maximum power",
+    ]) {
+      assert.doesNotMatch(userFacingError(error), /rejected authorization/, error);
+    }
   });
 
   it("treats an unplugged USB or serial adapter as a lost link", () => {
