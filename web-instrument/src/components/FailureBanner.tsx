@@ -16,6 +16,8 @@ interface FailureBannerProps {
 export function FailureBanner({ state, controller, onShowDiagnostics }: FailureBannerProps) {
   if (!state.failure) return null;
   const failure = describeFailure(state.failure, state.transport, state.schema);
+  // A later rejection (e.g. staging an Undo) replaces the failure text, not the lost link.
+  const linkLost = failure.linkLost || state.linkLost;
   const connected = Boolean(state.identity);
   const busy = state.phase !== "ready";
 
@@ -28,7 +30,7 @@ export function FailureBanner({ state, controller, onShowDiagnostics }: FailureB
         <Alert.Description className="[overflow-wrap:anywhere]">{failure.message}</Alert.Description>
         {connected && (
           <div className="mt-3 flex flex-wrap gap-2">
-            {failure.linkLost ? (
+            {linkLost ? (
               <Button size="sm" isDisabled={busy} onPress={() => controller.reconnect().catch(() => {})} data-testid="btn-error-reconnect">
                 Reconnect
               </Button>

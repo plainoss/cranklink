@@ -599,10 +599,31 @@ describe("Concise connection errors", () => {
   });
 
   it("treats an unplugged USB or serial adapter as a lost link", () => {
-    for (const error of ["error: USB device disconnected; device outcome may be uncertain", "error: Serial device disconnected"]) {
-      assert.match(userFacingError(error), /USB adapter disconnected/);
+    for (const error of [
+      "error: USB device disconnected; device outcome may be uncertain",
+      "error: Serial device disconnected",
+      "error: Serial port is closed",
+      "USB disconnected; preserve the journal before recovery.",
+      "error: cleanup also failed: PC-link Stop acknowledgement: USB device disconnected; device outcome may be uncertain: read settings: USB device disconnected",
+    ]) {
+      assert.match(userFacingError(error, "usb"), /USB adapter disconnected/);
       assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true);
     }
+    assert.doesNotMatch(userFacingError("error: cleanup also failed: PC-link stop could not be confirmed", "usb"), /Bluetooth/);
+  });
+
+  it("keeps the interrupted-flash warning and recovery command", () => {
+    const error = [
+      "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.",
+      "DO NOT POWER CYCLE THE MOTOR.",
+      "To recover, re-run with: cranklink -p usb:0 firmware flash fw.dat --serial 1234 --recover",
+      "error: DCAS block 12 write: serial write; device outcome may be uncertain: USB device disconnected; device outcome may be uncertain",
+    ].join("\n");
+    const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+    assert.match(failure.message, /DO NOT POWER CYCLE/);
+    assert.match(failure.message, /re-run with: cranklink/);
+    assert.match(failure.outcome ?? "", /recovery mode/);
+    assert.equal(failure.linkLost, false);
   });
 
   it("keeps a lost link lost when a later, unrelated operation is rejected", () => {

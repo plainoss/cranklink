@@ -7,13 +7,31 @@ import { settingLabel } from "./settingFormat.ts";
 
 const CLEANUP_UNCONFIRMED = /PC-link stop.*not.*confirmed|stop could not be confirmed|cleanup.*(?:failed|not.*confirmed)/i;
 const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetooth connection is closed|BLE session failed|disconnect and inspect/i;
-/** WebUSB and Web Serial ports report an unplugged SM-PCE02 this way (usb.js, serial.js). */
-const WIRED_CLOSED = /USB device disconnected|Serial device disconnected|USB port is closed/i;
+/** WebUSB and Web Serial ports report an unplugged SM-PCE02 this way (usb.js, serial.js, app.js). */
+const WIRED_CLOSED = /(?:USB|Serial) (?:device )?disconnected|(?:USB|Serial) port is closed/i;
+/** The CLI's interrupted-flash warning; its full text carries the recovery command. */
+const FLASH_INTERRUPTED = /FLASH WRITE INTERRUPTED|DO NOT POWER CYCLE/i;
+
+function rawError(error: string): string {
+  return error
+    .split(/\n\s*at |\nError:/)[0]
+    .replace(/^error:\s*/i, "")
+    .replace(/\s*\[exit \d+\]\s*$/, "")
+    .trim();
+}
 
 /** Concise operator message for a raw error. */
 export function userFacingError(error: string, transport: TransportType | null = null): string {
   const link = transport === "sim" ? "The simulated Bluetooth link" : "The Bluetooth link";
+  // Never summarise away the do-not-power-cycle warning or the recovery command.
+  if (FLASH_INTERRUPTED.test(error)) return rawError(error);
+  if (WIRED_CLOSED.test(error)) {
+    return "The USB adapter disconnected. Plug it back in and reconnect to read the bike’s current settings.";
+  }
   if (CLEANUP_UNCONFIRMED.test(error)) {
+    if (transport === "usb" || transport === "serial") {
+      return "The bike did not confirm it was released over USB. Check the adapter, then reconnect to read its current settings.";
+    }
     return `${link} closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.`;
   }
   if (/BLE authentication failed|BLE passkey must|passkey.*(?:invalid|incorrect)/i.test(error)) {
@@ -28,9 +46,6 @@ export function userFacingError(error: string, transport: TransportType | null =
   if (/BLE response timeout|notification overflow/i.test(error)) {
     return `${link} stopped responding. Reconnect to read the bike’s current settings.`;
   }
-  if (WIRED_CLOSED.test(error)) {
-    return "The USB adapter disconnected. Plug it back in and reconnect to read the bike’s current settings.";
-  }
   if (LINK_CLOSED.test(error)) {
     return `${link} closed. Turn on the bike’s connection mode and reconnect.`;
   }
@@ -40,15 +55,16 @@ export function userFacingError(error: string, transport: TransportType | null =
   if (/browser host operation ble.open failed|Connection attempt failed/i.test(error)) {
     return "Couldn’t connect to the bike. Turn on its Bluetooth connection mode and try again.";
   }
-  return error
-    .split(/\n\s*at |\nError:/)[0]
-    .replace(/^error:\s*/i, "")
-    .replace(/\s*\[exit \d+\]\s*$/, "")
-    .trim();
+  return rawError(error);
 }
 
-/** True when the transport is gone and further commands need a reconnect. */
+/**
+ * True when the transport is gone and further commands need a reconnect. An
+ * interrupted flash needs its recovery command instead: the motor may be in
+ * its bootloader, where a reconnect cannot find it.
+ */
 export function isLinkLost(error: string): boolean {
+  if (FLASH_INTERRUPTED.test(error)) return false;
   return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error);
 }
 
@@ -97,6 +113,8 @@ export function describeFailure(
         ? `None of the ${total} changes were applied. `
         : `${applied} of ${total} changes were applied before the error. `;
     outcome = appliedText + failedText;
+  } else if (FLASH_INTERRUPTED.test(error)) {
+    outcome = "The motor may be left in recovery mode. Do not power-cycle it; run the recovery command below.";
   } else if (kind === "save" && /authentication is not verified|authentication challenge rejected|authentication failed/i.test(error)) {
     outcome = "No change was written. Your staged values are kept.";
   }
