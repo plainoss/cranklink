@@ -131,6 +131,37 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
   });
 
+  test("a possibly interrupted flash offers only the CLI recovery steps", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    const show = (error: string) => page.evaluate((error) =>
+      (window as any).cranklinkInstrumentController.update({ failure: { kind: "firmware", error } }), error);
+    const outcome = page.getByTestId("error-outcome");
+
+    // Before any write, a closed link offers Reconnect and another failure a read.
+    await show("error: Bluetooth disconnected");
+    await expect(page.getByTestId("btn-error-reconnect")).toBeVisible();
+    await show("error: verify mismatch");
+    await expect(page.getByTestId("btn-error-read")).toBeVisible();
+
+    const rule = "=".repeat(80);
+    for (const error of [
+      // ble-pair prints no warning of its own once the write has started.
+      "Programming 8192/65536 bytes (12%)\nerror: Bluetooth disconnected\n[exit 1]",
+      `Programming 8192/65536 bytes (12%)\n${rule}\nCRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.\n`
+        + "DO NOT POWER CYCLE THE MOTOR.\nTo recover, re-run with:\n  cranklink --port webusb -s 010203040506 firmware flash dcas D.dat "
+        + `--companion M.dat --recovery --write\n${rule}\nerror: USB device disconnected`,
+    ]) {
+      await show(error);
+      await expect(outcome).toContainText("Do not power-cycle it");
+      await expect(outcome).toContainText("cranklink CLI");
+      await expect(page.getByTestId("error-recovery-steps")).toHaveAttribute("href", /#recover-a-motor-stuck-in-bootloader-mode$/);
+      await expect(page.getByTestId("btn-error-reconnect")).toHaveCount(0);
+      await expect(page.getByTestId("btn-error-read")).toHaveCount(0);
+    }
+  });
+
   test("restore waits until staged edits are saved or discarded", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();

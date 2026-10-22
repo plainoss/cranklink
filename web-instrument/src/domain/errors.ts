@@ -11,9 +11,20 @@ const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetoot
 const WIRED_CLOSED = /(?:USB|Serial) (?:device )?disconnected|(?:USB|Serial) port is closed/i;
 /** The CLI's interrupted-flash warning; its full text carries the recovery command. */
 const FLASH_INTERRUPTED = /FLASH WRITE INTERRUPTED|DO NOT POWER CYCLE/i;
+/** A flash progress line: the erase and write had started. */
+const FLASH_STARTED = /^Programming \d+\/\d+ bytes \(\d+%\)/m;
+
+/** README steps for a motor stuck in its bootloader; recovery runs only in the CLI. */
+export const RECOVERY_URL = "https://github.com/plainoss/cranklink#recover-a-motor-stuck-in-bootloader-mode";
+
+/** Flash progress lines and the rules around the CLI's warning only bury it here. */
+const TERMINAL_NOISE = /^(?:Programming \d+\/\d+ bytes \(\d+%\)|=+)[ \t]*(?:\n|$)/gm;
 
 function rawError(error: string): string {
   return error
+    .replace(TERMINAL_NOISE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
     .split(/\n\s*at |\nError:/)[0]
     .replace(/^error:\s*/i, "")
     .replace(/\s*\[exit \d+\]\s*$/, "")
@@ -59,12 +70,22 @@ export function userFacingError(error: string, transport: TransportType | null =
 }
 
 /**
- * True when the transport is gone and further commands need a reconnect. An
- * interrupted flash needs its recovery command instead: the motor may be in
- * its bootloader, where a reconnect cannot find it.
+ * True when a failure may have left the motor in its bootloader. The wired
+ * flash prints its own warning; the Bluetooth ble-pair relay prints none, so
+ * there any firmware failure after the write started counts.
  */
-export function isLinkLost(error: string): boolean {
-  if (FLASH_INTERRUPTED.test(error)) return false;
+function isFlashCritical(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
+  return FLASH_INTERRUPTED.test(error)
+    || (kind === "firmware" && (transport === "ble" || transport === "sim") && FLASH_STARTED.test(error));
+}
+
+/**
+ * True when the transport is gone and further commands need a reconnect. An
+ * interrupted flash needs recovery instead: the motor may be in its
+ * bootloader, where a reconnect cannot find it.
+ */
+export function isLinkLost(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
+  if (isFlashCritical(error, kind, transport)) return false;
   return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error);
 }
 
@@ -74,6 +95,8 @@ export interface FailureDescription {
   outcome: string | null;
   message: string;
   linkLost: boolean;
+  /** The motor may be in its bootloader: CLI recovery is the only safe next step. */
+  critical: boolean;
 }
 
 const TITLES: Record<OperationFailure["kind"], string> = {
@@ -94,6 +117,7 @@ export function describeFailure(
   schema: EnrichedSetting[],
 ): FailureDescription {
   const { kind, error } = failure;
+  const critical = isFlashCritical(error, kind, transport);
   let outcome: string | null = null;
 
   const batch = error.match(/batch stopped at operation (\d+); (\d+) completed operations? remain applied/i);
@@ -113,8 +137,10 @@ export function describeFailure(
         ? `None of the ${total} changes were applied. `
         : `${applied} of ${total} changes were applied before the error. `;
     outcome = appliedText + failedText;
-  } else if (FLASH_INTERRUPTED.test(error)) {
-    outcome = "The motor may be left in recovery mode. Do not power-cycle it; run the recovery command below.";
+  } else if (critical) {
+    outcome = "The motor may be left in recovery mode. Do not power-cycle it. The web app cannot recover it: on a computer "
+      + "with an SM-PCE02, follow the recovery steps with the cranklink CLI"
+      + (FLASH_INTERRUPTED.test(error) ? ", using the command below with that computer’s --port." : ".");
   } else if (kind === "save" && /authentication is not verified|authentication challenge rejected|authentication failed/i.test(error)) {
     outcome = "No change was written. Your staged values are kept.";
   }
@@ -122,7 +148,9 @@ export function describeFailure(
   return {
     title: TITLES[kind],
     outcome,
-    message: userFacingError(error, transport),
-    linkLost: isLinkLost(error),
+    // A summary such as "reconnect" must not replace the cause of a critical failure.
+    message: critical ? rawError(error) : userFacingError(error, transport),
+    linkLost: isLinkLost(error, kind, transport),
+    critical,
   };
 }

@@ -2,10 +2,10 @@
  * FailureBanner.tsx - States what happened to the bike, then offers the next step.
  */
 
-import { Alert, Button, CloseButton } from "@heroui/react";
+import { Alert, Button, CloseButton, Link } from "@heroui/react";
 import type { InstrumentState } from "../types.ts";
 import type { SessionController } from "../core/sessionController.ts";
-import { describeFailure } from "../domain/errors.ts";
+import { describeFailure, RECOVERY_URL } from "../domain/errors.ts";
 
 interface FailureBannerProps {
   state: InstrumentState;
@@ -45,10 +45,16 @@ export function FailureBanner({ state, controller, onShowDiagnostics }: FailureB
       <Alert.Content className="min-w-0">
         <Alert.Title>{failure.title}</Alert.Title>
         {failure.outcome && <p className="mt-1 text-sm font-medium" data-testid="error-outcome">{failure.outcome}</p>}
-        <Alert.Description className="[overflow-wrap:anywhere]">{failure.message}</Alert.Description>
-        {connected && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {linkLost ? (
+        <Alert.Description className="whitespace-pre-line [overflow-wrap:anywhere]">{failure.message}</Alert.Description>
+        {(connected || failure.critical) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {/* Reading or reconnecting would talk to a motor that may be in its bootloader. */}
+            {failure.critical ? (
+              <Link href={RECOVERY_URL} target="_blank" rel="noreferrer" className="text-sm" data-testid="error-recovery-steps">
+                Recovery steps
+                <Link.Icon />
+              </Link>
+            ) : linkLost ? (
               <Button size="sm" isDisabled={busy} onPress={() => controller.reconnect().catch(() => {})} data-testid="btn-error-reconnect">
                 Reconnect
               </Button>

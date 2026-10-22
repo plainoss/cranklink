@@ -78,6 +78,8 @@ export class SessionController {
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
   /** True while disconnect() runs; agent reviews are refused until it settles. */
   private disconnecting = false;
+  /** The chip the latest flash progress line belongs to. */
+  private flashStep: { echo: string; done: number; chip: string } | null = null;
 
   constructor() {
     this.state = {
@@ -152,7 +154,7 @@ export class SessionController {
       failure,
       // Sticky: an unrelated rejection (e.g. staging while offline) must not
       // mark a dead link healthy. Connecting or a successful read clears it.
-      linkLost: this.state.linkLost || isLinkLost(error),
+      linkLost: this.state.linkLost || isLinkLost(error, kind, this.state.transport),
       statusMessage: status ? status(error) : error,
       ...rest,
     });
@@ -233,11 +235,26 @@ export class SessionController {
     const nextLogs = [...this.state.logs.slice(-299), entry];
     // Progress notices update the connection status; standing disclaimers do not.
     const isProgress = stream === "notice" && !/^Experimental /.test(trimmed);
+    // A flash reports progress on stderr; without it a minutes-long write looks hung.
+    const flashed = stream === "stderr" && this.state.phase === "flashing"
+      ? [...trimmed.matchAll(/^Programming (\d+)\/(\d+) bytes \((\d+)%\)$/gm)].at(-1)
+      : undefined;
+    let chip = "";
+    if (flashed) {
+      const echo = this.activeCapture?.echo ?? "";
+      const done = Number(flashed[1]);
+      const step = this.flashStep?.echo === echo ? this.flashStep : null;
+      // ble-pair writes DCAS, then RX, whose byte count starts again.
+      chip = / firmware flash rx /.test(echo) || step?.chip === "RX" || (!!step && done < step.done) ? "RX" : "DCAS";
+      this.flashStep = { echo, done, chip };
+    }
     this.update({
       logs: nextLogs,
       ...(isProgress && ["connecting", "probing"].includes(this.state.phase)
         ? { statusMessage: trimmed }
-        : {}),
+        : flashed
+          ? { statusMessage: `Writing ${chip} firmware: ${flashed[3]}% (${flashed[1]} of ${flashed[2]} bytes)` }
+          : {}),
     });
   }
 

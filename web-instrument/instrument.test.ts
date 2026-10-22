@@ -424,6 +424,100 @@ describe("Firmware programming preconditions", () => {
   });
 });
 
+describe("Firmware programming progress", () => {
+  it("shows the write progress the CLI reports on stderr", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const seen: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        (globalThis as any).estepsTerminalPrint("Programming 8192/65536 bytes (12%)\n", "stderr");
+        seen.push(controller.getState().statusMessage);
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await controller.executeFirmwareSync(true, "dcas");
+    assert.deepEqual(seen, ["Writing DCAS firmware: 12% (8192 of 65536 bytes)"]);
+  });
+
+  it("names the chip ble-pair is writing", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const seen: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        for (const line of ["Programming 65536/65536 bytes (100%)", "Programming 8192/32768 bytes (25%)", "Programming 16384/32768 bytes (50%)"]) {
+          (globalThis as any).estepsTerminalPrint(`${line}\n`, "stderr");
+          seen.push(controller.getState().statusMessage);
+        }
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "ble",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await controller.executeFirmwareSync(true);
+    assert.deepEqual(seen, [
+      "Writing DCAS firmware: 100% (65536 of 65536 bytes)",
+      "Writing RX firmware: 25% (8192 of 32768 bytes)",
+      "Writing RX firmware: 50% (16384 of 32768 bytes)",
+    ]);
+  });
+
+  it("treats a failed Bluetooth write as critical, not as a lost link", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const stderr = "Programming 8192/65536 bytes (12%)\nerror: Bluetooth disconnected; reconnect before another command\n";
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        (globalThis as any).estepsTerminalPrint(stderr, "stderr");
+        return { code: 1 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "ble",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true), /Bluetooth disconnected/);
+    const state = controller.getState();
+    // A lost link would bring back Reconnect once the banner is dismissed.
+    assert.equal(state.linkLost, false);
+    assert.equal(describeFailure(state.failure!, state.transport, []).critical, true);
+  });
+});
+
 describe("BLE initial settings connection", () => {
   function terminalFor(snapshot: any, commands: string[]) {
     return {
@@ -815,6 +909,55 @@ describe("Concise connection errors", () => {
     assert.match(failure.message, /re-run with: cranklink/);
     assert.match(failure.outcome ?? "", /recovery mode/);
     assert.equal(failure.linkLost, false);
+  });
+
+  it("shows an interrupted flash without its progress lines and offers no next step", () => {
+    const rule = "=".repeat(80);
+    const error = [
+      "Programming 8192/65536 bytes (12%)",
+      "Programming 16384/65536 bytes (25%)",
+      "",
+      rule,
+      "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.",
+      "DO NOT POWER CYCLE THE MOTOR.",
+      "Journal preserved at: fw_write_1.01-dcas.journal.jsonl",
+      "To recover, re-run with:",
+      "  cranklink -s 010203040506 firmware flash dcas D.dat --companion M.dat --recovery --write",
+      rule,
+      "",
+      "",
+      "error: DCAS block 12 write: USB device disconnected; device outcome may be uncertain",
+    ].join("\n");
+    const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+    assert.equal(failure.message.split("\n")[0], "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
+    assert.doesNotMatch(failure.message, /Programming|===|\n\n\n/);
+    assert.match(failure.message, /--recovery --write\n\nerror: DCAS block 12 write/);
+    assert.equal(failure.critical, true);
+    assert.equal(failure.linkLost, false);
+
+    assert.match(failure.outcome ?? "", /Do not power-cycle it\. The web app cannot recover it: .*SM-PCE02.*cranklink CLI, using the command below/);
+
+    const verify = describeFailure({ kind: "firmware", error: "Programming 65536/65536 bytes (100%)\nerror: verify mismatch" }, "usb", []);
+    assert.equal(verify.message, "verify mismatch");
+    assert.equal(verify.critical, false);
+  });
+
+  it("treats a Bluetooth flash that failed after the write started as critical", () => {
+    // ble-pair prints no interrupted-flash warning of its own.
+    const error = "Programming 8192/65536 bytes (12%)\nProgramming 16384/65536 bytes (25%)\nerror: Bluetooth disconnected\n[exit 1]";
+    for (const transport of ["ble", "sim"] as const) {
+      const failure = describeFailure({ kind: "firmware", error }, transport, []);
+      assert.equal(failure.critical, true);
+      assert.equal(failure.linkLost, false);
+      assert.match(failure.outcome ?? "", /Do not power-cycle it\..*cranklink CLI\.$/);
+      assert.doesNotMatch(failure.outcome ?? "", /command below/);
+      assert.equal(failure.message, "Bluetooth disconnected");
+    }
+    // Before the write started, or outside a flash, a closed link stays a closed link.
+    const check = describeFailure({ kind: "firmware", error: "error: Bluetooth disconnected" }, "ble", []);
+    assert.equal(check.critical, false);
+    assert.equal(check.linkLost, true);
+    assert.equal(describeFailure({ kind: "read", error }, "ble", []).critical, false);
   });
 
   it("keeps a lost link lost when a later, unrelated operation is rejected", () => {

@@ -3,11 +3,10 @@ import { UploadCloud, FileCheck2 } from "lucide-react";
 import { Alert, Button, Card, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
+import { RECOVERY_URL } from "../../domain/errors.ts";
 import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 type ProgramTarget = "pair" | "dcas" | "rx";
-
-const RECOVERY_URL = "https://github.com/plainoss/cranklink#recover-a-motor-stuck-in-bootloader-mode";
 
 const PROGRAM_COPY: Record<ProgramTarget, { title: string; body: string }> = {
   pair: {
