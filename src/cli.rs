@@ -509,7 +509,17 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             out_print!("{}", error);
             return Ok(());
         }
-        Err(error) => return Err(error.into()),
+        Err(error)
+            if error.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand =>
+        {
+            err_println!("{}", error.render().to_string().trim_end());
+            anyhow::bail!("a command is required");
+        }
+        // Callers prefix "error: " themselves; clap's rendering already has it.
+        Err(error) => {
+            let rendered = error.render().to_string();
+            anyhow::bail!("{}", rendered.trim_end().trim_start_matches("error: "));
+        }
     };
 
     // Environment variable overrides
@@ -3090,6 +3100,23 @@ mod cli_tests {
         for args in [&["session"][..], &["ble", "scan"], &["adapter", "status"]] {
             assert!(!ble_command_allowed(&command(args)), "{args:?}");
         }
+    }
+
+    #[test]
+    fn usage_errors_are_not_double_prefixed() {
+        let error = execute(
+            ["cranklink", "--port", "a", "--port", "b", "scan"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.starts_with("the argument '--port <PORT>'"),
+            "{message}"
+        );
+        let error = execute(vec!["cranklink".into()]).unwrap_err();
+        assert_eq!(format!("{error:#}"), "a command is required");
     }
 
     #[test]
