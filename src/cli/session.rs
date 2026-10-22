@@ -111,16 +111,25 @@ impl JsonRpcError {
     }
 }
 
-/// An absent or null slot selects automatically; anything else must be a bus slot.
-fn probe_slot(params: &Value) -> std::result::Result<Option<u8>, String> {
-    match params.get("slot") {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .filter(|slot| *slot < 32)
-            .map(|slot| Some(slot as u8))
-            .ok_or_else(|| format!("slot must be an integer 0..31, got {value}")),
-    }
+/// Absent or null selectors choose automatically; anything else must be a
+/// bus slot or a component name, never silently ignored.
+fn probe_target(params: &Value) -> std::result::Result<(Option<u8>, Option<String>), String> {
+    let slot = match params.get("slot") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|slot| *slot < 32)
+                .map(|slot| slot as u8)
+                .ok_or_else(|| format!("slot must be an integer 0..31, got {value}"))?,
+        ),
+    };
+    let component = match params.get("component") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) => Some(name.clone()),
+        Some(value) => return Err(format!("component must be a model name, got {value}")),
+    };
+    Ok((slot, component))
 }
 
 pub fn run_session(
@@ -282,6 +291,22 @@ pub fn run_session(
                 error: None,
             },
             "probe" => {
+                // Validate parameters before any hardware is opened.
+                let (slot, comp) = match probe_target(&req.params) {
+                    Ok(target) => target,
+                    Err(message) => {
+                        let err_resp = JsonRpcResponse {
+                            jsonrpc: "2.0",
+                            id,
+                            result: None,
+                            error: Some(JsonRpcError::invalid_params(message, None)),
+                        };
+                        writeln!(stdout, "{}", serde_json::to_string(&err_resp)?)?;
+                        stdout.flush()?;
+                        continue;
+                    }
+                };
+                let comp = comp.as_deref();
                 let s = match session.as_mut() {
                     Some(s) => s,
                     None => {
@@ -309,22 +334,6 @@ pub fn run_session(
                         }
                     }
                 };
-
-                let slot = match probe_slot(&req.params) {
-                    Ok(slot) => slot,
-                    Err(message) => {
-                        let err_resp = JsonRpcResponse {
-                            jsonrpc: "2.0",
-                            id,
-                            result: None,
-                            error: Some(JsonRpcError::invalid_params(message, None)),
-                        };
-                        writeln!(stdout, "{}", serde_json::to_string(&err_resp)?)?;
-                        stdout.flush()?;
-                        continue;
-                    }
-                };
-                let comp = req.params.get("component").and_then(Value::as_str);
 
                 // Probe is read-only: release the PC-link it opened on every path.
                 let probed = s.probe_component(slot, comp);
@@ -560,12 +569,18 @@ mod tests {
     }
 
     #[test]
-    fn probe_slot_rejects_values_that_are_not_bus_slots() {
-        assert_eq!(probe_slot(&json!({})), Ok(None));
-        assert_eq!(probe_slot(&json!({"slot": null})), Ok(None));
-        assert_eq!(probe_slot(&json!({"slot": 13})), Ok(Some(13)));
+    fn probe_target_rejects_selectors_it_would_otherwise_ignore() {
+        assert_eq!(probe_target(&json!({})), Ok((None, None)));
+        assert_eq!(probe_target(&json!({"slot": null})), Ok((None, None)));
+        assert_eq!(
+            probe_target(&json!({"slot": 13, "component": "ST-6870-L"})),
+            Ok((Some(13), Some("ST-6870-L".into())))
+        );
         for slot in [json!(32), json!(269), json!(-1), json!("13"), json!(1.5)] {
-            assert!(probe_slot(&json!({ "slot": slot })).is_err(), "{slot}");
+            assert!(probe_target(&json!({ "slot": slot })).is_err(), "{slot}");
+        }
+        for component in [json!(5), json!(["ST-6870-L"])] {
+            assert!(probe_target(&json!({ "component": component })).is_err());
         }
     }
 
