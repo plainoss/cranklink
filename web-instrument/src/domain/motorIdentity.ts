@@ -16,10 +16,10 @@ export function isMotorStock(series: number, unit: number): boolean {
   return unit === 0 && MODELS[series] !== undefined;
 }
 
-/** Component names come from the Rust live identity resolver, never a motor fallback. */
 /** Catalogued model names, e.g. ST-6870-L or SW-M8150-R/IR; never contain quotes. */
 export const CATALOG_NAME = /^[A-Z0-9]+(?:[-/][A-Z0-9]+)+$/;
 
+/** Component names come from the Rust live identity resolver, never a motor fallback. */
 export function detectDeviceIdentity(parsed: {
   model_series?: number; model_unit?: number; cargo?: unknown;
   model_name?: unknown; settings_model?: unknown;
