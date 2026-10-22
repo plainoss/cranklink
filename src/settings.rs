@@ -1034,13 +1034,14 @@ pub fn set(
         SettingsModel::Ep800Crg,
     )
 }
+
+/// Readbacks after a hub adjustment SET while its actuator moves.
+const HUB_COMPLETION_POLLS: usize = 30;
+
 /// Back up, issue the model-specific SET, and verify the current value by GET.
 /// The implemented setting path sends no additional generic EEPROM commit.
 /// A successful readback confirms the live value; persistence across power
 /// cycles needs a separate GET after the component restarts.
-/// Readbacks after a hub adjustment SET while its actuator moves.
-const HUB_COMPLETION_POLLS: usize = 30;
-
 pub fn set_for_model(
     session: &mut dyn UnitCommands,
     slot: u8,
