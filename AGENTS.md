@@ -5,7 +5,7 @@
 
 ## 2. Tooling & Local Verification
 Always prefer fast local tooling over slow manual loops:
-- **Unified Fast Check**: Run `./tools/verify.sh` to check formatting, Rust typecheck, Rust unit tests, web TypeScript types, and web unit tests in one command.
+- **Unified Fast Check**: Run `./tools/verify.sh` to check formatting, the native and wasm32 Rust builds, Rust unit tests, the firmware simulator/patcher tests (when `unicorn` is importable; set `CRANKLINK_SIM_PYTHON` to a venv), web TypeScript types, and web unit tests in one command.
 - **Git Pre-commit Hook**: Run `./tools/install-git-hooks.sh` once in any worktree to enable `.githooks/pre-commit` (guarantees formatting and types before commit).
 - **Fast Web Typecheck**: In `web-instrument`, run `npm run typecheck` (`tsc --noEmit`, <1s) instead of the full `npm run build` bundle.
 - **Fast Web Instrument Test Cycle**: When developing or testing in `web-instrument`, use the rapid iteration tiers:
