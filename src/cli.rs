@@ -902,6 +902,25 @@ fn recovery_command(
     command
 }
 
+/// The warning for a write that failed after it started. Bluetooth has no
+/// recovery path, so after a `ble-pair` write the command is a wired one.
+fn interrupted_flash_banner(journal: &Path, command: &str, over_ble: bool) -> String {
+    let rule = "=".repeat(80);
+    let recover = if over_ble {
+        "Bluetooth cannot recover the motor. Connect an SM-PCE02 by wire and run:"
+    } else {
+        "To recover, re-run with:"
+    };
+    format!(
+        "\n{rule}\n\
+         CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.\n\
+         DO NOT POWER CYCLE THE MOTOR.\n\
+         Journal preserved at: {}\n\
+         {recover}\n  {command}\n{rule}\n",
+        journal.display()
+    )
+}
+
 /// Entry from the application leaves the bootloader at the application's slot
 /// once 01/C0 is acknowledged, so a failure after that may leave it there. A
 /// failure before it leaves the application running, and the recovery reset
@@ -1404,27 +1423,21 @@ fn execute_firmware_command(
                     Ok(r) => r,
                     Err(e) => {
                         let e = journal_failure(&mut jnl, "uncertain", e);
-                        err_println!("\n================================================================================");
-                        err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
-                        err_println!("DO NOT POWER CYCLE THE MOTOR.");
-                        err_println!("Journal preserved at: {}", journal_path.display());
-                        err_println!("To recover, re-run with:");
                         // The bootloader keeps the slot it was entered at; 31 is the recovery default.
-                        err_println!(
-                            "  {}",
-                            recovery_command(
-                                "dcas",
-                                port,
-                                Some(boot.slot).filter(|slot| *slot != 31),
-                                serial_str,
-                                &file,
-                                &companion,
-                                (!fw.metadata.encrypted)
-                                    .then_some(fw.metadata.source_sha256.as_str()),
-                                allow_unverified_model
-                            )
+                        let command = recovery_command(
+                            "dcas",
+                            port,
+                            Some(boot.slot).filter(|slot| *slot != 31),
+                            serial_str,
+                            &file,
+                            &companion,
+                            (!fw.metadata.encrypted).then_some(fw.metadata.source_sha256.as_str()),
+                            allow_unverified_model,
                         );
-                        err_println!("================================================================================\n");
+                        err_println!(
+                            "{}",
+                            interrupted_flash_banner(&journal_path, &command, false)
+                        );
                         return Err(e);
                     }
                 };
@@ -1683,26 +1696,20 @@ fn execute_firmware_command(
                     }
                     Err(e) => {
                         let e = journal_failure(&mut jnl, "uncertain", e);
-                        err_println!("\n================================================================================");
-                        err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
-                        err_println!("DO NOT POWER CYCLE THE MOTOR.");
-                        err_println!("Journal preserved at: {}", journal_path.display());
-                        err_println!("To recover, re-run with:");
-                        err_println!(
-                            "  {}",
-                            recovery_command(
-                                "rx",
-                                port,
-                                slot,
-                                serial_str,
-                                &file,
-                                &companion,
-                                (!fw.metadata.encrypted)
-                                    .then_some(fw.metadata.source_sha256.as_str()),
-                                allow_unverified_model
-                            )
+                        let command = recovery_command(
+                            "rx",
+                            port,
+                            slot,
+                            serial_str,
+                            &file,
+                            &companion,
+                            (!fw.metadata.encrypted).then_some(fw.metadata.source_sha256.as_str()),
+                            allow_unverified_model,
                         );
-                        err_println!("================================================================================\n");
+                        err_println!(
+                            "{}",
+                            interrupted_flash_banner(&journal_path, &command, false)
+                        );
                         return Err(e);
                     }
                 };
@@ -2139,6 +2146,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         session.set_master_routing(true)?;
     }
 
+    // The wired recovery command while a D or M write is in flight.
+    let mut recovery = None;
     let result = (|| -> Result<serde_json::Value> {
         if reused {
             #[cfg(target_arch = "wasm32")]
@@ -2250,7 +2259,19 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         }
 
         jnl.record("dcas-destructive-start", &d.metadata)?;
+        // The bootloader keeps the slot it was entered at; 31 is the recovery default.
+        recovery = Some(recovery_command(
+            "dcas",
+            None,
+            Some(boot.slot).filter(|slot| *slot != 31),
+            serial_str,
+            dcas,
+            rx,
+            (!d.metadata.encrypted).then_some(d.metadata.source_sha256.as_str()),
+            allow_model,
+        ));
         let receipt = link.flash_dcas(&d.data, &boot, progress_reporter())?;
+        recovery = None;
         jnl.record("dcas-finish-and-reset", &receipt)?;
         link.application_return()?;
 
@@ -2289,7 +2310,19 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             );
         }
         jnl.record("rx-destructive-start", &m.metadata)?;
+        // D answers again, so the wired adapter finds the motor by discovery.
+        recovery = Some(recovery_command(
+            "rx",
+            None,
+            None,
+            serial_str,
+            rx,
+            dcas,
+            (!m.metadata.encrypted).then_some(m.metadata.source_sha256.as_str()),
+            allow_model,
+        ));
         let receipt = link.flash_rx(&m, boot, progress_reporter())?;
+        recovery = None;
         jnl.record("rx-finish-and-reset", &receipt)?;
         link.application_return()?;
 
@@ -2333,6 +2366,9 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     })();
 
     let result = result.map_err(|e| journal_failure(&mut jnl, "uncertain", e));
+    if let (Err(_), Some(command)) = (&result, &recovery) {
+        err_println!("{}", interrupted_flash_banner(&journal_path, command, true));
+    }
     let stopped = session.stop();
     let closed = session.close();
     let result = finish_operation(result, stopped.context("BLE PC-link cleanup not confirmed"));
@@ -3974,6 +4010,40 @@ mod cli_tests {
             let cli = Cli::try_parse_from(shell_split(&line)).unwrap();
             assert!(matches!(cli.command, Command::Firmware { .. }), "{line}");
         }
+    }
+
+    #[test]
+    fn an_interrupted_ble_pair_write_points_to_wired_recovery() {
+        let journal = Path::new("pair.journal.jsonl");
+        let command = recovery_command(
+            "dcas",
+            None,
+            Some(13),
+            "010203040506",
+            Path::new("D.dat"),
+            Path::new("M.dat"),
+            None,
+            false,
+        );
+        let wired = interrupted_flash_banner(journal, &command, false);
+        assert!(
+            wired.starts_with(&format!(
+                "\n{}\nCRITICAL: FLASH WRITE INTERRUPTED.",
+                "=".repeat(80)
+            )),
+            "{wired}"
+        );
+        assert!(wired.contains(
+            "DO NOT POWER CYCLE THE MOTOR.\nJournal preserved at: pair.journal.jsonl\n\
+             To recover, re-run with:\n  cranklink --slot 13 -s 010203040506 firmware flash dcas"
+        ));
+        let ble = interrupted_flash_banner(journal, &command, true);
+        assert!(ble.contains("DO NOT POWER CYCLE THE MOTOR."), "{ble}");
+        assert!(ble.contains(
+            "Bluetooth cannot recover the motor. Connect an SM-PCE02 by wire and run:\n  \
+             cranklink --slot 13 -s 010203040506 firmware flash dcas D.dat --companion M.dat \
+             --recovery --write\n"
+        ));
     }
 
     #[test]
