@@ -1087,6 +1087,7 @@ fn execute_firmware_command(
                     if !is_json {
                         out_println!("DCAS Bootloader Probe:");
                         out_println!("  Slot:       {}", identity.slot);
+                        out_println!("  Serial:     {}", hex::encode(identity.serial));
                         out_println!(
                             "  Version:    v{}.{}.{}.{}",
                             identity.version[0],
@@ -1308,10 +1309,7 @@ fn execute_firmware_command(
                 let allow_model = allow_unverified_model;
                 // A failed journal write refuses like the guard: still reset.
                 let guard = jnl.record("boot-identity", &boot).and_then(|()| {
-                    ensure!(
-                        boot.serial.as_slice() == serial.as_slice(),
-                        "live serial differs from --expect-serial"
-                    );
+                    check_serial(&boot.serial, &serial)?;
                     fw.validate_target_with_policy(
                         boot.series,
                         boot.unit,
@@ -1564,10 +1562,7 @@ fn execute_firmware_command(
                 let allow_model = allow_unverified_model;
                 // A failed journal write refuses like the guard: still reset.
                 let guard = jnl.record("dcas-identity", &boot).and_then(|()| {
-                    ensure!(
-                        boot.serial.as_slice() == serial.as_slice(),
-                        "live serial differs from expected"
-                    );
+                    check_serial(&boot.serial, &serial)?;
                     d.validate_target_with_policy(
                         boot.series,
                         boot.unit,
@@ -2972,8 +2967,13 @@ fn execute_settings(
 /// so a wrong motor is never switched into boot mode, and again after a flash.
 fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) -> Result<()> {
     let live = crate::device::serial_bytes(&session.command(slot, 1, 0x3c, &[0], 0x3e)?)?;
+    check_serial(&live, expected)
+}
+
+/// Name both serials: a motor stuck in its bootloader cannot run `probe`.
+fn check_serial(live: &[u8], expected: &[u8]) -> Result<()> {
     ensure!(
-        live.as_slice() == expected,
+        live == expected,
         "live serial {} differs from --expect-serial {}",
         hex::encode(live),
         hex::encode(expected)
@@ -3610,6 +3610,24 @@ mod cli_tests {
         let (mut session, _) = scripted(vec![(query, reply)]);
         let error = check_application_serial(&mut session, 13, &[9, 9, 9, 9, 9, 9]).unwrap_err();
         assert!(format!("{error:#}").contains("differs from --expect-serial"));
+    }
+
+    #[test]
+    fn a_bootloader_serial_mismatch_names_the_live_serial() {
+        // A motor stuck in its bootloader reports its serial only here and in probe.
+        let boot = crate::device::BootIdentity {
+            slot: 31,
+            version: [4, 2, 0, 0],
+            board: 1,
+            series: 0x23,
+            unit: 0,
+            serial: [1, 2, 3, 4, 5, 6],
+        };
+        check_serial(&boot.serial, &[1, 2, 3, 4, 5, 6]).unwrap();
+        assert_eq!(
+            check_serial(&boot.serial, &[0; 6]).unwrap_err().to_string(),
+            "live serial 010203040506 differs from --expect-serial 000000000000"
+        );
     }
 
     /// The DCAS bootloader reset, then discovery and a PC-link start at slot

@@ -89,7 +89,7 @@ Drive Unit Probe:
   Renesas (M): v4.1.11.0
 ```
 
-Settings writes (`set` and batches that set) and ordinary firmware flashing require `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial, checked again before each settings SET; restores are bound to the serial in their backup. Bridge recovery can read and bind the serial automatically after connecting.
+Settings writes (`set` and batches that set) and ordinary firmware flashing require `-s <SERIAL>` (the 12-digit hex serial from `probe`) and fail if the connected unit reports a different serial, checked again before each settings SET; restores are bound to the serial in their backup. Bridge recovery can read and bind the serial automatically after connecting. Record the serial before flashing: a motor stuck in its DCAS bootloader cannot run `probe`, but reports it as `Serial:` in recovery step 2, and a serial mismatch names the live serial.
 
 ### Read and change settings
 
@@ -122,7 +122,7 @@ Requires an intact bootloader, stable power, and your own firmware containers (`
 # 1. Inspect the containers offline
 cranklink firmware inspect DUEP800-D.4.2.0.dat --companion DUEP800-M.4.1.11.dat
 
-# 2. Confirm the bootloader responds
+# 2. Confirm the bootloader responds and note its Serial (use it as <SERIAL> below)
 cranklink --port usb firmware probe --target dcas --recovery
 
 # 3. Dry run (default): validates target and container integrity, writes nothing
