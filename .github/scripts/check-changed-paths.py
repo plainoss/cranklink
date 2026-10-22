@@ -14,11 +14,22 @@ import pathlib
 import subprocess
 import sys
 
-CLI_PATTERNS = [
-    "src/**",
+# Files that change how every Rust target builds, including wasm32.
+RUST_BUILD_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".cargo/**",
+]
+
+CLI_PATTERNS = [
+    "src/**",
+    *RUST_BUILD_PATTERNS,
+    # The CLI job runs cargo fmt --check, which reads these.
+    "rustfmt.toml",
+    ".rustfmt.toml",
     "tools/firmware-sim/**",
     "tools/patch_motor_speed.py",
     "tools/patch_ep800_speed.py",
@@ -37,8 +48,7 @@ CLI_PATTERNS = [
 
 WEB_PATTERNS = [
     "src/**",
-    "Cargo.toml",
-    "Cargo.lock",
+    *RUST_BUILD_PATTERNS,
     "web-instrument/**",
     ".github/workflows/web.yml",
     ".github/scripts/check-web-assets.py",
