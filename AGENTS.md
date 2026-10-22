@@ -12,16 +12,17 @@ Always prefer fast local tooling over slow manual loops:
   - `npm run test:fast` (<100ms): Fast domain schemas, firmware package rules, and SessionController FSM tests.
   - `npm run test:smoke` (~2s): Fast smoke E2E test verifying connect, inline staging, ordered batch commit, and rollback.
   - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite.
-  - `npm run test:production` (~1s): Reserved for pre-push or CI to verify production build assets and `_headers` COOP/COEP isolation.
+  - `npm run test:production` (~1s): Serves the built `dist/` with only the headers its `_headers` file declares and checks COOP/COEP isolation, WASM startup and that the dev simulator is omitted. CI runs it after the build; locally run `npm run build:cloudflare` first (or `npm run build` when `pkg/` is already fresh).
 - **E2E Port Safety**: `npm run test:smoke` and `npm run test:e2e` use port 8030 and first run `scripts/ensure-port-free.mjs`, which stops only a leftover server started from this worktree's `web-instrument/` and refuses when another directory holds the port. Set `CRANKLINK_E2E_PORT=<port>` to run worktrees side by side; `CRANKLINK_E2E_REUSE=1` reuses this tree's running server.
+- **Schema Sync**: After changing a motor settings table, run `node --experimental-strip-types tools/sync-schemas.ts` from the repository root; `cargo test` fails while `web-instrument/schemas/` differs from the Rust tables.
 
 ## 3. Worktree Setup Protocol
 - When starting work in a new git worktree, if `web-instrument/node_modules` does not exist, run `npm ci` in `web-instrument/` before running web commands.
 
 ## 4. CI & Subagent Execution Rules
-- **No CI Busy-Polling**: Never run `gh pr checks` in loops (it exits with code 1 while checks are still pending). Use `./tools/ci-watch.sh [PR_NUM]` or `gh pr checks --watch`, or launch as a background task.
+- **No CI Busy-Polling**: Never run `gh pr checks` in loops (it exits with code 8 while checks are still pending). Use `./tools/ci-watch.sh [PR_NUM]` or `gh pr checks --watch`, or launch as a background task.
 - **No Subagent Polling**: Never run `manage_subagents Action="list"` in polling loops; the agent environment automatically delivers messages and wakeups when subagents complete or reply.
-- **Scratch Scripts**: When doing firmware analysis, disassembly, or complex data processing, write temporary scripts in `<conversation-id>/scratch/` or `tools/` instead of executing fragile inline multi-line Python snippets in shell commands.
+- **Scratch Scripts**: When doing firmware analysis, disassembly, or complex data processing, write temporary scripts in `scratch/` at the repository root (gitignored) instead of executing fragile inline multi-line Python snippets in shell commands.
 
 ## 5. Concurrent PRs & Merge Queue Protocol
 - **Auto-Merge to Queue**: After creating a PR, mark it for auto-merging:
