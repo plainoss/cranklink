@@ -764,11 +764,13 @@ export class SessionController {
       }
 
       const resultJson = this.extractLastJsonObject(batchRes.stdout);
+      // Rust reads back a nullable setting written as "unset" as null.
+      const readbackMatches = (after: unknown, value: string) => after === null ? value === "unset" : String(after) === value;
 
       if (resultJson?.completed !== operations.length || !Array.isArray(resultJson?.results)
           || resultJson.results.length !== operations.length
           || !resultJson.results.every((receipt: any, index: number) => receipt?.setting === operations[index].name && receipt.after !== undefined
-            && String(receipt.after) === operations[index].value)) {
+            && readbackMatches(receipt.after, operations[index].value))) {
         throw new Error("Save did not return a complete set of verified setting receipts. Read the component before deciding what to retry.");
       }
       // Update liveValues only from complete, verified readbacks.

@@ -620,6 +620,7 @@ describe("Verified component batch receipts", () => {
     ["duplicate receipt", { completed: 2, results: [valid[0], valid[0]] }],
     ["missing readback", { completed: 2, results: [valid[0], { setting: "switch-b-function" }] }],
     ["mismatched readback", { completed: 2, results: [valid[0], { ...valid[1], after: 2 }] }],
+    ["null readback", { completed: 2, results: [valid[0], { ...valid[1], after: null }] }],
     ["non-array receipts", { completed: 2, results: {} }],
     ["invalid JSON", "Write returned no JSON receipt"],
   ] as const;
@@ -658,6 +659,19 @@ describe("Verified component batch receipts", () => {
     }
     assert.deepEqual(h.controller.getState().stagedValues, { "switch-a-function": 0 });
     assert.deepEqual(h.commands, commands);
+  });
+
+  it("accepts a null readback for a nullable date saved as unset", async () => {
+    const h = harness();
+    h.schemas.set(LEVER, [...leverSchema, spec("maintenance-date", { value_type: "date", nullable: true, unit: "", choices: [] })]);
+    (h.replies.get(4)!.values as any)["maintenance-date"] = { value: "2025-01-01", raw: "19010100" };
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("maintenance-date", "unset");
+    h.config.batch = { completed: 1, results: [{ setting: "maintenance-date", before: "2025-01-01", after: null, changed: true }] };
+    await h.controller.commitStagedBatch();
+    assert.equal(h.controller.getState().liveValues["maintenance-date"].value, null);
+    assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.equal(h.controller.getState().failure, null);
   });
 
   it("applies only a complete ordered readback and binds its write plan to model, slot and serial", async () => {
