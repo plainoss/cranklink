@@ -3102,6 +3102,21 @@ mod cli_tests {
     }
 
     #[test]
+    fn firmware_pair_start_keeps_the_motor_gate_for_an_explicit_slot() {
+        use crate::ble::tests::component_mock;
+        // A derailleur answers at slot 4: settings may start it, firmware may not.
+        let (mut session, _) = component_mock(2, 4);
+        assert!(ble_checked_start(&mut session, Some(4), None, None).is_ok());
+        let (mut session, state) = component_mock(2, 4);
+        assert!(ble_checked_motor_start(&mut session, Some(4), None).is_err());
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(_, bytes)| bytes.get(1..4) == Some(&[0x32, 0x10, 1][..])));
+    }
+
+    #[test]
     fn recovery_command_keeps_the_failing_port_and_slot() {
         let (d, m) = (Path::new("D.dat"), Path::new("M.dat"));
         assert_eq!(

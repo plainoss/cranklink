@@ -1186,12 +1186,12 @@ impl Drop for BleSession {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::{cell::RefCell, collections::VecDeque, rc::Rc};
     #[derive(Default)]
-    struct State {
-        writes: Vec<(u16, Vec<u8>)>,
+    pub(crate) struct State {
+        pub(crate) writes: Vec<(u16, Vec<u8>)>,
         pending: VecDeque<Notification>,
         subscriptions: Vec<u16>,
         lamp: u8,
@@ -2621,7 +2621,8 @@ mod tests {
         session.stop().unwrap();
         assert!(session.linked_slot.is_none());
     }
-    fn component_mock(series: u8, unit: u8) -> (BleSession, Rc<RefCell<State>>) {
+    /// An authenticated gateway session with one component at slot 4.
+    pub(crate) fn component_mock(series: u8, unit: u8) -> (BleSession, Rc<RefCell<State>>) {
         let (mut session, state) = mock();
         {
             let mut s = state.borrow_mut();
@@ -2646,15 +2647,6 @@ mod tests {
         assert!(writes.contains(&(FREE_COMMAND, vec![4, 0x32, 0x10, 0, 3, 0, 0])));
         assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
             && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
-    }
-    #[test]
-    fn motor_start_with_explicit_slot_refuses_a_component_before_pc_link() {
-        let (mut session, state) = component_mock(2, 4);
-        assert!(session.start(Some(4)).is_err());
-        let writes = &state.borrow().writes;
-        assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
-            && bytes.get(1..3) == Some(&[0x32, 0x10][..])
-            && bytes.get(3) == Some(&1)));
     }
     #[test]
     fn explicit_derailleur_ble_session_skips_motor_attributes_and_rx_version() {
