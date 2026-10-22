@@ -51,7 +51,11 @@ For how Cranklink discovers Di2 and e-bike components, interprets traffic and ch
 
 ### Install
 
-Tagged [releases](https://github.com/plainoss/cranklink/releases) attach prebuilt binaries for Linux, macOS, and Windows. To build from source (Rust 1.90+):
+The [rolling prerelease](https://github.com/plainoss/cranklink/releases/tag/rolling) provides the latest development binaries from `main` for Linux, macOS (Apple Silicon and Intel), and Windows, with BLE support and `.sha256` checksums. Every push to `main` rebuilds all four platforms; after tests, builds, and checksum verification pass, the workflow moves the `rolling` tag to the built commit and replaces the release assets. Older runs skip publishing if `main` has advanced. These binaries may contain unreleased changes.
+
+Pushing a `v*` tag publishes a separate versioned [release](https://github.com/plainoss/cranklink/releases). To refresh the rolling release manually, run **Build & Release CLI** with **Run workflow** on `main`. Pull requests and merge queue runs validate builds without publishing.
+
+To build from source (Rust 1.90+):
 
 ```sh
 git clone https://github.com/plainoss/cranklink.git

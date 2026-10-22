@@ -32,6 +32,8 @@ jobs:
       - name: Check changed paths
         id: filter
         run: python3 .github/scripts/check-changed-paths.py cli
+      - name: Test rolling release preparation
+        run: node --test .github/scripts/prepare-rolling-release.test.cjs
       - uses: dtolnay/rust-toolchain@1.90.0
         if: steps.filter.outputs.has_changes == 'true'
       - uses: Swatinem/rust-cache@v2
@@ -172,12 +174,20 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.ref == 'refs/heads/main' &&
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        if: github.ref == 'refs/heads/main'
+        with:
+          persist-credentials: false
       - name: Download CLI archives
         uses: actions/download-artifact@v8
         with:
@@ -192,7 +202,8 @@ jobs:
             sha256sum -c "$archive.sha256"
           done
           echo 'Release includes Linux, macOS ARM/Intel, and Windows GNU. All are built on Linux; macOS/Windows execution and BLE hardware require separate platform validation.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Create release
+      - name: Create versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -201,3 +212,32 @@ jobs:
             dist/*.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
+      - name: Prepare rolling tag at the built commit
+        if: github.ref == 'refs/heads/main'
+        id: rolling
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prepare = require('./.github/scripts/prepare-rolling-release.cjs');
+            await prepare({ github, context, core });
+      - name: Publish rolling prerelease
+        if: steps.rolling.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rolling
+          target_commitish: ${{ github.sha }}
+          name: Rolling build (main)
+          prerelease: true
+          make_latest: 'false'
+          overwrite_files: true
+          body: |
+            Automatically refreshed build of main at ${{ github.sha }}.
+            These development binaries include BLE support and may contain unreleased changes.
+            Download an archive and its .sha256 file to verify the checksum.
+            All platforms are built on Linux; macOS/Windows execution and BLE hardware require separate platform validation.
+            Build: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          fail_on_unmatched_files: true
