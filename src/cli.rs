@@ -854,6 +854,20 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     }
 }
 
+/// Single-quote anything a shell would split or expand (Windows paths with
+/// spaces are common); POSIX shells and PowerShell both accept this form.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:\\".contains(c))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 /// The exact command to resume an interrupted write on the same adapter and slot.
 fn recovery_command(
     target: &str,
@@ -865,30 +879,17 @@ fn recovery_command(
     expect_sha256: Option<&str>,
     allow_unverified_model: bool,
 ) -> String {
-    // Single-quote anything a shell would split or expand (Windows paths with
-    // spaces are common); POSIX shells and PowerShell both accept this form.
-    fn quote(value: &str) -> String {
-        if !value.is_empty()
-            && value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_./:\\".contains(c))
-        {
-            value.to_string()
-        } else {
-            format!("'{}'", value.replace('\'', "'\\''"))
-        }
-    }
     let mut command = String::from("cranklink");
     if let Some(port) = port {
-        command.push_str(&format!(" --port {}", quote(port)));
+        command.push_str(&format!(" --port {}", shell_quote(port)));
     }
     if let Some(slot) = slot {
         command.push_str(&format!(" --slot {slot}"));
     }
     command.push_str(&format!(
         " -s {serial} firmware flash {target} {} --companion {}",
-        quote(&file.display().to_string()),
-        quote(&companion.display().to_string())
+        shell_quote(&file.display().to_string()),
+        shell_quote(&companion.display().to_string())
     ));
     if let Some(sha256) = expect_sha256 {
         command.push_str(&format!(" --expect-sha256 {sha256}"));
@@ -898,6 +899,28 @@ fn recovery_command(
         command.push_str(" --allow-unverified-model");
     }
     command
+}
+
+/// Entry from the application leaves the bootloader at the application's slot
+/// once 01/C0 is acknowledged, so a failure after that may leave it there. A
+/// failure before it leaves the application running, and the recovery reset
+/// sends the key sequence, so the read-only probe comes first.
+fn bootloader_guidance(port: Option<&str>, slot: u8, failure: &str) -> String {
+    let mut probe = String::from("cranklink");
+    if let Some(port) = port {
+        probe.push_str(&format!(" --port {}", shell_quote(port)));
+    }
+    let mut reset = probe.clone();
+    if slot != 31 {
+        reset.push_str(&format!(" --slot {slot}"));
+    }
+    probe.push_str(" probe");
+    reset.push_str(" firmware probe --target dcas --recovery --reset");
+    format!(
+        "{failure}; nothing was erased or written.\n\
+         The motor may remain in its DCAS bootloader. Check whether its application answers with:\n  {probe}\n\
+         Only if it does not, return it to its application with:\n  {reset}"
+    )
 }
 
 /// A plaintext image has no container checksum, so corruption is undetectable;
@@ -1006,7 +1029,7 @@ fn execute_firmware_command(
             s.initialize()?;
             match target.to_lowercase().as_str() {
                 "dcas" => {
-                    if !recovery {
+                    let application_slot = if !recovery {
                         let application = s.normal_start(slot)?;
                         if let Some(expected) = expect_serial {
                             let checked = hex::decode(expected)
@@ -1021,8 +1044,26 @@ fn execute_firmware_command(
                                 return Err(e);
                             }
                         }
-                    }
-                    let identity = s.boot_start_at(!recovery, slot)?;
+                        Some(application.slot)
+                    } else {
+                        None
+                    };
+                    let identity = match s.boot_start_at(!recovery, slot) {
+                        Ok(identity) => identity,
+                        Err(e) => {
+                            if let Some(slot) = application_slot {
+                                err_println!(
+                                    "{}",
+                                    bootloader_guidance(
+                                        port,
+                                        slot,
+                                        "Bootloader entry did not complete"
+                                    )
+                                );
+                            }
+                            return Err(e);
+                        }
+                    };
                     if is_json {
                         out_println!("{}", serde_json::to_string_pretty(&identity)?);
                     } else {
@@ -1222,17 +1263,34 @@ fn execute_firmware_command(
                             )
                         });
                     if let Err(e) = preflight {
-                        jnl.record("preflight-rejected", &format!("{e:#}"))?;
-                        s.normal_stop()
-                            .context("preflight rejected image; PC-link stop failed")?;
-                        return Err(e);
+                        let e = journal_failure(&mut jnl, "preflight-rejected", e);
+                        let stop = s
+                            .normal_stop()
+                            .context("preflight rejected image; PC-link stop failed");
+                        return finish_operation(Err(e), stop);
                     }
                 }
-                let boot = s.boot_start_at(!recovery, slot)?;
-                jnl.record("boot-identity", &boot)?;
+                let boot = match s.boot_start_at(!recovery, slot) {
+                    Ok(boot) => boot,
+                    Err(e) => {
+                        let e = journal_failure(&mut jnl, "boot-entry-failed", e);
+                        if let Some(i) = &before {
+                            err_println!(
+                                "{}",
+                                bootloader_guidance(
+                                    port,
+                                    i.slot,
+                                    "Bootloader entry did not complete"
+                                )
+                            );
+                        }
+                        return Err(e);
+                    }
+                };
                 // A dry run applies the same model policy as the write it previews.
                 let allow_model = allow_unverified_model;
-                let guard = (|| {
+                // A failed journal write refuses like the guard: still reset.
+                let guard = jnl.record("boot-identity", &boot).and_then(|()| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
                         "live serial differs from --expect-serial"
@@ -1244,14 +1302,26 @@ fn execute_firmware_command(
                         Version(boot.version),
                         allow_model,
                     )
-                })();
+                });
                 let profile = match guard {
                     Ok(p) => p,
                     Err(e) => {
-                        jnl.record("guard-rejected", &format!("{e:#}"))?;
-                        if !recovery {
-                            s.boot_reset()
-                                .context("guard rejected image; application reset failed")?;
+                        let e = journal_failure(&mut jnl, "guard-rejected", e);
+                        if let Some(i) = &before {
+                            let reset = s
+                                .boot_reset()
+                                .context("guard rejected image; application reset failed");
+                            if reset.is_err() {
+                                err_println!(
+                                    "{}",
+                                    bootloader_guidance(
+                                        port,
+                                        i.slot,
+                                        "The bootloader reset was not acknowledged"
+                                    )
+                                );
+                            }
+                            return finish_operation(Err(e), reset);
                         }
                         return Err(e);
                     }
@@ -1296,7 +1366,7 @@ fn execute_firmware_command(
                 let receipt = match s.flash_dcas(&fw.data, &boot, progress_reporter()) {
                     Ok(r) => r,
                     Err(e) => {
-                        let e = journal_uncertain(&mut jnl, e);
+                        let e = journal_failure(&mut jnl, "uncertain", e);
                         err_println!("\n================================================================================");
                         err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
@@ -1414,18 +1484,33 @@ fn execute_firmware_command(
                             Ok(())
                         });
                     if let Err(e) = preflight {
-                        jnl.record("preflight-rejected", &format!("{e:#}"))?;
-                        s.normal_stop()
-                            .context("preflight rejected image; PC-link stop failed")?;
-                        return Err(e);
+                        let e = journal_failure(&mut jnl, "preflight-rejected", e);
+                        let stop = s
+                            .normal_stop()
+                            .context("preflight rejected image; PC-link stop failed");
+                        return finish_operation(Err(e), stop);
                     }
                 }
                 jnl.record("application-before", &before)?;
-                let boot = s.boot_start(true)?;
-                jnl.record("dcas-identity", &boot)?;
+                let boot = match s.boot_start(true) {
+                    Ok(boot) => boot,
+                    Err(e) => {
+                        let e = journal_failure(&mut jnl, "boot-entry-failed", e);
+                        err_println!(
+                            "{}",
+                            bootloader_guidance(
+                                port,
+                                before.slot,
+                                "Bootloader entry did not complete"
+                            )
+                        );
+                        return Err(e);
+                    }
+                };
                 // A dry run applies the same model policy as the write it previews.
                 let allow_model = allow_unverified_model;
-                let guard = (|| {
+                // A failed journal write refuses like the guard: still reset.
+                let guard = jnl.record("dcas-identity", &boot).and_then(|()| {
                     ensure!(
                         boot.serial.as_slice() == serial.as_slice(),
                         "live serial differs from expected"
@@ -1437,16 +1522,26 @@ fn execute_firmware_command(
                         Version(boot.version),
                         allow_model,
                     )
-                })();
-                s.boot_reset()?;
-                let profile = guard?;
+                });
+                let reset = s.boot_reset();
+                if reset.is_err() {
+                    err_println!(
+                        "{}",
+                        bootloader_guidance(
+                            port,
+                            before.slot,
+                            "The bootloader reset was not acknowledged"
+                        )
+                    );
+                }
+                let profile = finish_operation(guard, reset)?;
                 let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
 
                 if !write {
                     let rx = match crate::rx::read_boot(&mut s, ready.slot) {
                         Ok(rx) => rx,
                         Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
-                            jnl.record("dry-run-refused", &format!("{e:#}"))?;
+                            let e = journal_failure(&mut jnl, "dry-run-refused", e);
                             let restarted = return_after_rx_refusal(
                                 &mut s,
                                 &e,
@@ -1506,7 +1601,7 @@ fn execute_firmware_command(
                 ) {
                     Ok(r) => r,
                     Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
-                        jnl.record("refused-before-erase", &format!("{e:#}"))?;
+                        let e = journal_failure(&mut jnl, "refused-before-erase", e);
                         let restarted = return_after_rx_refusal(
                             &mut s,
                             &e,
@@ -1517,7 +1612,7 @@ fn execute_firmware_command(
                         return finish_operation(Err(e), restarted);
                     }
                     Err(e) => {
-                        let e = journal_uncertain(&mut jnl, e);
+                        let e = journal_failure(&mut jnl, "uncertain", e);
                         err_println!("\n================================================================================");
                         err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
@@ -2141,7 +2236,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         }))
     })();
 
-    let result = result.map_err(|e| journal_uncertain(&mut jnl, e));
+    let result = result.map_err(|e| journal_failure(&mut jnl, "uncertain", e));
     let stopped = session.stop();
     let closed = session.close();
     let result = finish_operation(result, stopped.context("BLE PC-link cleanup not confirmed"));
@@ -3242,11 +3337,11 @@ impl Journal {
     }
 }
 
-/// Journal a failed destructive step; a journal error must never replace it.
-fn journal_uncertain(jnl: &mut Journal, error: anyhow::Error) -> anyhow::Error {
-    match jnl.record("uncertain", &format!("{error:#}")) {
+/// Journal a failed step; a journal error must never replace it.
+fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyhow::Error {
+    match jnl.record(stage, &format!("{error:#}")) {
         Ok(()) => error,
-        Err(j) => error.context(format!("journal entry 'uncertain' was not written: {j:#}")),
+        Err(j) => error.context(format!("journal entry '{stage}' was not written: {j:#}")),
     }
 }
 
@@ -3586,6 +3681,36 @@ mod cli_tests {
     }
 
     #[test]
+    fn bootloader_guidance_probes_before_resetting_the_retained_slot() {
+        let guidance = bootloader_guidance(Some("usb"), 13, "Bootloader entry did not complete");
+        assert!(
+            guidance
+                .starts_with("Bootloader entry did not complete; nothing was erased or written"),
+            "{guidance}"
+        );
+        // The read-only application probe comes before the recovery reset.
+        let commands: Vec<&str> = guidance
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "cranklink --port usb probe",
+                "cranklink --port usb --slot 13 firmware probe --target dcas --recovery --reset"
+            ]
+        );
+        let cli = Cli::try_parse_from(commands[0].split(' ')).unwrap();
+        assert!(matches!(cli.command, Command::Probe));
+        let cli = Cli::try_parse_from(commands[1].split(' ')).unwrap();
+        assert_eq!(cli.slot, Some(13));
+        // 31 is the recovery default, and the auto port is the default port.
+        let guidance = bootloader_guidance(None, 31, "Bootloader entry did not complete");
+        assert!(guidance.contains("\n  cranklink probe\n"), "{guidance}");
+        assert!(guidance.ends_with("\n  cranklink firmware probe --target dcas --recovery --reset"));
+    }
+
+    #[test]
     fn a_failed_uncertain_journal_entry_keeps_the_flash_error() {
         let path = std::env::temp_dir().join(format!(
             "cranklink-uncertain-{}-{}",
@@ -3593,7 +3718,7 @@ mod cli_tests {
             crate::platform::now_ms()
         ));
         let mut jnl = Journal::new(&path).unwrap();
-        let error = journal_uncertain(&mut jnl, anyhow::anyhow!("flash write NAK"));
+        let error = journal_failure(&mut jnl, "uncertain", anyhow::anyhow!("flash write NAK"));
         assert_eq!(format!("{error:#}"), "flash write NAK");
         drop(jnl);
         assert!(std::fs::read_to_string(&path)
@@ -3603,7 +3728,7 @@ mod cli_tests {
         let mut jnl = Journal(std::fs::OpenOptions::new().read(true).open(&path).unwrap());
         let error = format!(
             "{:#}",
-            journal_uncertain(&mut jnl, anyhow::anyhow!("flash write NAK"))
+            journal_failure(&mut jnl, "uncertain", anyhow::anyhow!("flash write NAK"))
         );
         assert!(
             error.contains("flash write NAK") && error.contains("was not written"),
