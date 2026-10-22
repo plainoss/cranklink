@@ -2617,7 +2617,7 @@ mod tests {
                 [$(($slug, include_str!(concat!("../web-instrument/schemas/", $slug, ".json")))),*]
             };
         }
-        for (slug, committed) in schemas!(
+        let listed = schemas!(
             "ep800-crg",
             "ep600",
             "ep801",
@@ -2627,7 +2627,8 @@ mod tests {
             "e7000",
             "e6100",
             "e6000"
-        ) {
+        );
+        for (slug, committed) in listed {
             let model = SettingsModel::from_name(slug).unwrap();
             assert_eq!(model.slug(), slug);
             let committed: Value = serde_json::from_str(committed).unwrap();
@@ -2636,6 +2637,43 @@ mod tests {
                 committed,
                 "web-instrument/schemas/{slug}.json is stale; run node --experimental-strip-types tools/sync-schemas.ts"
             );
+        }
+        // A schema file missing from this list would drift unchecked, and one
+        // missing from the publish lists would never ship.
+        let on_disk: std::collections::BTreeSet<String> = std::fs::read_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/web-instrument/schemas"
+        ))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
+        .collect();
+        assert_eq!(
+            on_disk,
+            listed.iter().map(|(slug, _)| slug.to_string()).collect(),
+            "list every web-instrument/schemas/*.json here and in tools/sync-schemas.ts"
+        );
+        for (slug, _) in listed {
+            assert!(
+                include_str!("../tools/sync-schemas.ts").contains(&format!("\"{slug}\"")),
+                "tools/sync-schemas.ts does not regenerate {slug}"
+            );
+            for (lister, list) in [
+                (
+                    "web-instrument/scripts/copy-runtime-assets.mjs",
+                    include_str!("../web-instrument/scripts/copy-runtime-assets.mjs"),
+                ),
+                (
+                    ".github/scripts/check-web-assets.py",
+                    include_str!("../.github/scripts/check-web-assets.py"),
+                ),
+            ] {
+                assert!(
+                    list.contains(&format!("\"schemas/{slug}.json\"")),
+                    "{lister} must list schemas/{slug}.json"
+                );
+            }
         }
     }
     #[test]

@@ -25,6 +25,8 @@ CLI_PATTERNS = [
     # A Rust unit test compares these with the settings tables.
     "web-instrument/schemas/**",
     "tools/sync-schemas.ts",
+    "web-instrument/scripts/copy-runtime-assets.mjs",
+    ".github/scripts/check-web-assets.py",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
     ".github/scripts/prepare-rolling-release*",
