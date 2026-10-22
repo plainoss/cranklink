@@ -169,6 +169,12 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
                 <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
                 Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
               </p>
+              {state.linkLost && (
+                <p className="flex items-start gap-2 text-xs font-medium" data-testid="review-link-lost">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                  The link to the bike closed. Close this review and reconnect before saving.
+                </p>
+              )}
             </Modal.Body>
             <Modal.Footer className="flex-wrap">
               <Button variant="ghost" onPress={() => controller.discardAllStaged()} className="mr-auto">
@@ -178,7 +184,7 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
                 Keep editing
               </Button>
               <Button
-                isDisabled={saving || (regulated.length > 0 && !acknowledged)}
+                isDisabled={saving || state.linkLost || (regulated.length > 0 && !acknowledged)}
                 onPress={save}
                 data-testid="btn-commit-batch"
               >

@@ -614,6 +614,24 @@ describe("Verified component batch receipts", () => {
     });
   }
 
+  it("records a refused save so the banner can explain it", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    const commands = [...h.commands];
+    for (const [patch, error] of [
+      [{ linkLost: true }, /Reconnect to an idle component before saving/],
+      [{ unavailableValues: { "switch-a-function": "channel not available" } }, /switch-a-function is unavailable/],
+    ] as const) {
+      (h.controller as any).update({ failure: null, linkLost: false, unavailableValues: {}, ...patch });
+      await assert.rejects(h.controller.commitStagedBatch(), error);
+      assert.equal(h.controller.getState().failure?.kind, "save");
+      assert.match(h.controller.getState().failure?.error ?? "", error);
+    }
+    assert.deepEqual(h.controller.getState().stagedValues, { "switch-a-function": 0 });
+    assert.deepEqual(h.commands, commands);
+  });
+
   it("applies only a complete ordered readback and binds its write plan to model, slot and serial", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");

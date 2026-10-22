@@ -14,12 +14,30 @@ interface FailureBannerProps {
 }
 
 export function FailureBanner({ state, controller, onShowDiagnostics }: FailureBannerProps) {
-  if (!state.failure) return null;
+  const connected = Boolean(state.identity);
+  const busy = state.phase !== "ready";
+  if (!state.failure) {
+    // Dismissing the failure must not hide the way back: until a reconnect,
+    // saves are refused, and Disconnect would discard the staged edits.
+    if (!state.linkLost || !connected) return null;
+    return (
+      <Alert status="warning" data-testid="link-lost-banner">
+        <Alert.Indicator />
+        <Alert.Content className="min-w-0">
+          <Alert.Title>Link closed</Alert.Title>
+          <Alert.Description>Reconnect to read the bike’s current settings before saving. Staged changes are kept when the same component answers.</Alert.Description>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" isDisabled={busy} onPress={() => controller.reconnect().catch(() => {})} data-testid="btn-link-reconnect">
+              Reconnect
+            </Button>
+          </div>
+        </Alert.Content>
+      </Alert>
+    );
+  }
   const failure = describeFailure(state.failure, state.transport, state.schema);
   // A later rejection (e.g. staging an Undo) replaces the failure text, not the lost link.
   const linkLost = failure.linkLost || state.linkLost;
-  const connected = Boolean(state.identity);
-  const busy = state.phase !== "ready";
 
   return (
     <Alert status="danger" data-testid="error-banner">

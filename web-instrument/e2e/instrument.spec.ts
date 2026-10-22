@@ -107,6 +107,30 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
   });
 
+  test("a dismissed link-lost failure keeps a reconnect path and blocks saving", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    // The link-loss detection itself is covered by the Bluetooth tests.
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.update({
+      linkLost: true,
+      failure: { kind: "save", error: "Bluetooth disconnected" },
+    }));
+    await page.getByRole("button", { name: "Dismiss error" }).click();
+    await expect(page.getByTestId("error-banner")).toHaveCount(0);
+
+    await page.getByTestId("btn-review-save").click();
+    await expect(page.getByTestId("review-link-lost")).toBeVisible();
+    await expect(page.getByTestId("btn-commit-batch")).toBeDisabled();
+    await page.getByRole("button", { name: "Keep editing" }).click();
+
+    await page.getByTestId("btn-link-reconnect").click();
+    await expect(page.getByTestId("link-lost-banner")).toHaveCount(0);
+    await expect(page.getByTestId("link-status")).toHaveText("Simulator");
+    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+  });
+
   test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
     await openInstrument(page);
 

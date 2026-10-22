@@ -158,6 +158,12 @@ export class SessionController {
     });
   }
 
+  /** Record why an operation was refused before it started, so the banner explains it. */
+  private refuse(kind: OperationKind, message: string): never {
+    this.fail(kind, message);
+    throw new Error(message);
+  }
+
   private startOperation(patch: Partial<InstrumentState>): void {
     this.update({ failure: null, toast: null, ...patch });
   }
@@ -706,18 +712,17 @@ export class SessionController {
       await this.syncInProgress.catch(() => {});
     }
     if (this.state.phase === "committing") {
+      // Not refuse(): the running save owns the status line and the banner.
       throw new Error("A save is already running. Wait for it to finish.");
     }
     const { transport, identity, stagedValues } = this.state;
-    if (!transport || !identity) {
-      throw new Error("No active component session.");
-    }
-    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before saving.");
+    if (!transport || !identity) this.refuse("save", "No active component session.");
+    if (this.state.phase !== "ready" || this.state.linkLost) this.refuse("save", "Reconnect to an idle component before saving.");
     const entries = Object.entries(stagedValues);
     if (entries.length === 0) return null;
     for (const [name] of entries) {
       const spec = this.state.schema.find((setting) => setting.name === name);
-      if (!spec || spec.read_only || this.state.unavailableValues[name]) throw new Error(`Setting ${name} is unavailable or read-only on this component.`);
+      if (!spec || spec.read_only || this.state.unavailableValues[name]) this.refuse("save", `Setting ${name} is unavailable or read-only on this component.`);
     }
 
     // Destination is written before speed-limit so ceiling checks use the updated destination.
