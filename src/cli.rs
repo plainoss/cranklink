@@ -1002,6 +1002,19 @@ fn execute_firmware_command(
                 }
                 "rx" => {
                     let before = start_rx_session(&mut s, slot, recovery)?;
+                    if let (false, Some(expected)) = (recovery, expect_serial) {
+                        let checked = hex::decode(expected)
+                            .map_err(anyhow::Error::from)
+                            .and_then(|serial| {
+                                check_application_serial(&mut s, before.slot, &serial)
+                            })
+                            .context("RX update mode not entered");
+                        if let Err(e) = checked {
+                            s.normal_stop()
+                                .context("serial check failed; PC-link stop failed")?;
+                            return Err(e);
+                        }
+                    }
                     let boot = crate::rx::read_boot(&mut s, before.slot)?;
                     if is_json {
                         out_println!("{}", serde_json::to_string_pretty(&boot)?);
