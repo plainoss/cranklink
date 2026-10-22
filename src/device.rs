@@ -1774,6 +1774,10 @@ pub(crate) mod tests {
 #[path = "device_unit_auth_tests.rs"]
 mod unit_auth_tests;
 
+#[cfg(test)]
+#[path = "device_boot_tests.rs"]
+mod boot_tests;
+
 impl crate::firmware_io::FirmwareIo for Session {
     fn send(&mut self, control: u8, payload: &[u8]) -> Result<()> {
         Session::send(self, control, payload)
