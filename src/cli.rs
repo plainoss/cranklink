@@ -1029,7 +1029,7 @@ fn execute_firmware_command(
             s.initialize()?;
             match target.to_lowercase().as_str() {
                 "dcas" => {
-                    let application_slot = if !recovery {
+                    let application = if !recovery {
                         let application = s.normal_start(slot)?;
                         if let Some(expected) = expect_serial {
                             let checked = hex::decode(expected)
@@ -1044,19 +1044,19 @@ fn execute_firmware_command(
                                 return Err(e);
                             }
                         }
-                        Some(application.slot)
+                        Some(application)
                     } else {
                         None
                     };
                     let identity = match s.boot_start_at(!recovery, slot) {
                         Ok(identity) => identity,
                         Err(e) => {
-                            if let Some(slot) = application_slot {
+                            if let Some(application) = &application {
                                 err_println!(
                                     "{}",
                                     bootloader_guidance(
                                         port,
-                                        slot,
+                                        application.slot,
                                         "Bootloader entry did not complete"
                                     )
                                 );
@@ -1079,7 +1079,12 @@ fn execute_firmware_command(
                         out_println!("  Board:      {}", identity.board);
                         out_println!("  Series:     0x{:02X}", identity.series);
                     }
-                    if !recovery || reset {
+                    if let Some(application) = &application {
+                        verify_application_return(&mut s, port, slot, application, "DCAS probe")?;
+                        if !is_json {
+                            out_println!("  Status:     Application return verified");
+                        }
+                    } else if reset {
                         s.boot_reset()?;
                     }
                 }
@@ -1328,8 +1333,13 @@ fn execute_firmware_command(
                 };
 
                 if !write {
-                    if !recovery {
-                        s.boot_reset()?;
+                    if let Some(before) = &before {
+                        let returned =
+                            verify_application_return(&mut s, port, slot, before, "DCAS dry run");
+                        let after = returned.map_err(|e| {
+                            journal_failure(&mut jnl, "application-return-failed", e)
+                        })?;
+                        jnl.record("application-return-verified", &after)?;
                     }
                     jnl.record("dry-run-complete", &boot)?;
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
@@ -1347,6 +1357,9 @@ fn execute_firmware_command(
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
+                    if before.is_some() {
+                        out_println!("- Application Return: Verified");
+                    }
                     if !fw.metadata.encrypted && expect_sha256.is_none() {
                         out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
                     }
@@ -2868,6 +2881,45 @@ fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) ->
     Ok(())
 }
 
+/// Reset the DCAS bootloader entered from the application and confirm the
+/// application came back unchanged, with the same restart the write path uses.
+/// Until it answers, the motor may remain in its bootloader at `before.slot`.
+fn verify_application_return(
+    session: &mut Session,
+    port: Option<&str>,
+    slot: Option<u8>,
+    before: &crate::device::Identity,
+    step: &str,
+) -> Result<crate::device::Identity> {
+    let after = session
+        .boot_reset()
+        .context("bootloader reset not acknowledged")
+        .and_then(|()| session.normal_start(slot))
+        .with_context(|| format!("application did not return after {step}"));
+    let after = match after {
+        Ok(after) => after,
+        Err(e) => {
+            err_println!(
+                "{}",
+                bootloader_guidance(
+                    port,
+                    before.slot,
+                    &format!("The application did not return after the {step}")
+                )
+            );
+            return Err(e);
+        }
+    };
+    session.normal_stop()?;
+    ensure!(
+        after.cargo == before.cargo
+            && after.dcas_version == before.dcas_version
+            && after.rx_version == before.rx_version,
+        "application changed after {step}"
+    );
+    Ok(after)
+}
+
 /// Return to the application after `rx::RefusedBeforeErase`, as the dry run
 /// does; nothing was erased, so the refusal is not an interrupted write.
 fn return_after_rx_refusal(
@@ -3400,6 +3452,109 @@ mod cli_tests {
         let (mut session, _) = scripted(vec![(query, reply)]);
         let error = check_application_serial(&mut session, 13, &[9, 9, 9, 9, 9, 9]).unwrap_err();
         assert!(format!("{error:#}").contains("differs from --expect-serial"));
+    }
+
+    /// The DCAS bootloader reset, then discovery and a PC-link start at slot
+    /// 13 reading cargo 00-CRG, D 4.2.0 and the given M version, then the stop.
+    fn application_return_script(
+        rx: [u8; 3],
+    ) -> Vec<(crate::protocol::Frame, crate::protocol::Frame)> {
+        use crate::device::tests::frame;
+        let idle = frame(0x88, &[0x70, 0, 0, 0x78]);
+        let mut script = vec![
+            (frame(0x88, &[0x28, 0, 0, 0]), frame(0x88, &[0x31])),
+            (frame(3, &[0x20]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+            (frame(0x1d, &[0]), frame(0x3d, &[0, 0])),
+            (frame(0x1b, &[]), frame(0x3b, &[0, 0x20, 0, 0])),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (
+                frame(0x48, &[13, 1, 0x1c, 0]),
+                frame(0x48, &[0, 1, 0x1e, 0x23, 0]),
+            ),
+            (frame(4, &[]), frame(0x24, &[0xe0])),
+            (frame(0x48, &[13, 0x32, 0x10, 1, 0, 0, 0]), idle.clone()),
+        ];
+        for (index, key) in [
+            [0xa2, 0x2b],
+            [0x30, 0x0e],
+            [0x7a, 0x4d],
+            [0x62, 0x2b],
+            [0x85, 0xb4],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            script.push((
+                frame(0x48, &[13, 0x32, 0x30, key[0], key[1], 0, 0]),
+                if index == 4 {
+                    frame(0x48, &[0, 0x32, 0x12, 1])
+                } else {
+                    idle.clone()
+                },
+            ));
+        }
+        script.extend([
+            (
+                frame(0x48, &[13, 0x16, 0x7c, 0]),
+                frame(
+                    0x48,
+                    &[0, 0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0],
+                ),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x2c, 0]),
+                frame(0x48, &[0, 1, 0x2e, 0x42, 0, 0]),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x84, 1]),
+                frame(0x48, &[0, 1, 0x86, rx[0], rx[1], rx[2]]),
+            ),
+            (
+                frame(0x48, &[13, 0x32, 0x10, 0, 0, 0, 0]),
+                frame(0x48, &[0, 0x32, 0x12, 0]),
+            ),
+        ]);
+        script
+    }
+
+    #[test]
+    fn dcas_dry_run_requires_the_same_application_back() {
+        use crate::device::tests::scripted;
+        let before = crate::device::Identity {
+            slot: 13,
+            cargo: "00-CRG".into(),
+            dcas_version: "4.2.0.0".into(),
+            rx_version: "4.1.11.0".into(),
+        };
+        let (mut session, steps) = scripted(application_return_script([0x41, 11, 0]));
+        let after =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap();
+        assert_eq!(after.rx_version, before.rx_version);
+        assert!(steps.borrow().is_empty());
+        // A different M version after the reset is not the same application.
+        let (mut session, _) = scripted(application_return_script([0x41, 10, 0]));
+        let error =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("application changed after DCAS dry run"),
+            "{error:#}"
+        );
+        // No motor answers discovery after the reset: it may still be in boot.
+        let mut script = application_return_script([0x41, 11, 0]);
+        script.truncate(5);
+        script[4].1 = crate::device::tests::frame(0x3b, &[0, 0, 0, 0]);
+        let (mut session, steps) = scripted(script);
+        let error =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("application did not return after DCAS dry run"),
+            "{error:#}"
+        );
+        assert!(steps.borrow().is_empty());
     }
 
     #[test]
