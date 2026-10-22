@@ -38,7 +38,7 @@ Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, 
 
 ## Protected writes
 
-Fields flagged `oem` require drive-unit authentication, run automatically when `-s <SERIAL>` is given (`--no-auth` disables it). The protocol is chosen from the live motor identity:
+Fields flagged `oem` require drive-unit authentication. A `set`, `restore` or `batch` that writes one runs it automatically with the live serial; with `--no-auth` it is refused instead. `--unit-auth` (alias `--ble-unit-auth`) forces authentication before every connected settings command, reads included, except `set --dry-run`, and cannot be combined with `--no-auth`. The web app adds it for EP600, EP801 and EP500 motors to every save and restore, and to reads over Bluetooth. The protocol is chosen from the live motor identity:
 
 | Family | Authentication |
 | --- | --- |

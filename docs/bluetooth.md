@@ -26,6 +26,6 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 `DEVICE_ID` is the peripheral ID from the scan; `<SERIAL>` is the target component serial from `probe`, not the Bluetooth ID. Add `--component <MODEL>` to target a catalogued Di2 component. The six-digit bike passkey is prompted for, or read from `--passkey-file` or `CRANKLINK_PASSKEY`.
 
-Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically; `--ble-master` overrides the policy.
+Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
 
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
