@@ -408,7 +408,7 @@ enum FlashCommand {
         /// Required matching RX companion container file (.dat)
         #[arg(long)]
         companion: PathBuf,
-        /// Optional assertion for expected file SHA-256 (auto-computed by default)
+        /// Expected file SHA-256; required to write a plaintext image, which has no container checksum
         #[arg(long)]
         expect_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -437,7 +437,7 @@ enum FlashCommand {
         /// Required matching DCAS companion container file (.dat)
         #[arg(long)]
         companion: PathBuf,
-        /// Optional assertion for expected file SHA-256 (auto-computed by default)
+        /// Expected file SHA-256; required to write a plaintext image, which has no container checksum
         #[arg(long)]
         expect_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -458,10 +458,10 @@ enum FlashCommand {
         /// Path to Renesas RX container file (.dat)
         #[arg(long)]
         rx: PathBuf,
-        /// Optional assertion for DCAS file SHA-256 (auto-computed by default)
+        /// Expected DCAS file SHA-256; required to write a plaintext D image (no container checksum)
         #[arg(long)]
         expect_dcas_sha256: Option<String>,
-        /// Optional assertion for RX file SHA-256 (auto-computed by default)
+        /// Expected RX file SHA-256; required to write a plaintext M image (no container checksum)
         #[arg(long)]
         expect_rx_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -862,6 +862,7 @@ fn recovery_command(
     serial: &str,
     file: &Path,
     companion: &Path,
+    expect_sha256: Option<&str>,
     allow_unverified_model: bool,
 ) -> String {
     // Single-quote anything a shell would split or expand (Windows paths with
@@ -885,14 +886,42 @@ fn recovery_command(
         command.push_str(&format!(" --slot {slot}"));
     }
     command.push_str(&format!(
-        " -s {serial} firmware flash {target} {} --companion {} --recovery --write",
+        " -s {serial} firmware flash {target} {} --companion {}",
         quote(&file.display().to_string()),
         quote(&companion.display().to_string())
     ));
+    if let Some(sha256) = expect_sha256 {
+        command.push_str(&format!(" --expect-sha256 {sha256}"));
+    }
+    command.push_str(" --recovery --write");
     if allow_unverified_model {
         command.push_str(" --allow-unverified-model");
     }
     command
+}
+
+/// A plaintext image has no container checksum, so corruption is undetectable;
+/// a write must be bound to a hash the user verified. Callers compare the hash.
+fn ensure_plaintext_hash(
+    fw: &Firmware,
+    file: &Path,
+    expected: Option<&str>,
+    flag: &str,
+) -> Result<()> {
+    ensure!(
+        fw.metadata.encrypted || expected.is_some(),
+        "{} is a plaintext image without container integrity data; pass {flag} <SHA-256 of the file you verified> to write it",
+        file.display()
+    );
+    Ok(())
+}
+
+fn integrity_label(meta: &crate::firmware::FirmwareMetadata) -> &'static str {
+    if meta.encrypted {
+        "MD5-verified container"
+    } else {
+        "none (plaintext image; corruption cannot be detected)"
+    }
 }
 
 fn execute_firmware_command(
@@ -1147,6 +1176,9 @@ fn execute_firmware_command(
                         "source SHA-256 does not match --expect-sha256"
                     );
                 }
+                if write {
+                    ensure_plaintext_hash(&fw, &file, expect_sha256.as_deref(), "--expect-sha256")?;
+                }
 
                 let serial_str = expect_serial.ok_or_else(|| {
                     anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
@@ -1235,7 +1267,11 @@ fn execute_firmware_command(
                     );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
+                    out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
+                    if !fw.metadata.encrypted && expect_sha256.is_none() {
+                        out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
+                    }
                     if profile.verification_tier
                         != crate::firmware::VerificationTier::HardwareVerified
                     {
@@ -1268,6 +1304,8 @@ fn execute_firmware_command(
                                 serial_str,
                                 &file,
                                 &companion,
+                                (!fw.metadata.encrypted)
+                                    .then_some(fw.metadata.source_sha256.as_str()),
                                 allow_unverified_model
                             )
                         );
@@ -1334,6 +1372,9 @@ fn execute_firmware_command(
                         fw.metadata.source_sha256.eq_ignore_ascii_case(expected),
                         "source SHA-256 differs from --expect-sha256"
                     );
+                }
+                if write {
+                    ensure_plaintext_hash(&fw, &file, expect_sha256.as_deref(), "--expect-sha256")?;
                 }
                 let serial_str = expect_serial.ok_or_else(|| {
                     anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
@@ -1410,7 +1451,11 @@ fn execute_firmware_command(
                     );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
+                    out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
+                    if !fw.metadata.encrypted && expect_sha256.is_none() {
+                        out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
+                    }
                     if profile.verification_tier
                         != crate::firmware::VerificationTier::HardwareVerified
                         || rx.retry_capable
@@ -1449,6 +1494,8 @@ fn execute_firmware_command(
                                 serial_str,
                                 &file,
                                 &companion,
+                                (!fw.metadata.encrypted)
+                                    .then_some(fw.metadata.source_sha256.as_str()),
                                 allow_unverified_model
                             )
                         );
@@ -1824,6 +1871,15 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             "RX firmware SHA-256 mismatch"
         );
     }
+    if *write {
+        ensure_plaintext_hash(
+            &d,
+            dcas,
+            expect_dcas_sha256.as_deref(),
+            "--expect-dcas-sha256",
+        )?;
+        ensure_plaintext_hash(&m, rx, expect_rx_sha256.as_deref(), "--expect-rx-sha256")?;
+    }
 
     let backup_path = backup.clone().unwrap_or_else(|| {
         PathBuf::from(format!(
@@ -1937,7 +1993,17 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
                 "- Pre-Update Settings Backup: Saved ({})",
                 backup_path.display()
             );
+            out_println!("- DCAS Integrity: {}", integrity_label(&d.metadata));
+            out_println!("- RX Integrity: {}", integrity_label(&m.metadata));
             out_println!("- Flash State: UNMODIFIED (No bytes written)");
+            for (name, meta, expected, flag) in [
+                ("D", &d.metadata, expect_dcas_sha256, "--expect-dcas-sha256"),
+                ("M", &m.metadata, expect_rx_sha256, "--expect-rx-sha256"),
+            ] {
+                if !meta.encrypted && expected.is_none() {
+                    out_println!(">> Writing the plaintext {name} image also requires {flag} <SHA-256 of the file you verified>.");
+                }
+            }
             if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
                 out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
             } else {
@@ -3046,6 +3112,7 @@ fn print_firmware_metadata(
     );
     out_println!("  Target Board/Series: {}", board_str);
     out_println!("  Checksum:            0x{:02X}", meta.checksum);
+    out_println!("  Integrity:           {}", integrity_label(meta));
     out_println!("  Source SHA-256:      {}", meta.source_sha256);
     if let Some(out) = decode_to {
         out_println!("  Decoded Output:      {}", out.display());
@@ -3187,6 +3254,121 @@ mod cli_tests {
     }
 
     #[test]
+    fn plaintext_images_are_written_only_with_a_verified_hash() {
+        // Synthetic plaintext EP800 (23/00) D4.2.0 and M4.1.11: hardware-verified
+        // model, so only the missing container checksum can refuse them offline.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x42, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x23, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x41, 11, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x41, 11, 0, 1]);
+        m[14..19].copy_from_slice(&[0x23, 0, 0x41, 11, 0]);
+        m[126..].copy_from_slice(b"et");
+        let (d_sha, m_sha) = (
+            Firmware::from_bytes(&d).unwrap().metadata.source_sha256,
+            Firmware::from_bytes(&m).unwrap().metadata.source_sha256,
+        );
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-integrity-gate-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        let file = |path: &Path| path.display().to_string();
+        // The journal opens after every offline check and just before the
+        // transport, whose socket does not exist; it shows how far a run got.
+        let flash = |port: &str, mut command: Vec<String>, journal: &str| {
+            let journal = dir.join(journal);
+            command.extend(["--journal".into(), file(&journal)]);
+            let mut args: Vec<String> = [
+                "cranklink",
+                "--port",
+                port,
+                "-s",
+                "010203040506",
+                "firmware",
+                "flash",
+            ]
+            .map(String::from)
+            .to_vec();
+            args.extend(command);
+            (
+                format!("{:#}", execute(args).unwrap_err()),
+                journal.exists(),
+            )
+        };
+
+        let sim = format!("sim:{}", file(&dir.join("absent.sock")));
+        for (target, image, companion, sha) in [
+            ("dcas", &d_path, &m_path, d_sha.as_str()),
+            ("rx", &m_path, &d_path, m_sha.as_str()),
+        ] {
+            let wired = |extra: &[&str], journal: &str| {
+                let mut command = vec![
+                    target.to_string(),
+                    file(image),
+                    "--companion".into(),
+                    file(companion),
+                ];
+                command.extend(extra.iter().map(|s| s.to_string()));
+                flash(&sim, command, &format!("{target}-{journal}.jsonl"))
+            };
+            let (error, journaled) = wired(&["--write"], "unbound");
+            assert!(
+                error.contains("plaintext") && error.contains("--expect-sha256") && !journaled,
+                "{error}"
+            );
+            // A dry run, or a write bound to the file's hash, passes the gate.
+            for (extra, journal) in [
+                (&[][..], "dry-run"),
+                (&["--write", "--expect-sha256", sha][..], "bound"),
+            ] {
+                let (error, journaled) = wired(extra, journal);
+                assert!(journaled && !error.contains("plaintext"), "{error}");
+            }
+        }
+
+        let ble = format!("ble-sim:{}", file(&dir.join("absent-ble.sock")));
+        let pair = |extra: &[&str], name: &str| {
+            let mut command = vec![
+                "ble-pair".to_string(),
+                "--dcas".into(),
+                file(&d_path),
+                "--rx".into(),
+                file(&m_path),
+                "--backup".into(),
+                file(&dir.join(format!("pair-{name}.json"))),
+                "--write".into(),
+            ];
+            command.extend(extra.iter().map(|s| s.to_string()));
+            flash(&ble, command, &format!("pair-{name}.jsonl"))
+        };
+        let (error, journaled) = pair(&[], "unbound");
+        assert!(
+            error.contains("--expect-dcas-sha256") && !journaled,
+            "{error}"
+        );
+        let (error, journaled) = pair(&["--expect-dcas-sha256", &d_sha], "d-only");
+        assert!(
+            error.contains("--expect-rx-sha256") && !journaled,
+            "{error}"
+        );
+        let (error, journaled) = pair(
+            &["--expect-dcas-sha256", &d_sha, "--expect-rx-sha256", &m_sha],
+            "bound",
+        );
+        assert!(journaled && !error.contains("plaintext"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn firmware_pair_start_keeps_the_motor_gate_for_an_explicit_slot() {
         use crate::ble::tests::component_mock;
         // A derailleur answers at slot 4: settings may start it, firmware may not.
@@ -3205,14 +3387,25 @@ mod cli_tests {
     fn recovery_command_keeps_the_failing_port_and_slot() {
         let (d, m) = (Path::new("D.dat"), Path::new("M.dat"));
         assert_eq!(
-            recovery_command("dcas", Some("COM3"), Some(13), "010203040506", d, m, true),
+            recovery_command(
+                "dcas",
+                Some("COM3"),
+                Some(13),
+                "010203040506",
+                d,
+                m,
+                None,
+                true
+            ),
             "cranklink --port COM3 --slot 13 -s 010203040506 firmware flash dcas D.dat \
              --companion M.dat --recovery --write --allow-unverified-model"
         );
-        let command = recovery_command("rx", None, None, "010203040506", m, d, false);
+        // A plaintext image is written only with its hash; the rerun must carry it.
+        let command = recovery_command("rx", None, None, "010203040506", m, d, Some("ab12"), false);
         assert_eq!(
             command,
-            "cranklink -s 010203040506 firmware flash rx M.dat --companion D.dat --recovery --write"
+            "cranklink -s 010203040506 firmware flash rx M.dat --companion D.dat \
+             --expect-sha256 ab12 --recovery --write"
         );
         let spaced = recovery_command(
             "dcas",
@@ -3221,6 +3414,7 @@ mod cli_tests {
             "010203040506",
             Path::new("C:\\Users\\First Last\\D's.dat"),
             m,
+            None,
             true,
         );
         assert!(

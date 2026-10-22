@@ -50,8 +50,10 @@ a [simulator profile](../tools/firmware-sim/profiles.json). Pass its path using
 not need a gateway.
 
 Omit `--verify` to patch without running the emulator. Use `.bin` as the output
-extension for a raw image, or `.dat` for an encrypted container. Add `--json` for
-a machine-readable report. Requested checks must pass before output is written.
+extension for a raw image, or `.dat` for an encrypted container. A raw image has
+no container checksum, so `cranklink firmware flash` writes one only with
+`--expect-sha256`. Add `--json` for a machine-readable report. Requested checks
+must pass before output is written.
 An existing output file is never replaced unless `--force` is given, and the
 output is written to a temporary file and renamed into place.
 `tools/patch_ep800_speed.py` accepts the same options as a compatibility entry

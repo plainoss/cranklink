@@ -9,7 +9,7 @@ Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units ove
 > [!WARNING]
 > Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
 >
-> Firmware flashing has only been tested on a DU-EP800-CRG (`23/00`, DCASX board 1). cranklink checks the container's declared series, unit, board, and integrity, but cannot prove an image is correct for a given unit. A wrong image can leave the motor unrecoverable, including by dealer tools.
+> Firmware flashing has only been tested on a DU-EP800-CRG (`23/00`, DCASX board 1). cranklink checks the image's declared series, unit, and board, and the checksum of encrypted `.dat` containers, but cannot prove an image is correct for a given unit. Plaintext images, such as the EP800 M file, carry no checksum; writing one requires `--expect-sha256` with the SHA-256 of the file you verified. A wrong image can leave the motor unrecoverable, including by dealer tools.
 
 The project began as the recovery of a bricked EP800-CRG that official tools and dealer service could not restore.
 
@@ -125,7 +125,7 @@ cranklink firmware inspect DUEP800-D.4.2.0.dat --companion DUEP800-M.4.1.11.dat
 # 2. Confirm the bootloader responds
 cranklink --port usb firmware probe --target dcas --recovery
 
-# 3. Dry run (default): validates target and integrity, writes nothing
+# 3. Dry run (default): validates target and container integrity, writes nothing
 cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
   --companion DUEP800-M.4.1.11.dat --recovery
 
@@ -134,7 +134,7 @@ cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
   --companion DUEP800-M.4.1.11.dat --journal D.journal.jsonl --recovery --write
 ```
 
-For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion.
+For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion. M files such as `DUEP800-M.4.1.11.dat` are plaintext, so `--write` also needs `--expect-sha256 <SHA-256>` of the M file you verified (`firmware inspect` prints it and the integrity status).
 
 For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, follow the [temporary bridge recovery guide](docs/ep800-hardware-recovery.md) using `firmware flash dcas --bridge-recovery`.
 
