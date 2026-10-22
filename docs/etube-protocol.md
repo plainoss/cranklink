@@ -309,7 +309,7 @@ mean little-endian integers. Array offsets are zero-based.
 The SM-PCE02 serial path uses 2,000,000 baud, 8N1, asserted RTS and no CTS flow
 control. Cranklink uses a 500 ms write timeout. Its native USB path carries the
 same framed stream; these settings do not describe the E-TUBE cable. See
-[port configuration](../src/platform.rs#L1) and the [frame codec](../src/protocol.rs#L1).
+[port configuration](../src/platform.rs) and the [frame codec](../src/protocol.rs).
 The codec escapes both data and FCS, pads short writes to 128 bytes, and accepts
 split or coalesced receive frames. Longer writes are not rounded to a multiple
 of 128. Invalid escapes, checksums and oversized frames are rejected.
@@ -340,7 +340,8 @@ at least 2703 and ready state `01/02`, with a 90 s limit. No voltage unit is
 established for that raw threshold. Reset, protocol change and PnP waits are
 3 s, 1 s and 5 s respectively: host pacing policies, not measured bus minima.
 Adapter supply does not establish traction power or assist readiness. The
-[initialization sequence](../src/device.rs#L339) preserves those distinctions.
+[initialization sequence](../src/device.rs) (`Session::initialize`) preserves
+those distinctions.
 
 ### Component identity and diagnostic reads
 
@@ -376,7 +377,8 @@ revision; the shared EP600/EP801 distribution family does not establish the
 live component model.
 
 Older E6000-family identities also differ from some historical catalog aliases.
-The [catalog caveat](../src/unit_models.rs#L270) describes that limitation;
+The [catalog caveat](../src/unit_models.rs) (the E6000-family note in
+`UNIT_MODELS`) describes that limitation;
 an alias must not grant another model's operations. Version selectors and cache
 requirements are firmware-specific too. The [simulator fixtures](firmware-simulator.md)
 now initialize the stock M/RX and product caches missing from earlier bare-D
@@ -384,7 +386,7 @@ fixtures; clearing the version cache reproduces the earlier E6100 `01/2C`
 rejection. This initializes data consumed by unchanged instructions, without
 executing M firmware or complete board boot.
 
-The [bounded memory reader](../src/bootloader_dump.rs#L259) uses
+The [bounded memory reader](../src/bootloader_dump.rs) (`request`) uses
 `[addr_hi,addr_lo,addr_mid,count,00]`, with count 1–3. Reply parameters echo
 those three address bytes and carry the data in a six-byte record, optionally
 followed by reserved `FF`. This normal-application read does not enter boot
@@ -409,19 +411,21 @@ eight digits with `0000` plus a short ID below for each characteristic UUID.
 Discover each characteristic's actual properties. These values have no USB
 framing. Cranklink's ordinary parameter limits are 16 bytes for gateway commands
 and 15 for component commands; they are client limits, not universal GATT maxima.
-Large firmware records use a separate [fragment codec](../src/ble/firmware.rs#L1).
+Large firmware records use a separate [fragment codec](../src/ble/firmware.rs).
 
-The [gateway proof calculation](../src/ble.rs#L159) and
-[authentication sequence](../src/ble.rs#L417) document nonce padding,
-proof construction, subscriptions and receipts. A six-digit passkey preserves
-leading zeroes. When both auth characteristics are absent, the client uses the
-supported unauthenticated service shape; finding only one is an error.
+The [gateway proof calculation](../src/ble.rs) (`encrypt_challenge`) and
+[authentication sequence](../src/ble.rs) (`BleSession::authenticate_gateway`)
+document nonce padding, proof construction, subscriptions and receipts. A
+six-digit passkey preserves leading zeroes. When both auth characteristics are
+absent, the client uses the supported unauthenticated service shape; finding
+only one is an error.
 
 Slave discovery reads the master's routed `01/14` bitmap and `02/14` identity
 cache. Master discovery uses PCE PnP and `1B`, and can start motor PC-link itself.
-The [slave discovery](../src/ble.rs#L519) and [master discovery](../src/ble.rs#L575)
+The [slave discovery](../src/ble.rs) (`BleSession::discover_units`) and
+[master discovery](../src/ble.rs) (`BleSession::discover_master_units`)
 methods explain master-slot inclusion, cache selection and the existing start
-receipt. [Cleanup](../src/ble.rs#L828) orders motor stop,
+receipt. [Cleanup](../src/ble.rs) (`BleSession::stop`) orders motor stop,
 slave-mode restoration/readback, gateway stop and GATT close; gateway stop can
 end connection mode. A rejected motor stop is reported but still followed by
 the gateway stop; a timeout fences all further traffic, so none is sent. Keep
@@ -430,40 +434,41 @@ ownership until explicit disconnect.
 ### Motor settings and update traffic
 
 Motor PC-link uses `32/10` start/stop and `32/30` keys, with `32/12` receipts.
-The [wired startup sequence](../src/device.rs#L563) specifies the five keys, source
-address and timing. Protected settings use a separate exchange: legacy
-`16/D8,DA,E0,E2` or modern `33/68,6A,70,72`. The
-[authorization contract](../src/ble/unit_auth.rs#L1) describes derivation, fragment
+The [wired startup sequence](../src/device.rs) (`Session::normal_start_selected`)
+specifies the five keys, source address and timing. Protected settings use a
+separate exchange: legacy `16/D8,DA,E0,E2` or modern `33/68,6A,70,72`. The
+[authorization contract](../src/ble/unit_auth.rs) describes derivation, fragment
 selectors and receipt filler; [motor policy](../src/motor_support.rs) selects
 the family and firmware rules.
 
 For setting names, choices, units and ranges, run
 `cranklink settings schema --model ep800`. For wire layouts, read
-[`SettingSpec`](../src/settings.rs#L257), the [base schema](../src/settings.rs#L427)
-and [model overrides](../src/settings.rs#L116):
+[`SettingSpec`](../src/settings.rs), the [base schema](../src/settings.rs)
+(`schema`) and [model overrides](../src/settings.rs) (`schema_for_model`):
 `group`, `set`, `get` and `query` select the exchange; `template`, `offset`,
 `width`, `scale` and `preserve` define the payload. Those wire fields are not
-exported by the CLI schema. [`updated_payload`](../src/settings.rs#L1336)
-reconstructs SET bytes, while [`read_raw`](../src/settings.rs#L938) and
-[`set_name`](../src/settings.rs#L1679) handle split names. This keeps every setting's layout
+exported by the CLI schema. [`updated_payload`](../src/settings.rs)
+reconstructs SET bytes, while [`read_raw`](../src/settings.rs) and
+[`set_name`](../src/settings.rs) handle split names. This keeps every setting's layout
 beside its implementation rather than maintaining a second field dictionary.
 
 Read the complete shared payload and preserve sibling fields. On tested EP800,
 speed GET selector `0` aliases effective speed, and destination GET selector
 `0` can be rejected; modern factory fallback must not be copied to that path.
-The [destination validation](../src/settings.rs#L1212) handles unset `FF` explicitly.
+The [destination validation](../src/settings.rs) (`effective_destination`)
+handles unset `FF` explicitly.
 The implemented settings path has no extra generic EEPROM commit. Profile
 names span two writes and can partially complete; read both chunks after an
 interruption. A batch can also leave earlier writes applied.
 
 | Observed transport/control | Traffic to recognize | Detailed contract |
 | --- | --- | --- |
-| D boot `88` | Five update keys; identity, erase, address, finish and reset commands. | [Entry](../src/device.rs#L923), [boot identity](../src/firmware_io.rs#L60), [programming commands](../src/firmware_io.rs#L93). |
-| D data `0B` | 64-byte buffers; separate `82`, `83`, `C0` and motor `31` receipts (indexed on DCAS2i/X). | [DCAS writer](../src/firmware_io.rs#L93). |
-| Fast bridge `A8` | Addressed 16-byte command envelopes; slot stays in the record. | [Fast RX envelope](../src/rx.rs#L190). |
-| Normal RX `48` | `F0` command relay and `F8` four-byte fragments. | [Ordinary RX relay](../src/rx.rs#L561). |
-| Fast RX `11` | 60 image bytes plus four adapter filler bytes; separate receipt IDs. | [Fast RX data](../src/rx.rs#L236). |
-| BLE PCE / FREE | D relay on PCE; ordinary RX relay on FREE, distinct from gateway radio DFU. | [BLE relay and terminal fragments](../src/ble/firmware.rs#L1). |
+| D boot `88` | Five update keys; identity, erase, address, finish and reset commands. | [Entry](../src/device.rs) (`Session::boot_start_at`), [boot identity](../src/firmware_io.rs) (`boot_identity`), [programming commands](../src/firmware_io.rs) (`flash_dcas_with_user_info`). |
+| D data `0B` | 64-byte buffers; separate `82`, `83`, `C0` and motor `31` receipts (indexed on DCAS2i/X). | [DCAS writer](../src/firmware_io.rs) (`flash_dcas_with_user_info`). |
+| Fast bridge `A8` | Addressed 16-byte command envelopes; slot stays in the record. | [Fast RX envelope](../src/rx.rs) (`fast_payload`). |
+| Normal RX `48` | `F0` command relay and `F8` four-byte fragments. | [Ordinary RX relay](../src/rx.rs) (`transfer_ordinary`). |
+| Fast RX `11` | 60 image bytes plus four adapter filler bytes; separate receipt IDs. | [Fast RX data](../src/rx.rs) (`fast_data_payload`). |
+| BLE PCE / FREE | D relay on PCE; ordinary RX relay on FREE, distinct from gateway radio DFU. | [BLE relay and terminal fragments](../src/ble/firmware.rs). |
 
 The writers document their block sizes, sequence wrap, padding, checksum windows
 and completion rules. Boot-capability reads can enter update mode. Match image
@@ -492,9 +497,10 @@ starting at 1 and unused data filled with `FF`.
 single-fragment lamp reply: C1 10 16 00
 ```
 
-The [FIFO fixture](../tools/firmware-sim/fw_sim/gateway.py#L5) supplies routing
-separately and admits 2–9-byte messages at slot 13. These fragments do not
-specify physical framing, modulation, checksum, arbitration or wire timing.
+The [FIFO fixture](../tools/firmware-sim/fw_sim/gateway.py) (`fragments`)
+supplies routing separately and admits 2–9-byte messages at slot 13. These
+fragments do not specify physical framing, modulation, checksum, arbitration
+or wire timing.
 
 ## Testing and finding the implementation details
 
