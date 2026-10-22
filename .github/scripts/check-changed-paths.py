@@ -28,6 +28,9 @@ CLI_PATTERNS = [
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
     ".github/scripts/prepare-rolling-release*",
+    # A Rust unit test compares their wasm-bindgen version with Cargo.toml.
+    "web-instrument/scripts/build-cloudflare.sh",
+    ".github/workflows/web.yml",
 ]
 
 WEB_PATTERNS = [
