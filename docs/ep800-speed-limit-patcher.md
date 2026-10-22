@@ -19,6 +19,12 @@ modern destination 5). The tool does not flash a motor or modify M firmware.
 | DU-E5100 | 4.1.0.0 |
 | DU-E5000 | 4.5.0.0 |
 
+cranklink cannot configure a DU-E5000 or flash it from its application: its
+`22/00` identity is outside the motor gate. A `--recovery` write with
+`--allow-unverified-model` still erases and writes the motor, but cannot be
+verified afterwards because the application is not admitted as a motor. Treat
+patched E5000 images as offline-only.
+
 The tool accepts only the exact unmodified stock images identified by its
 built-in hashes. A matching version label is not enough. To choose a different
 ceiling later, start again from the original stock file.

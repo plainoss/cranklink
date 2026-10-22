@@ -43,7 +43,7 @@ Fields flagged `oem` require drive-unit authentication, run automatically when `
 | Family | Authentication |
 | --- | --- |
 | EP800, EP800-CRG, E5100 | Legacy |
-| EP600, EP801, EP500 (incl. CRG) | Modern |
+| EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Modern |
 | E8000, E8080 | Legacy from D4.7.0, none earlier |
 | E7000, E6100, E6110, E6180 | Legacy from D4.4.0, none earlier |
 | E6100-CRG, E6180-TRK | Legacy |
