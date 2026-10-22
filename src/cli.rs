@@ -1064,9 +1064,7 @@ fn execute_firmware_command(
                             return Err(e);
                         }
                     };
-                    if is_json {
-                        out_println!("{}", serde_json::to_string_pretty(&identity)?);
-                    } else {
+                    if !is_json {
                         out_println!("DCAS Bootloader Probe:");
                         out_println!("  Slot:       {}", identity.slot);
                         out_println!(
@@ -1081,11 +1079,14 @@ fn execute_firmware_command(
                     }
                     if let Some(application) = &application {
                         verify_application_return(&mut s, port, slot, application, "DCAS probe")?;
-                        if !is_json {
-                            out_println!("  Status:     Application return verified");
-                        }
                     } else if reset {
                         s.boot_reset()?;
+                    }
+                    // JSON is a success receipt; print it only after the checks pass.
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&identity)?);
+                    } else if application.is_some() {
+                        out_println!("  Status:     Application return verified");
                     }
                 }
                 "rx" => {
@@ -1112,9 +1113,7 @@ fn execute_firmware_command(
                         }
                         Err(e) => return Err(e),
                     };
-                    if is_json {
-                        out_println!("{}", serde_json::to_string_pretty(&boot)?);
-                    } else {
+                    if !is_json {
                         out_println!("Renesas RX Bootloader Probe:");
                         out_println!("  Capability: {}", boot.capability_sequence);
                     }
@@ -1127,7 +1126,9 @@ fn execute_firmware_command(
                             && after.rx_version == before.rx_version,
                         "application changed after RX probe"
                     );
-                    if !is_json {
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&boot)?);
+                    } else {
                         out_println!(
                             "  Status:     {}",
                             if recovery {
@@ -1342,6 +1343,30 @@ fn execute_firmware_command(
                         jnl.record("application-return-verified", &after)?;
                     }
                     jnl.record("dry-run-complete", &boot)?;
+                    let needs_hash = !fw.metadata.encrypted && expect_sha256.is_none();
+                    let needs_opt_in = profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified;
+                    if is_json {
+                        out_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "dry_run": true,
+                                "target": "dcas",
+                                "family": profile.family_name,
+                                "verification_tier": profile.verification_tier,
+                                "boot": boot,
+                                "serial": serial_str,
+                                "source_sha256": fw.metadata.source_sha256,
+                                "encrypted": fw.metadata.encrypted,
+                                "flash_state": "unmodified",
+                                "application_return_verified": before.is_some(),
+                                // Each requires_* flag names an option --write must carry.
+                                "requires_expect_sha256": !fw.metadata.encrypted,
+                                "requires_allow_unverified_model": needs_opt_in,
+                            }))?
+                        );
+                        return Ok(());
+                    }
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- Target Bootloader: Verified ({} {:?} v{}.{}.{}.{}, Board {})",
@@ -1360,12 +1385,10 @@ fn execute_firmware_command(
                     if before.is_some() {
                         out_println!("- Application Return: Verified");
                     }
-                    if !fw.metadata.encrypted && expect_sha256.is_none() {
+                    if needs_hash {
                         out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
                     }
-                    if profile.verification_tier
-                        != crate::firmware::VerificationTier::HardwareVerified
-                    {
+                    if needs_opt_in {
                         out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
@@ -1590,6 +1613,30 @@ fn execute_firmware_command(
                         return Err(e);
                     }
                     jnl.record("dry-run-complete", &after)?;
+                    let needs_hash = !fw.metadata.encrypted && expect_sha256.is_none();
+                    let needs_opt_in = profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified
+                        || rx.retry_capable;
+                    if is_json {
+                        out_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "dry_run": true,
+                                "target": "rx",
+                                "family": profile.family_name,
+                                "verification_tier": profile.verification_tier,
+                                "rx_boot": rx,
+                                "serial": serial_str,
+                                "source_sha256": fw.metadata.source_sha256,
+                                "encrypted": fw.metadata.encrypted,
+                                "flash_state": "unmodified",
+                                // Each requires_* flag names an option --write must carry.
+                                "requires_expect_sha256": !fw.metadata.encrypted,
+                                "requires_allow_unverified_model": needs_opt_in,
+                            }))?
+                        );
+                        return Ok(());
+                    }
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- RX Bootloader: Verified ({}, Sequence {})",
@@ -1600,13 +1647,10 @@ fn execute_firmware_command(
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
                     out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    if !fw.metadata.encrypted && expect_sha256.is_none() {
+                    if needs_hash {
                         out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
                     }
-                    if profile.verification_tier
-                        != crate::firmware::VerificationTier::HardwareVerified
-                        || rx.retry_capable
-                    {
+                    if needs_opt_in {
                         out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
@@ -2157,37 +2201,49 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         if !*write {
             link.application_return()?;
             jnl.record("dry-run-complete", &boot)?;
-            out_println!("\n[DRY RUN - VALIDATION ONLY]");
-            out_println!(
-                "- DCAS & RX Bootloader Handshakes: Verified ({})",
-                profile.family_name
-            );
-            out_println!("- Motor Serial: Verified ({})", serial_str);
-            out_println!(
-                "- Pre-Update Settings Backup: Saved ({})",
-                backup_path.display()
-            );
-            out_println!("- DCAS Integrity: {}", integrity_label(&d.metadata));
-            out_println!("- RX Integrity: {}", integrity_label(&m.metadata));
-            out_println!("- Flash State: UNMODIFIED (No bytes written)");
-            for (name, meta, expected, flag) in [
-                ("D", &d.metadata, expect_dcas_sha256, "--expect-dcas-sha256"),
-                ("M", &m.metadata, expect_rx_sha256, "--expect-rx-sha256"),
-            ] {
-                if !meta.encrypted && expected.is_none() {
-                    out_println!(">> Writing the plaintext {name} image also requires {flag} <SHA-256 of the file you verified>.");
+            let needs_opt_in =
+                profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified;
+            if !is_json {
+                out_println!("\n[DRY RUN - VALIDATION ONLY]");
+                out_println!(
+                    "- DCAS & RX Bootloader Handshakes: Verified ({})",
+                    profile.family_name
+                );
+                out_println!("- Motor Serial: Verified ({})", serial_str);
+                out_println!(
+                    "- Pre-Update Settings Backup: Saved ({})",
+                    backup_path.display()
+                );
+                out_println!("- DCAS Integrity: {}", integrity_label(&d.metadata));
+                out_println!("- RX Integrity: {}", integrity_label(&m.metadata));
+                out_println!("- Flash State: UNMODIFIED (No bytes written)");
+                for (name, meta, expected, flag) in [
+                    ("D", &d.metadata, expect_dcas_sha256, "--expect-dcas-sha256"),
+                    ("M", &m.metadata, expect_rx_sha256, "--expect-rx-sha256"),
+                ] {
+                    if !meta.encrypted && expected.is_none() {
+                        out_println!(">> Writing the plaintext {name} image also requires {flag} <SHA-256 of the file you verified>.");
+                    }
                 }
-            }
-            if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
-                out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
-            } else {
-                out_println!(">> To execute live flash programming, add the --write flag.\n");
+                if needs_opt_in {
+                    out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
+                } else {
+                    out_println!(">> To execute live flash programming, add the --write flag.\n");
+                }
             }
             return Ok(serde_json::json!({
                 "transport": "ble",
                 "write": false,
                 "serial": serial_str,
                 "dry_run": true,
+                "family": profile.family_name,
+                "verification_tier": profile.verification_tier,
+                "backup": backup_path,
+                "flash_state": "unmodified",
+                // Each requires_* flag names an option --write must carry.
+                "requires_expect_dcas_sha256": !d.metadata.encrypted,
+                "requires_expect_rx_sha256": !m.metadata.encrypted,
+                "requires_allow_unverified_model": needs_opt_in,
             }));
         }
 
@@ -2282,28 +2338,33 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         jnl.record("cleanup-confirmed", &true)?;
     }
     let value = result?;
-    if is_json {
-        out_println!("{}", serde_json::to_string_pretty(&value)?);
-    } else {
-        out_println!("BLE firmware pair flashed successfully:");
-        let app = value.get("application_after");
-        let cargo = app
-            .and_then(|a| a.get("cargo"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
-        let dcas = app
-            .and_then(|a| a.get("dcas_version"))
-            .and_then(|d| d.as_str())
-            .unwrap_or("");
-        let rx = app
-            .and_then(|a| a.get("rx_version"))
-            .and_then(|r| r.as_str())
-            .unwrap_or("");
-        out_println!("  Model Cargo: {}", cargo);
-        out_println!("  DCAS (D):    v{}", dcas);
-        out_println!("  Renesas (M): v{}", rx);
+    if let Some(summary) = ble_pair_summary(&value, is_json)? {
+        out_println!("{summary}");
     }
     Ok(())
+}
+
+/// The closing stdout of `flash ble-pair`. A dry run printed its text report
+/// already and must never read as a flash.
+fn ble_pair_summary(value: &serde_json::Value, is_json: bool) -> Result<Option<String>> {
+    if is_json {
+        return Ok(Some(serde_json::to_string_pretty(value)?));
+    }
+    if value.get("dry_run") == Some(&serde_json::Value::Bool(true)) {
+        return Ok(None);
+    }
+    let app = value.get("application_after");
+    let field = |name: &str| {
+        app.and_then(|a| a.get(name))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
+    Ok(Some(format!(
+        "BLE firmware pair flashed successfully:\n  Model Cargo: {}\n  DCAS (D):    v{}\n  Renesas (M): v{}",
+        field("cargo"),
+        field("dcas_version"),
+        field("rx_version")
+    )))
 }
 
 fn read_ble_passkey(cli: &Cli) -> Result<Option<String>> {
@@ -3612,6 +3673,27 @@ mod cli_tests {
             "{error:#}"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ble_pair_dry_run_never_reports_a_flash() {
+        let dry_run = serde_json::json!({"transport": "ble", "write": false, "dry_run": true});
+        // Text mode printed the dry-run report already; nothing may follow it.
+        assert_eq!(ble_pair_summary(&dry_run, false).unwrap(), None);
+        let json = ble_pair_summary(&dry_run, true).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            dry_run
+        );
+        let written = serde_json::json!({
+            "write": true,
+            "application_after": {"cargo": "00-CRG", "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0"},
+        });
+        assert_eq!(
+            ble_pair_summary(&written, false).unwrap().unwrap(),
+            "BLE firmware pair flashed successfully:\n  Model Cargo: 00-CRG\n  \
+             DCAS (D):    v4.2.0.0\n  Renesas (M): v4.1.11.0"
+        );
     }
 
     #[test]
