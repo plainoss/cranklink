@@ -181,6 +181,8 @@ The **PC-link session** is the component's service connection. Startup includes 
 fixed sequence of keys and a component acknowledgment. Cranklink completes the
 model and firmware checks needed for the requested operation, then sends the
 command. At the end, it asks the motor to stop and checks the acknowledgment.
+Until that stop is acknowledged, a wired session refuses another discovery or
+start: PnP can reassign slots, and a later stop would reach the wrong unit.
 Opening a serial port or establishing Bluetooth is only the transport step.
 
 There can also be separate permissions. Bluetooth gateway authentication uses

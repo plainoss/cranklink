@@ -466,7 +466,17 @@ impl Session {
         );
         Ok(r.payload[3..].to_vec())
     }
+    /// PnP can reassign slots, and a stop sent afterwards would reach whichever
+    /// unit now holds the old slot. Until its Stop is acknowledged, a PC-link
+    /// blocks discovery and any further start.
+    fn require_no_pc_link(&self) -> Result<()> {
+        if let Some(slot) = self.normal_slot {
+            bail!("PC-link session at slot {slot} is still active; stop it before discovery or another start");
+        }
+        Ok(())
+    }
     pub fn discover(&mut self) -> Result<Vec<u8>> {
+        self.require_no_pc_link()?;
         self.set_protocol(0)?;
         let p = self.adapter(0x1d, &[0], 0x3d)?;
         ensure!(p.starts_with(&[0, 0]), "PnP rejected");
@@ -589,6 +599,7 @@ impl Session {
         component: Option<&str>,
         allow_component: bool,
     ) -> Result<Identity> {
+        self.require_no_pc_link()?;
         self.target(slot)?;
         let mut unit = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         unit.prepare_session(self, allow_component)?;
@@ -1579,6 +1590,24 @@ pub(crate) mod tests {
         assert!(session.normal_start_discovered(13).is_err());
         assert!(session.normal_slot.is_none());
         assert!(!session.normal_is_motor);
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
+    fn discovery_and_start_refuse_while_a_pc_link_is_active() {
+        // The script admits no command: the guard must refuse before any write.
+        let (mut session, steps) = scripted_motor(13, vec![]);
+        assert!(session
+            .discover()
+            .unwrap_err()
+            .to_string()
+            .contains("still active"));
+        assert!(session.units().is_err());
+        assert!(session.normal_start(None).is_err());
+        assert!(session.probe(Some(13)).is_err());
+        assert!(session.probe_component(None, Some("RD-6770")).is_err());
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(session.normal_start_discovered(13).is_err());
+        assert_eq!(session.normal_slot, Some(13));
         assert!(steps.borrow().is_empty());
     }
     #[test]
