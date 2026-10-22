@@ -241,9 +241,13 @@ function startWorker() {
   };
   worker.postMessage({ type: "init", shared });
 }
+// The passkey belongs to one gateway; another bike must prompt for its own.
 let cachedBlePasskey = null;
+let cachedBlePasskeyDevice = null;
+let activeBleDevice = null;
 try {
   cachedBlePasskey = sessionStorage.getItem("esteps_ble_passkey");
+  cachedBlePasskeyDevice = sessionStorage.getItem("esteps_ble_passkey_device");
 } catch {}
 
 // The UI registers how to ask the operator; the host owns caching and the timeout.
@@ -251,7 +255,7 @@ let passkeyPrompt = null;
 const PASSKEY_PROMPT_TIMEOUT_MS = 120000;
 
 async function requestBlePasskey(signal) {
-  if (cachedBlePasskey && /^[0-9]{6}$/.test(cachedBlePasskey)) {
+  if (cachedBlePasskey && cachedBlePasskeyDevice === activeBleDevice && /^[0-9]{6}$/.test(cachedBlePasskey)) {
     return cachedBlePasskey;
   }
   if (!passkeyPrompt) throw new Error("No passkey prompt is available");
@@ -261,15 +265,19 @@ async function requestBlePasskey(signal) {
     throw new Error("Bluetooth authentication cancelled or timed out");
   }
   cachedBlePasskey = value;
+  cachedBlePasskeyDevice = activeBleDevice;
   try {
     sessionStorage.setItem("esteps_ble_passkey", value);
+    sessionStorage.setItem("esteps_ble_passkey_device", activeBleDevice ?? "");
   } catch {}
   return value;
 }
 function clearBlePasskey() {
   cachedBlePasskey = null;
+  cachedBlePasskeyDevice = null;
   try {
     sessionStorage.removeItem("esteps_ble_passkey");
+    sessionStorage.removeItem("esteps_ble_passkey_device");
   } catch {}
 }
 async function withDeviceLock(action) {
@@ -420,6 +428,7 @@ async function run(line) {
         activeSimulator = null;
         setSimulatorActive(false);
       }
+      if (transport === "ble") activeBleDevice = selected.id ?? null;
       const next =
         transport === "ble"
           ? new WebBleGatt(selected, requestBlePasskey, clearBlePasskey)
@@ -435,10 +444,7 @@ async function run(line) {
   }
   if (command === "disconnect") {
     return withDeviceLock(async () => {
-      cachedBlePasskey = null;
-      try {
-        sessionStorage.removeItem("esteps_ble_passkey");
-      } catch {}
+      clearBlePasskey();
       try {
         if (port) {
           await releaseSelectedPort();

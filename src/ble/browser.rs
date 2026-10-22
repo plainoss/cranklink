@@ -61,7 +61,8 @@ impl Gatt for BrowserGatt {
             return Ok(key);
         }
         // Prompt on the host may require human input; the host has its own
-        // bounded dialog. This RPC is never sent to persistent file storage.
+        // bounded dialog. The host may keep the passkey for this gateway in
+        // tab session storage; it is never written to file storage.
         let bytes = self.request("ble.passkey", serde_json::json!({}), 120000)?;
         Ok(String::from_utf8(bytes)?)
     }
