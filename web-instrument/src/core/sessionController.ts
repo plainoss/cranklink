@@ -379,8 +379,20 @@ export class SessionController {
   public async reconnect(): Promise<void> {
     const { transport, identity, stagedValues, simulatorOptions } = this.state;
     if (!transport) throw new Error("No previous connection to reopen.");
+    const staged = Object.entries(stagedValues);
+    // disconnect() clears the staged edits: keep the failure's cause and say so.
+    const discarded = () => {
+      const failure = this.state.failure;
+      if (failure && staged.length > 0) this.update({ failure: { ...failure, stagedDiscarded: true } });
+    };
     await this.disconnect().catch(() => {});
-    let next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+    let next: DeviceIdentity | null;
+    try {
+      next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+    } catch (error) {
+      discarded();
+      throw error;
+    }
     const samePrevious = (candidate: DeviceIdentity | null) => !!identity && !!candidate
       && candidate.serial === identity.serial && candidate.modelSlug === identity.modelSlug
       && candidate.modelSeries === identity.modelSeries && candidate.modelUnit === identity.modelUnit;
@@ -390,12 +402,35 @@ export class SessionController {
         .sort((a, b) => Number(b.slot === identity.slot) - Number(a.slot === identity.slot));
       for (const previous of candidates) {
         if (previous.slot === next?.slot) continue;
-        next = await this.selectComponent(previous.slot);
+        // One unreadable candidate must not end the search for the previous serial.
+        try {
+          next = await this.selectComponent(previous.slot);
+        } catch {
+          continue;
+        }
         if (samePrevious(next)) break;
       }
     }
-    if (samePrevious(next) && Object.keys(stagedValues).length > 0) {
-      for (const [name, value] of Object.entries(stagedValues)) this.stageParameter(name, value);
+    if (staged.length === 0) return;
+    if (!samePrevious(next)) {
+      // A failed read of the previous component is the cause worth showing.
+      if (this.state.failure) discarded();
+      else this.fail("stage", "The same component did not answer after reconnecting, so your unsaved changes were discarded.");
+      return;
+    }
+    // All or nothing: half of a related pair, such as swapped buttons, is worse than neither.
+    const dropped: string[] = [];
+    for (const [name, value] of staged) {
+      try {
+        this.stageParameter(name, value);
+      } catch {
+        dropped.push(settingLabel(this.state.schema, name));
+      }
+    }
+    if (dropped.length > 0) {
+      // Before fail(): discarding clears a "stage" failure.
+      this.discardAllStaged();
+      this.fail("stage", `Your unsaved changes were discarded after reconnecting: ${dropped.join(", ")} could not be staged again.`);
     }
   }
 

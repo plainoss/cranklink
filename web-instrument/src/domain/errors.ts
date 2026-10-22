@@ -144,6 +144,7 @@ export function describeFailure(
   } else if (kind === "save" && /authentication is not verified|authentication challenge rejected|authentication failed/i.test(error)) {
     outcome = "No change was written. Your staged values are kept.";
   }
+  if (failure.stagedDiscarded) outcome = `${outcome ? `${outcome} ` : ""}Your unsaved changes were discarded.`;
 
   return {
     title: TITLES[kind],

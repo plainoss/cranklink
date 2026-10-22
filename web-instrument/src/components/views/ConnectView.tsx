@@ -98,6 +98,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             <Alert.Indicator />
             <Alert.Content className="min-w-0">
               <Alert.Title>{failure.title}</Alert.Title>
+              {failure.outcome && <p className="mt-1 text-sm font-medium" data-testid="error-outcome">{failure.outcome}</p>}
               <Alert.Description className="[overflow-wrap:anywhere]">{failure.message}</Alert.Description>
             </Alert.Content>
           </Alert>

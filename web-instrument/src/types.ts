@@ -165,6 +165,8 @@ export interface OperationFailure {
   error: string;
   /** Settings in write order for a failed save. */
   settings?: string[];
+  /** The staged edits were lost with this failure. */
+  stagedDiscarded?: boolean;
 }
 
 export interface Toast {

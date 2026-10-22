@@ -5,6 +5,7 @@ import { SessionController } from "./src/core/sessionController.ts";
 import type { TerminalHost } from "./src/core/sessionController.ts";
 import { WebMCPServer } from "./src/core/webMcpServer.ts";
 import type { ComponentUnit, SettingSpec } from "./src/types.ts";
+import { describeFailure } from "./src/domain/errors.ts";
 import { detectDeviceIdentity } from "./src/domain/motorIdentity.ts";
 import { enrichSchema, settingAcceptsValue } from "./src/domain/schema.ts";
 
@@ -385,6 +386,71 @@ describe("Component staging and restore boundaries", () => {
     assert.equal(h.controller.getState().identity?.model, POWER);
     assert.equal(h.controller.getState().identity?.serial, "111213141516");
     assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.match(h.controller.getState().failure?.error ?? "", /unsaved changes were discarded/);
+  });
+
+  it("keeps the read failure that ended the search and says the edits are gone", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    h.replies.get(4)!.identity.serial = "zz";
+    await h.controller.reconnect();
+    const state = h.controller.getState();
+    assert.deepEqual(state.stagedValues, {});
+    assert.match(state.failure?.error ?? "", /lacks a verified serial identity/);
+    assert.equal(describeFailure(state.failure!, state.transport, []).outcome, "Your unsaved changes were discarded.");
+  });
+
+  it("says the edits are gone when the reconnect cannot connect", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    const terminal = (h.controller as any).terminal;
+    const run = terminal.run;
+    terminal.run = async (line: string) => {
+      if (line === "connect ble") throw new Error("Connection attempt failed");
+      return run(line);
+    };
+    await assert.rejects(h.controller.reconnect(), /Connection attempt failed/);
+    const state = h.controller.getState();
+    assert.deepEqual(state.stagedValues, {});
+    assert.equal(state.failure?.kind, "connect");
+    assert.equal(describeFailure(state.failure!, state.transport, []).outcome, "Your unsaved changes were discarded.");
+  });
+
+  it("restores no edits when one of them can no longer be staged", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 3);
+    h.controller.stageParameter("switch-b-function", 2);
+    const lever = h.replies.get(4)!;
+    delete lever.values["switch-b-function"];
+    lever.unavailable["switch-b-function"] = "channel not available";
+    await h.controller.reconnect();
+    assert.equal(h.controller.getState().identity?.serial, "010203040506");
+    assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.match(h.controller.getState().failure?.error ?? "", /discarded after reconnecting: .*could not be staged again/);
+  });
+
+  it("keeps looking for the previous serial when one candidate cannot be read", async () => {
+    const h = harness();
+    const lever13 = { ...units[0], slot: 13 };
+    const lever19 = { ...units[0], slot: 19 };
+    h.config.inventory = [units[0], lever13];
+    h.replies.set(13, snapshot(lever13));
+    h.replies.get(13)!.identity.serial = "0A0B0C0D0E0F";
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("switch-a-function", 0);
+    // The previous slot now answers with another identity; the lever moved to slot 19.
+    h.config.inventory = [units[0], lever13, lever19];
+    h.replies.get(13)!.identity.model_unit = 9;
+    h.replies.set(19, snapshot(lever19));
+    h.replies.get(19)!.identity.serial = "0A0B0C0D0E0F";
+    await h.controller.reconnect();
+    assert.equal(h.controller.getState().identity?.slot, 19);
+    assert.deepEqual(h.controller.getState().stagedValues, { "switch-a-function": 0 });
+    assert.equal(h.controller.getState().failure, null);
   });
 
   it("reselects the previous serial when another component has the same model", async () => {
