@@ -6,8 +6,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> [1/6] Checking Rust formatting..."
-if command -v cargo-fmt >/dev/null 2>&1 || cargo fmt --version >/dev/null 2>&1; then
+# Ask cargo: rustup installs a cargo-fmt proxy even without rustfmt.
+if cargo fmt --version >/dev/null 2>&1; then
   cargo fmt --check || { echo "Formatting failed. Run 'cargo fmt' to fix."; exit 1; }
+else
+  echo "    Skipped: rustfmt is not installed (rustup component add rustfmt)."
 fi
 
 echo "==> [2/6] Type-checking the USB-only build (tests cover the default BLE build)..."
