@@ -90,6 +90,17 @@ impl UnitIdentity {
             "slot {} is not a catalogued component (series {:02X}, unit {:02X}); inspect units before starting a settings session",
             self.slot, self.model_series, self.model_unit
         );
+        // A drive unit outside the motor families (e.g. DU-E5000) must not
+        // take the generic component path with its motor-specific services.
+        ensure!(
+            !self
+                .model_candidates
+                .iter()
+                .any(|name| name.starts_with("DU-")),
+            "slot {} is an unsupported drive unit ({}); no settings session is available",
+            self.slot,
+            self.model_candidates.join(" / ")
+        );
         if self.model.is_none() {
             self.resolve_name(commands)?;
         }
@@ -1345,6 +1356,22 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string()
             .contains("not a catalogued component"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn unsupported_drive_unit_is_not_admitted_as_a_component() {
+        let mut commands = discovery_steps(&[13]);
+        commands.extend([
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x22, 0),
+        ]);
+        let (mut session, steps) = scripted(commands);
+        let error = session
+            .normal_start_component(Some(13), None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported drive unit"), "{error}");
         assert!(steps.borrow().is_empty());
         assert!(session.normal_slot.is_none());
     }
