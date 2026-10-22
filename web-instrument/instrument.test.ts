@@ -14,11 +14,12 @@ import {
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
 import { WebUsbPort } from "./usb.js";
 import { WebSerialPort } from "./serial.js";
-import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
+import { formatSetting, formatValue, isRegulatedSetting } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { preferredTransport } from "./src/core/platform.ts";
 import { DeviceSimulator } from "./simulator.js";
+import type { SettingsModel } from "./src/types.ts";
 
 describe("Domain Schema Enrichment & Ordering", () => {
   it("keeps E6000 geometry controls and presets within the detected schema", () => {
@@ -1198,5 +1199,21 @@ describe("Setting value formatting", () => {
     assert.equal(formatSetting(schema, "destination", 1), "Region 1 / US Class 1 (32 km/h)");
     assert.equal(formatSetting(schema, "start-mode", 0), "Off");
     assert.equal(formatSetting(schema, "speed-limit", null), "—");
+  });
+
+  it("asks for the regulated-change acknowledgment for every oem setting", () => {
+    for (const file of fs.readdirSync(path.join(import.meta.dirname, "schemas"))) {
+      const model = path.basename(file, ".json") as SettingsModel;
+      const specs = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", file), "utf8")), model);
+      for (const spec of specs.filter((spec) => spec.oem)) {
+        assert.equal(isRegulatedSetting(spec, spec.name), true, `${model} ${spec.name}`);
+      }
+    }
+    for (const name of ["tire-circumference", "walk-assist", "rear-teeth"]) {
+      assert.notEqual(schema.find((spec) => spec.name === name)?.section, "oem", name);
+    }
+    for (const name of ["lamp", "speed-limit"]) {
+      assert.equal(isRegulatedSetting(schema.find((spec) => spec.name === name), name), false, name);
+    }
   });
 });

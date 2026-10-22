@@ -50,7 +50,11 @@ export function formatSetting(schema: EnrichedSetting[], name: string, value: Va
   return formatValue(schema.find((setting) => setting.name === name), value);
 }
 
-/** Changes that alter legal or factory limits need an explicit acknowledgment. */
+/**
+ * Changes that alter legal or factory limits need an explicit acknowledgment.
+ * The core's oem flag decides, since annotations file oem settings such as
+ * tire circumference under geometry or drivetrain.
+ */
 export function isRegulatedSetting(spec: EnrichedSetting | undefined, name: string): boolean {
-  return name === "destination" || spec?.section === "oem";
+  return name === "destination" || spec?.oem === true || spec?.section === "oem";
 }

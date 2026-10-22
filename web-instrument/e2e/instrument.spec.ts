@@ -71,6 +71,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("btn-review-save").click();
     const review = page.getByTestId("review-dialog");
     await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
+    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
+    await review.getByTestId("ack-regulated").click();
     await review.getByTestId("btn-commit-batch").click();
 
     // Transaction rail clears, live value updates, and a confirmation names the backup
@@ -122,6 +124,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
     await page.getByTestId("btn-review-save").click();
     await expect(page.getByTestId("review-link-lost")).toBeVisible();
+    // Tire circumference is regulated; with it acknowledged, only the lost link blocks saving.
+    await page.getByTestId("ack-regulated").click();
     await expect(page.getByTestId("btn-commit-batch")).toBeDisabled();
     await page.getByRole("button", { name: "Keep editing" }).click();
 
@@ -168,6 +172,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
     await page.getByTestId("stepper-plus-tire-circumference").click();
     await page.getByTestId("btn-review-save").click();
+    await page.getByTestId("ack-regulated").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
 
@@ -293,7 +298,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(approvalBanner).toBeVisible();
     await expect(approvalBanner).toContainText("Tire Circumference: 2280 mm → 2150 mm");
 
-    // Operator clicks Authorize Write
+    // Operator acknowledges the regulated change and clicks Authorize Write
+    await page.getByTestId("mcp-ack-regulated").click();
     await page.getByTestId("btn-mcp-approve").click();
 
     const rpcResult: any = await rpcPromise;
