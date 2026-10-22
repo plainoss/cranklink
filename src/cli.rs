@@ -123,8 +123,8 @@ EXAMPLES:
   cranklink firmware probe --target dcas --recovery
   cranklink -s 010203040506 firmware flash dcas DUEP800-D.4.2.0.dat --companion DUEP800-M.4.1.11.dat --recovery --write
 
-  # Start persistent JSON-RPC driver session for scripts or AI agents:
-  cranklink session --json
+  # Read-only JSON-RPC session for scripts, wired ports only (see docs/session.md):
+  cranklink --port usb session
 ";
 
 #[derive(Parser)]
