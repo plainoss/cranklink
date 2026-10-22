@@ -60,6 +60,10 @@ function sameComponent(a: DeviceIdentity | null, b: DeviceIdentity | null): bool
     && a.modelSeries === b.modelSeries && a.modelUnit === b.modelUnit;
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
 export class SessionController {
   private state: InstrumentState;
   private listeners: Set<(state: InstrumentState) => void> = new Set();
@@ -967,6 +971,8 @@ export class SessionController {
 
     let dcasFile = this.state.firmware.dcasFile;
     let rxFile = this.state.firmware.rxFile;
+    // Another tab may have stored one of these names since the last command.
+    await this.terminal.files.initialize();
 
     for (const file of Array.from(files)) {
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -975,15 +981,24 @@ export class SessionController {
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
 
-      try {
-        await this.terminal.files.import(file.name, bytes);
-      } catch (err: any) {
-        if (!String(err?.message).includes("already exists")) {
-          throw err;
-        }
+      // The store never replaces a file, so a different image under a stored
+      // name gets a hash-tagged name; inspect must read the bytes just hashed.
+      const store = this.terminal.files;
+      const holds = (path: string) => store.list().some((f) => f.path === path);
+      let filename = file.name;
+      if (holds(filename) && !sameBytes(store.bytes(filename), bytes)) {
+        const dot = filename.lastIndexOf(".");
+        const tag = sha256.slice(0, 12);
+        filename = dot > 0 ? `${filename.slice(0, dot)}.${tag}${filename.slice(dot)}` : `${filename}.${tag}`;
+      }
+      if (!holds(filename)) await store.import(filename, bytes);
+      else if (!sameBytes(store.bytes(filename), bytes)) {
+        const error = `${filename} already holds a different image.`;
+        this.fail("firmware", error);
+        throw new Error(error);
       }
 
-      const inspectRes = await this.exec(`firmware inspect '${file.name}'`);
+      const inspectRes = await this.exec(`firmware inspect '${filename}'`);
       let metadata = null;
       let inspectErr: string | undefined;
       if (inspectRes.code === 0) {
@@ -994,7 +1009,7 @@ export class SessionController {
 
       const role = classifyFirmwareRole(file.name, metadata);
       const inspected: InspectedFirmwareFile = {
-        filename: file.name,
+        filename,
         sizeBytes: bytes.length,
         sha256,
         role,

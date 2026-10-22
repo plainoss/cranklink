@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -238,6 +239,124 @@ describe("SessionController Finite State Machine & Staging", () => {
     assert.deepEqual(controller.getState().stagedValues, {});
     assert.equal(controller.getState().liveValues["tire-circumference"]?.value, 2280);
     assert.equal(controller.getState().liveValues["destination"]?.value, 3);
+  });
+});
+
+describe("Firmware image import", () => {
+  it("stores a different image under a taken name beside the stored one", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const stored = new Map<string, Uint8Array>();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...stored.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => stored.get(p)!,
+        import: async (p: string, b: Uint8Array) => {
+          if (stored.has(p)) throw new Error(`File already exists: ${p}`);
+          stored.set(p, b);
+        },
+        initialize: async () => {},
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        // Like the WASM inspect, report the version held in the stored bytes.
+        const name = /^firmware inspect '([^']+)'$/.exec(line)?.[1];
+        if (name) {
+          const meta = { kind: "dcas-x", series: 0x23, unit: 0, version: `4.6.${stored.get(name)![0]}`, source_sha256: "" };
+          (globalThis as any).window.estepsTerminalPrint(JSON.stringify(meta), "stdout");
+        }
+        return { code: 0 };
+      },
+    });
+    const name = "DUEP800-D.4.6.0.dat";
+    const load = async (bytes: number[]) => {
+      await controller.importFirmwarePackageFiles([new File([new Uint8Array(bytes)], name)]);
+      return controller.getState().firmware.dcasFile!;
+    };
+
+    assert.equal((await load([1, 1])).filename, name);
+    const replacement = await load([2, 2]);
+    assert.equal(replacement.sha256, createHash("sha256").update(new Uint8Array([2, 2])).digest("hex"));
+    assert.equal(replacement.filename, `DUEP800-D.4.6.0.${replacement.sha256.slice(0, 12)}.dat`);
+    assert.equal(commands.at(-1), `firmware inspect '${replacement.filename}'`);
+    assert.equal(replacement.metadata?.version, "4.6.2");
+    assert.equal(replacement.role, "dcas");
+    assert.deepEqual(stored.get(name), new Uint8Array([1, 1]));
+
+    // Re-importing either image reuses its stored copy.
+    assert.equal((await load([1, 1])).filename, name);
+    assert.equal((await load([2, 2])).filename, replacement.filename);
+    assert.equal(stored.size, 2);
+  });
+
+  it("reuses an image another tab stored after this tab loaded the store", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const durable = new Map<string, Uint8Array>();
+    const loaded = new Map<string, Uint8Array>();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...loaded.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => loaded.get(p)!,
+        // Like IndexedDB's add(), refuse a name any tab already stored.
+        import: async (p: string, b: Uint8Array) => {
+          if (durable.has(p)) throw new Error(`File already exists: ${p}`);
+          durable.set(p, b);
+          loaded.set(p, b);
+        },
+        initialize: async () => {
+          for (const [p, b] of durable) loaded.set(p, b);
+        },
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    const name = "DUEP800-D.4.6.0.dat";
+    durable.set(name, new Uint8Array([1, 1]));
+    await controller.importFirmwarePackageFiles([new File([new Uint8Array([1, 1])], name)]);
+    assert.equal(controller.getState().firmware.dcasFile?.filename, name);
+    assert.deepEqual(commands, [`firmware inspect '${name}'`]);
+  });
+
+  it("refuses an image whose hash-tagged name holds other bytes", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const name = "DUEP800-D.4.6.0.dat";
+    const tag = createHash("sha256").update(new Uint8Array([2, 2])).digest("hex").slice(0, 12);
+    const stored = new Map<string, Uint8Array>([
+      [name, new Uint8Array([1, 1])],
+      [`DUEP800-D.4.6.0.${tag}.dat`, new Uint8Array([3, 3])],
+    ]);
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...stored.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => stored.get(p)!,
+        import: async () => assert.fail("nothing may be stored"),
+        initialize: async () => {},
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    await assert.rejects(
+      controller.importFirmwarePackageFiles([new File([new Uint8Array([2, 2])], name)]),
+      /already holds a different image/,
+    );
+    // The firmware view ignores the rejection, so the banner must say it.
+    assert.equal(controller.getState().failure?.kind, "firmware");
+    assert.deepEqual(commands, []);
   });
 });
 
