@@ -1350,9 +1350,11 @@ fn modern_torque_levels(minimum: u8, maximum: u8) -> Result<[i64; 10]> {
     Ok(match (minimum, maximum) {
         (20, 85) => [20, 27, 34, 42, 49, 56, 63, 70, 78, 85],
         (20, 50) => [20, 24, 27, 30, 33, 36, 40, 43, 46, 50],
-        _ => std::array::from_fn(|i| {
-            ((i as f64 * maximum as f64 + (9 - i) as f64 * minimum as f64) / 9.0).round() as i64
-        }),
+        // Interpolating reproduces neither table above, so other bounds would
+        // get guessed levels; refuse until their vendor table is captured.
+        _ => anyhow::bail!(
+            "torque levels for OEM bounds {minimum}..{maximum} Nm are not verified; torque writes are disabled for this motor"
+        ),
     })
 }
 fn validate_modern_torque(n: i64, mode: u8, minimum: u8, maximum: u8) -> Result<()> {
@@ -1911,10 +1913,10 @@ mod tests {
         assert!(validate_modern_torque(27, 3, 20, 85).is_err());
         assert!(validate_modern_torque(34, 3, 20, 85).is_ok());
         assert!(modern_torque_levels(20, 100).is_err());
-        assert_eq!(
-            modern_torque_levels(25, 80).unwrap(),
-            [25, 31, 37, 43, 49, 56, 62, 68, 74, 80]
-        );
+        // Unverified bounds get no guessed levels, even for a plausible value.
+        assert!(modern_torque_levels(25, 80).is_err());
+        assert!(validate_modern_torque(31, 2, 25, 80).is_err());
+        assert!(validate_modern_torque(80, 2, 25, 80).is_err());
     }
     #[test]
     fn modern_profile_edit_preserves_carry_cutoff_and_reconstructs_reserved_byte() {

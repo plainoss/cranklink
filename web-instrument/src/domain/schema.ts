@@ -67,7 +67,11 @@ export function destinationSpeedRange(model: string | undefined, destination: nu
 }
 
 // Keep aligned with modern_torque_levels and validate_modern_torque in src/settings.rs.
-/** Peak-torque values an EP600/EP801 accepts for a mode; undefined where any Nm value is allowed. */
+/**
+ * Peak-torque values an EP600/EP801 accepts for a mode; undefined where any Nm
+ * value is allowed, and empty for OEM bounds without a verified vendor table,
+ * whose torque writes the core refuses.
+ */
 export function modernTorqueLevels(
   model: string | undefined,
   mode: "eco" | "trail" | "boost",
@@ -75,12 +79,11 @@ export function modernTorqueLevels(
   maximum: number,
 ): number[] | undefined {
   if (!isModernModel(model)) return undefined;
-  if (!(minimum >= 20 && minimum <= maximum && maximum <= 85)) return undefined;
   const levels = minimum === 20 && maximum === 85
     ? [20, 27, 34, 42, 49, 56, 63, 70, 78, 85]
     : minimum === 20 && maximum === 50
       ? [20, 24, 27, 30, 33, 36, 40, 43, 46, 50]
-      : Array.from({ length: 10 }, (_, i) => Math.round((i * maximum + (9 - i) * minimum) / 9));
+      : [];
   return mode === "eco" ? levels.slice(0, 8) : mode === "boost" ? levels.slice(2) : levels;
 }
 

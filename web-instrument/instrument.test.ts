@@ -60,6 +60,14 @@ describe("Domain Schema Enrichment & Ordering", () => {
       assert.equal(formatValue(speedSpec, 25), "25 km/h");
     }
   });
+
+  it("offers modern torque levels only for OEM bounds with a vendor table", async () => {
+    const { modernTorqueLevels } = await import("./src/domain/schema.ts");
+    assert.deepEqual(modernTorqueLevels("ep801", "eco", 20, 85), [20, 27, 34, 42, 49, 56, 63, 70]);
+    assert.deepEqual(modernTorqueLevels("ep600", "boost", 20, 50), [27, 30, 33, 36, 40, 43, 46, 50]);
+    assert.deepEqual(modernTorqueLevels("ep801", "trail", 25, 80), []);
+    assert.equal(modernTorqueLevels("ep800-crg", "trail", 25, 80), undefined);
+  });
 });
 
 describe("Synchronized Dual-MCU Firmware Package Domain", () => {
