@@ -1057,7 +1057,15 @@ fn execute_firmware_command(
                             return Err(e);
                         }
                     }
-                    let boot = crate::rx::read_boot(&mut s, before.slot)?;
+                    let boot = match crate::rx::read_boot(&mut s, before.slot) {
+                        Ok(boot) => boot,
+                        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+                            let restarted =
+                                return_after_rx_refusal(&mut s, &e, before.slot, recovery, None);
+                            return finish_operation(Err(e), restarted);
+                        }
+                        Err(e) => return Err(e),
+                    };
                     if is_json {
                         out_println!("{}", serde_json::to_string_pretty(&boot)?);
                     } else {
@@ -1435,14 +1443,33 @@ fn execute_firmware_command(
                 let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
 
                 if !write {
-                    let rx = crate::rx::read_boot(&mut s, ready.slot)?;
+                    let rx = match crate::rx::read_boot(&mut s, ready.slot) {
+                        Ok(rx) => rx,
+                        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+                            jnl.record("dry-run-refused", &format!("{e:#}"))?;
+                            let restarted = return_after_rx_refusal(
+                                &mut s,
+                                &e,
+                                before.slot,
+                                recovery,
+                                Some(&mut jnl),
+                            );
+                            return finish_operation(Err(e), restarted);
+                        }
+                        Err(e) => return Err(e),
+                    };
                     jnl.record("rx-boot", &rx)?;
                     crate::rx::reset_fast(&mut s, before.slot)?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
-                    jnl.record("dry-run-complete", &after)?;
                     // Predict the write: it refuses a retry-capable bootloader without the flag.
-                    crate::rx::validate_fast_capabilities(&rx, allow_unverified_model)?;
+                    if let Err(e) =
+                        crate::rx::validate_fast_capabilities(&rx, allow_unverified_model)
+                    {
+                        jnl.record("dry-run-refused", &format!("{e:#}"))?;
+                        return Err(e);
+                    }
+                    jnl.record("dry-run-complete", &after)?;
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- RX Bootloader: Verified ({}, Sequence {})",
@@ -1478,6 +1505,17 @@ fn execute_firmware_command(
                     progress_reporter(),
                 ) {
                     Ok(r) => r,
+                    Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+                        jnl.record("refused-before-erase", &format!("{e:#}"))?;
+                        let restarted = return_after_rx_refusal(
+                            &mut s,
+                            &e,
+                            before.slot,
+                            recovery,
+                            Some(&mut jnl),
+                        );
+                        return finish_operation(Err(e), restarted);
+                    }
                     Err(e) => {
                         jnl.record("uncertain", &format!("{e:#}"))?;
                         err_println!("\n================================================================================");
@@ -2697,6 +2735,36 @@ fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) ->
         hex::encode(live),
         hex::encode(expected)
     );
+    Ok(())
+}
+
+/// Return to the application after `rx::RefusedBeforeErase`, as the dry run
+/// does; nothing was erased, so the refusal is not an interrupted write.
+fn return_after_rx_refusal(
+    session: &mut Session,
+    refusal: &anyhow::Error,
+    slot: u8,
+    recovery: bool,
+    jnl: Option<&mut Journal>,
+) -> Result<()> {
+    let reset = refusal
+        .downcast_ref::<crate::rx::RefusedBeforeErase>()
+        .is_some_and(|r| r.reset.is_ok());
+    if !reset {
+        err_println!("Nothing was erased, but the RX boot bridge did not confirm its return to the application.");
+        err_println!(
+            "Check the application with `cranklink firmware probe --target rx` before retrying."
+        );
+        return Ok(());
+    }
+    let after = start_rx_session(session, Some(slot), recovery)
+        .context("RX refused before erase; application restart failed")?;
+    session
+        .normal_stop()
+        .context("RX refused before erase; PC-link stop failed")?;
+    if let Some(jnl) = jnl {
+        jnl.record("application-after", &after)?;
+    }
     Ok(())
 }
 

@@ -1167,6 +1167,13 @@ pub(crate) mod tests {
         };
         (session, steps)
     }
+    /// A scripted session whose PC-link to the motor at `slot` is already open.
+    pub(crate) fn scripted_motor(slot: u8, steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
+        let (mut session, steps) = scripted(steps);
+        session.normal_slot = Some(slot);
+        session.normal_is_motor = true;
+        (session, steps)
+    }
     pub(crate) fn frame(control: u8, payload: &[u8]) -> Frame {
         Frame {
             control,
