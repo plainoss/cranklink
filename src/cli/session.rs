@@ -19,7 +19,8 @@ pub struct JsonRpcRequest {
 #[derive(Debug, Serialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: &'static str,
-    /// JSON-RPC 2.0 requires `id`, as null when the request's id is unknown.
+    /// Echoes the request id; parse errors carry `Some(Value::Null)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
@@ -165,24 +166,31 @@ pub fn run_session(
             break; // EOF
         }
 
-        // Invalid UTF-8 becomes a parse error for this line, not a fatal one.
-        let text = String::from_utf8_lossy(&line);
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let req: JsonRpcRequest = match serde_json::from_str(trimmed) {
-            Ok(r) => r,
-            Err(e) => {
+        // Invalid UTF-8 is a parse error for this line, not a fatal one; never
+        // repair it, which would silently change ports, paths or names.
+        let parsed = std::str::from_utf8(&line)
+            .map_err(|e| format!("invalid UTF-8: {e}"))
+            .and_then(|text| {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Ok(None);
+                }
+                serde_json::from_str::<JsonRpcRequest>(trimmed)
+                    .map(Some)
+                    .map_err(|e| format!("Malformed JSON: {e}"))
+            });
+        let req = match parsed {
+            Ok(Some(r)) => r,
+            Ok(None) => continue,
+            Err(message) => {
                 let err_resp = JsonRpcResponse {
                     jsonrpc: "2.0",
-                    id: None,
+                    id: Some(Value::Null),
                     result: None,
                     error: Some(JsonRpcError {
                         code: -32700,
                         name: "PARSE_ERROR".into(),
-                        message: format!("Malformed JSON: {e}"),
+                        message,
                         data: None,
                         hint: Some("Send valid JSON-RPC 2.0 lines terminated by newline.".into()),
                     }),
