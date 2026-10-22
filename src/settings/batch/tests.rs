@@ -38,6 +38,7 @@ struct Motor {
     writes: usize,
     fail_write: Option<usize>,
     mismatch: bool,
+    replaced_after_write: bool,
 }
 impl Motor {
     fn new(files: &Files) -> Self {
@@ -49,6 +50,7 @@ impl Motor {
             writes: 0,
             fail_write: None,
             mismatch: false,
+            replaced_after_write: false,
         }
     }
 }
@@ -63,6 +65,7 @@ impl UnitCommands for Motor {
     ) -> Result<Vec<u8>> {
         assert_eq!(slot, 13);
         match (group, command) {
+            (1, 0x3c) if self.replaced_after_write && self.writes > 0 => Ok(vec![9; 6]),
             (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
             (0x16, 0xb4) => {
                 let n = if self.mismatch && self.writes > 0 {
@@ -460,4 +463,43 @@ fn region_change_never_reorders_writes_of_the_same_setting() {
     .unwrap();
     assert_eq!(attempts(&files), [1, 2, 3]);
     assert_eq!((motor.destination, motor.speed), (1, 2500));
+}
+
+#[test]
+fn a_unit_that_takes_over_the_slot_gets_no_backup_and_no_set() {
+    let files = Files::new();
+    let mut motor = Motor::new(&files);
+    let ops = operations(json!([
+        {"op":"set","name":"speed-limit","value":25},
+        {"op":"set","name":"speed-limit","value":28}
+    ]));
+    let error = run_bound(
+        &mut motor,
+        13,
+        &ops,
+        &files.prefix(),
+        SettingsModel::Ep800Crg,
+        Some("0a0b0c0d0e0f"),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("not the verified 0a0b0c0d0e0f"));
+    assert!(!suffixed(&files.prefix(), ".journal.jsonl").exists());
+
+    motor.replaced_after_write = true;
+    let error = run_bound(
+        &mut motor,
+        13,
+        &ops,
+        &files.prefix(),
+        SettingsModel::Ep800Crg,
+        Some("010203040506"),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("now reports serial 090909090909"),
+        "{error:#}"
+    );
+    assert_eq!((motor.writes, motor.speed), (1, 2500));
+    assert!(suffixed(&files.prefix(), ".001.backup.json").exists());
+    assert!(!suffixed(&files.prefix(), ".002.backup.json").exists());
 }

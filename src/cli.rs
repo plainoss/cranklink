@@ -826,7 +826,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                         let _receipt = s.authenticate_unit_settings(&motor_serial)?;
                     }
 
-                    let val = execute_settings(&mut s, &id, &command)?;
+                    let val = execute_settings(&mut s, &id, &command, Some(&motor_serial))?;
                     Ok((val, model))
                 });
             let stopped = s.normal_stop();
@@ -1966,7 +1966,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                 if command_requires_unit_auth(&command, model, cli.unit_auth) {
                     let _receipt = session.authenticate_unit_settings(&serial)?;
                 }
-                let mut val = execute_settings(&mut session, &id, &command)?;
+                let mut val = execute_settings(&mut session, &id, &command, Some(&serial))?;
                 if let Some(obj) = val.as_object_mut() {
                     obj.insert(
                         "ble_routing".to_string(),
@@ -2312,6 +2312,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
                 name: None,
                 output: None,
             },
+            None,
         )?;
         jnl.record("settings-after", &settings_after)?;
         ensure!(
@@ -2407,6 +2408,7 @@ fn ble_firmware_backup(
             name: None,
             output: None,
         },
+        None,
     )?;
     ensure!(
         backup["unavailable"]
@@ -2785,10 +2787,13 @@ fn validate_settings_preflight(
     Ok(())
 }
 
+/// `verified_serial` is the serial checked when the session started; every
+/// set and batch write re-checks it right before its SET.
 fn execute_settings(
     session: &mut dyn crate::device::UnitCommands,
     id: &crate::device::Identity,
     command: &SettingsCommand,
+    verified_serial: Option<&str>,
 ) -> Result<serde_json::Value> {
     let model = resolve_settings_model(session, id)?;
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
@@ -2870,8 +2875,15 @@ fn execute_settings(
                     crate::platform::now_ms()
                 ))
             });
-            let receipt =
-                crate::settings::set_for_model(session, id.slot, name, value, &backup_path, model)?;
+            let receipt = crate::settings::set_for_model_bound(
+                session,
+                id.slot,
+                name,
+                value,
+                &backup_path,
+                model,
+                verified_serial,
+            )?;
             let mut v = serde_json::to_value(receipt)?;
             v["backup_file"] = serde_json::json!(backup_path);
             Ok(v)
@@ -2911,7 +2923,14 @@ fn execute_settings(
             let prefix = backup_prefix
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(format!("batch-{}", crate::platform::now_ms())));
-            crate::settings::batch::run(session, id.slot, operations, &prefix, model)
+            crate::settings::batch::run_bound(
+                session,
+                id.slot,
+                operations,
+                &prefix,
+                model,
+                verified_serial,
+            )
         }
         SettingsCommand::Schema { .. } => unreachable!(),
     }
@@ -4371,6 +4390,7 @@ mod cli_tests {
                 name: None,
                 output: None,
             },
+            None,
         )
         .unwrap();
         assert_eq!(snapshot["identity"]["model_name"], "SM-BMR1");
@@ -4419,9 +4439,71 @@ mod cli_tests {
                 backup: None,
                 dry_run: true,
             },
+            None,
         )
         .unwrap_err();
         assert!(error.to_string().contains("backup cannot be restored"));
+    }
+
+    #[test]
+    fn settings_writes_recheck_the_serial_verified_at_session_start() {
+        struct Lever;
+        impl crate::device::UnitCommands for Lever {
+            fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
+                Ok(vec![slot, 2, 1])
+            }
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                match (group, command) {
+                    // Another lever now answers on the verified unit's slot.
+                    (1, 0x3c) => Ok(vec![9; 6]),
+                    (4, 0x0c) => Ok(vec![1]),
+                    (4, 0x14) => Ok(vec![0x23, 0xaf]),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+        let id = crate::device::Identity {
+            slot: 4,
+            cargo: "ST-6770-L".into(),
+            dcas_version: "3.0.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let prefix = std::env::temp_dir().join(format!(
+            "cranklink-cli-bound-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let backup = prefix.with_extension("json");
+        let operations = serde_json::from_value(serde_json::json!([
+            {"op":"set","name":"switch-a-function","value":1}
+        ]))
+        .unwrap();
+        for command in [
+            SettingsCommand::Set {
+                name: "switch-a-function".into(),
+                value: "1".into(),
+                backup: Some(backup.clone()),
+                dry_run: false,
+            },
+            SettingsCommand::Batch {
+                plan: PathBuf::new(),
+                backup_prefix: Some(prefix.clone()),
+                operations,
+            },
+        ] {
+            let error =
+                execute_settings(&mut Lever, &id, &command, Some("010203040506")).unwrap_err();
+            assert!(format!("{error:#}").contains("refusing write"), "{error:#}");
+        }
+        assert!(!backup.exists());
+        assert!(!PathBuf::from(format!("{}.journal.jsonl", prefix.display())).exists());
     }
 
     #[test]

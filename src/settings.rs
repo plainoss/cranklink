@@ -1166,13 +1166,27 @@ pub fn set_for_model(
     backup_path: &Path,
     model: SettingsModel,
 ) -> Result<ChangeReceipt> {
+    set_for_model_bound(session, slot, name, value, backup_path, model, None)
+}
+
+/// [`set_for_model`] on the unit the session verified: the serial read for
+/// the backup must equal `expected_serial`, or nothing is backed up or sent.
+pub fn set_for_model_bound(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    backup_path: &Path,
+    model: SettingsModel,
+    expected_serial: Option<&str>,
+) -> Result<ChangeReceipt> {
     let s = spec_for_model(name, model)?;
     validate_input(&s, value)?;
     if s.value_type == "date" {
-        return set_date(session, slot, &s, value, backup_path);
+        return set_date(session, slot, &s, value, backup_path, expected_serial);
     }
     if s.width == 0 {
-        return set_name(session, slot, &s, value, backup_path);
+        return set_name(session, slot, &s, value, backup_path, expected_serial);
     }
     let NumericPlan {
         unset,
@@ -1181,6 +1195,7 @@ pub fn set_for_model(
         before,
         after,
     } = plan_numeric(session, slot, &s, value, model)?;
+    let serial = checked_serial(session, slot, expected_serial)?;
     // create_new prevents accidentally overwriting the only known original configuration.
     let mut backup = OpenOptions::new()
         .write(true)
@@ -1189,7 +1204,7 @@ pub fn set_for_model(
         .context("create settings backup (choose a new filename)")?;
     serde_json::to_writer_pretty(
         &mut backup,
-        &json!({"format":"cranklink-setting-backup-v1","serial":hex::encode(crate::device::serial_bytes(&session.command(slot,1,0x3c,&[0],0x3e)?)?),"slot":slot,"settings_model":model.slug(),"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
+        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"settings_model":model.slug(),"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
@@ -1268,6 +1283,29 @@ pub fn set_for_model(
         backup: backup_path.display().to_string(),
         changed,
     })
+}
+
+/// Read the serial a backup records, right before its SET. With `expected`,
+/// refuse a unit that took over the slot since the session verified it.
+fn checked_serial(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    expected: Option<&str>,
+) -> Result<String> {
+    let serial = hex::encode(crate::device::serial_bytes(&session.command(
+        slot,
+        1,
+        0x3c,
+        &[0],
+        0x3e,
+    )?)?);
+    if let Some(expected) = expected {
+        ensure!(
+            serial.eq_ignore_ascii_case(expected),
+            "slot {slot} now reports serial {serial}, not the verified {expected}; refusing write"
+        );
+    }
+    Ok(serial)
 }
 
 /// Check a `set_for_model` without taking a backup or sending a SET: the same
@@ -1679,16 +1717,24 @@ pub fn restore_parsed_for_model(
     )?)?);
     let setting = parsed.validate_for_model(model, &serial)?;
     if setting.group == 0x48 && setting.set == 0x50 {
-        return restore_date(session, slot, &setting, &parsed.raw_backup, new_backup_path);
+        return restore_date(
+            session,
+            slot,
+            &setting,
+            &parsed.raw_backup,
+            new_backup_path,
+            Some(&serial),
+        );
     }
     let value = parsed.planned_value();
-    set_for_model(
+    set_for_model_bound(
         session,
         slot,
         &parsed.setting,
         &value,
         new_backup_path,
         model,
+        Some(&serial),
     )
 }
 
@@ -1720,6 +1766,7 @@ fn set_date(
     s: &SettingSpec,
     value: &str,
     path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let p = parse_date(value)?;
     // This private path only accepts a validated calendar or the vendor's all-FF unset tuple.
@@ -1729,6 +1776,7 @@ fn set_date(
         s,
         &json!({"original_parameters":hex::encode(p)}),
         path,
+        expected_serial,
     )
 }
 
@@ -1739,6 +1787,7 @@ fn restore_date(
     s: &SettingSpec,
     backup: &Value,
     path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let original = hex::decode(
         backup["original_parameters"]
@@ -1756,13 +1805,7 @@ fn restore_date(
     ensure!(current.len() >= 4, "short current date");
     let before = s.decode(&current)?;
     let after = s.decode(original)?;
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -1840,17 +1883,12 @@ fn set_name(
     s: &SettingSpec,
     value: &str,
     backup_path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let original = read_raw(session, slot, s)?;
     let before = s.decode(&original)?;
     let after = json!(value);
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut backup = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -2740,5 +2778,56 @@ mod tests {
         assert_eq!(chain.calls[..checked.len()], checked);
         assert_eq!(chain.calls[checked.len()], (1, 0x3c));
         assert_eq!((hub.sets, chain.sets), (0, 1));
+    }
+    #[test]
+    fn a_bound_write_to_another_unit_leaves_no_backup_and_sends_no_set() {
+        struct Motor;
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![9; 6],
+                    (0x48, 0x54) => vec![24, 5, 10, 0],
+                    (0x17, 0x24) => [&params[..1], b"Trail"].concat(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        // Numeric, date and name writes each take their own backup path.
+        for (case, (name, value)) in [
+            ("maintenance-day", "11"),
+            ("maintenance-date", "2024-05-11"),
+            ("profile1.name", "Road"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-bound-{case}-{}-{}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let error = set_for_model_bound(
+                &mut Motor,
+                13,
+                name,
+                value,
+                &backup,
+                SettingsModel::Ep800Crg,
+                Some("010203040506"),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("refusing write"),
+                "{name}: {error:#}"
+            );
+            assert!(!backup.exists(), "{name}");
+        }
     }
 }

@@ -218,6 +218,19 @@ pub fn run(
     prefix: &Path,
     model: SettingsModel,
 ) -> Result<Value> {
+    run_bound(session, slot, operations, prefix, model, None)
+}
+
+/// [`run`] on the unit the session verified: the batch's serial must equal
+/// `expected_serial`, and each set re-checks it before its backup and SET.
+pub fn run_bound(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    operations: &[Operation],
+    prefix: &Path,
+    model: SettingsModel,
+    expected_serial: Option<&str>,
+) -> Result<Value> {
     ensure!(
         !operations.is_empty() && operations.len() <= 128,
         "batch requires 1..=128 operations"
@@ -229,13 +242,7 @@ pub fn run(
     // Check every static name/value and restore input before the first write.
     // Model-dependent combinations (e.g. speed after region) use live reads at
     // each step, so later operations see changes made earlier in this session.
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
         let valid = (|| -> Result<Option<ParsedRestore>> {
@@ -304,8 +311,16 @@ pub fn run(
                     value["capabilities"] = capabilities_for_model(model);
                     Ok(value)
                 }
-                Operation::Set { name, value } => Ok(serde_json::to_value(set_for_model(
-                    session, slot, name, value, &backup, model,
+                // Each write re-reads the serial for its backup; a unit that
+                // took over the slot mid-batch gets no backup and no SET.
+                Operation::Set { name, value } => Ok(serde_json::to_value(set_for_model_bound(
+                    session,
+                    slot,
+                    name,
+                    value,
+                    &backup,
+                    model,
+                    Some(&serial),
                 )?)?),
                 Operation::Restore { .. } => {
                     let parsed = resolved_restores[index]
