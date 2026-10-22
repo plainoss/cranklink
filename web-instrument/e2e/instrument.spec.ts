@@ -35,7 +35,7 @@ async function openInstrument(page: Page) {
 }
 
 test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
-  test("zero-click connect, inline staging, atomic batch commit, and snapshot rollback @smoke", async ({
+  test("zero-click connect, inline staging, ordered batch commit, and snapshot rollback @smoke", async ({
     page,
   }) => {
     await openInstrument(page);

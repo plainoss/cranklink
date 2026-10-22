@@ -10,7 +10,7 @@ Always prefer fast local tooling over slow manual loops:
 - **Fast Web Typecheck**: In `web-instrument`, run `npm run typecheck` (`tsc --noEmit`, <1s) instead of the full `npm run build` bundle.
 - **Fast Web Instrument Test Cycle**: When developing or testing in `web-instrument`, use the rapid iteration tiers:
   - `npm run test:fast` (<100ms): Fast domain schemas, firmware package rules, and SessionController FSM tests.
-  - `npm run test:smoke` (~2s): Fast smoke E2E test verifying connect, inline staging, atomic batch commit, and rollback.
+  - `npm run test:smoke` (~2s): Fast smoke E2E test verifying connect, inline staging, ordered batch commit, and rollback.
   - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite (with automatic port 8030 cleanup).
   - `npm run test:production` (~1s): Reserved for pre-push or CI to verify production build assets and `_headers` COOP/COEP isolation.
 - **E2E Port Safety**: `npm run test:e2e` automatically runs `scripts/ensure-port-free.mjs 8030` to prevent port collisions across worktrees.
