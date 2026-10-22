@@ -24,6 +24,7 @@ CLI_PATTERNS = [
     "tools/patch_ep800_speed.py",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
+    ".github/scripts/prepare-rolling-release*",
 ]
 
 WEB_PATTERNS = [
@@ -107,10 +108,11 @@ def main():
     target = sys.argv[1]
     patterns = CLI_PATTERNS if target == "cli" else WEB_PATTERNS
 
-    # Force check via argument or tag push / workflow_dispatch
+    # Publishing needs a complete, tested set of binaries even for docs-only pushes.
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     ref = os.environ.get("GITHUB_REF", "")
-    if "--force" in sys.argv or ref.startswith("refs/tags/v") or event_name == "workflow_dispatch":
+    rolling_push = target == "cli" and event_name == "push" and ref == "refs/heads/main"
+    if "--force" in sys.argv or ref.startswith("refs/tags/v") or event_name == "workflow_dispatch" or rolling_push:
         print(f"[check-changed-paths] Force/Release trigger detected for {target}. Enforcing checks.")
         set_output("true")
         return
