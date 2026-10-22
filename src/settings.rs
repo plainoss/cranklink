@@ -253,6 +253,7 @@ pub fn capabilities_for_model(model: SettingsModel) -> Value {
 /// prefix into the SET template, changes the chosen field, and reconstructs
 /// reserved bytes from the template. `preserve` overrides that prefix length
 /// for a model; it is not the total reply length, which can include filler.
+/// The first `selector_len` query bytes select the record and must be echoed.
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingSpec {
     pub name: String,
@@ -293,6 +294,8 @@ pub struct SettingSpec {
     preserve: Option<usize>,
     #[serde(skip)]
     name_reserved_byte: bool,
+    #[serde(skip)]
+    selector_len: usize,
 }
 impl SettingSpec {
     // Explicit wire layout columns make the auditable command table readable.
@@ -331,10 +334,15 @@ impl SettingSpec {
             scale: 1.0,
             preserve: None,
             name_reserved_byte: true,
+            selector_len: 0,
         }
     }
     fn choices(mut self, v: &[i64]) -> Self {
         self.choices = v.to_vec();
+        self
+    }
+    fn selectors(mut self, len: usize) -> Self {
+        self.selector_len = len;
         self
     }
     fn oem(mut self) -> Self {
@@ -499,6 +507,7 @@ pub fn schema() -> Vec<SettingSpec> {
             1,
         )
         .choices(&[0, 1, 3, 4])
+        .selectors(1)
         .oem(),
         SettingSpec::new(
             "assist-pattern",
@@ -661,7 +670,8 @@ pub fn schema() -> Vec<SettingSpec> {
                     &[p, m, 0, 0, 0, 0, 0],
                     offset,
                     1,
-                );
+                )
+                .selectors(2);
                 s.oem = p < 2;
                 v.push(s);
             }
@@ -677,7 +687,8 @@ pub fn schema() -> Vec<SettingSpec> {
             &[p, 0, 0, 0],
             1,
             1,
-        );
+        )
+        .selectors(1);
         display.oem = p < 2;
         v.push(display);
     }
@@ -836,6 +847,7 @@ pub fn schema() -> Vec<SettingSpec> {
                 1,
                 2,
             )
+            .selectors(1)
             .oem(),
         );
     }
@@ -1339,6 +1351,14 @@ fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
             "invalid modern basic-mode profile selector/length; fine-tune profiles are unsupported"
         );
     }
+    // A misrouted or late reply would otherwise pass its selector into the SET.
+    let selector = &spec.query[..spec.selector_len];
+    ensure!(
+        raw.get(..selector.len()) == Some(selector),
+        "reply selector {} does not match request {}",
+        hex::encode(&raw[..selector.len().min(raw.len())]),
+        hex::encode(selector)
+    );
     Ok(())
 }
 
@@ -1407,6 +1427,7 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
     );
     let mut payload = s.template.clone();
     payload[..meaningful].copy_from_slice(&original[..meaningful]);
+    payload[..s.selector_len].copy_from_slice(&s.query[..s.selector_len]);
     if s.name.starts_with("speed-limit") {
         payload[2] = s.query[0];
         payload[3] = 255;
@@ -2255,6 +2276,64 @@ mod tests {
         assert_eq!(s.query, [2, 1]);
         assert_eq!(s.set, 248);
         assert_eq!(spec("profile2.boost.start").unwrap().query, [3, 3]);
+    }
+    #[test]
+    fn replies_for_another_selector_are_refused_before_backup_or_write() {
+        struct Misrouted {
+            get: (u8, u8),
+            reply: Vec<u8>,
+        }
+        impl UnitCommands for Misrouted {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!((group, command), self.get, "only the setting's GET is sent");
+                Ok(self.reply.clone())
+            }
+        }
+        for (case, (name, get, reply, value)) in [
+            ("destination", (0x16, 0xac), vec![0, 1, 0xff, 0xff], "0"),
+            (
+                "profile2.eco.character",
+                (0x16, 0xfc),
+                vec![2, 1, 27, 1, 4, 0xff, 0xff],
+                "2",
+            ),
+            (
+                "profile1.display",
+                (0x17, 0x2c),
+                vec![3, 0, 0xff, 0xff],
+                "1",
+            ),
+            ("max-power.boost", (0x17, 0x14), vec![2, 0x90, 0x01], "300"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut motor = Misrouted { get, reply };
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-misrouted-{}-{}-{case}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let error = set(&mut motor, 13, name, value, &backup).unwrap_err();
+            assert!(
+                error.to_string().starts_with("reply selector"),
+                "{name}: {error}"
+            );
+            assert!(!backup.exists(), "{name}");
+            assert!(read(&mut motor, 13, name).is_err(), "{name}");
+        }
+        // The SET names the requested record even if a caller skips the check.
+        assert_eq!(
+            updated_payload(&spec("destination").unwrap(), &[0, 1, 0xff, 0xff], 0, false).unwrap(),
+            [1, 0, 0xff, 0xff]
+        );
     }
     #[test]
     fn modern_destination_uses_factory_only_when_oem_is_unset_and_never_defaults_on_error() {
