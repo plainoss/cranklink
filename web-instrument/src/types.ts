@@ -141,7 +141,8 @@ export interface MCPApprovalRequest {
   id: string;
   tool: string;
   params: any;
-  diff: Array<{ name: string; label: string; before: any; after: any }>;
+  /** `regulated` rows change legal or factory limits and need the operator's acknowledgment. */
+  diff: Array<{ name: string; label: string; before: any; after: any; regulated: boolean }>;
   /** The component the write would reach, shown to the operator. */
   target: { model: string; slot: number; serial: string };
   resolve: (approved: boolean) => void;

@@ -303,6 +303,36 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("nav-group-geometry").click();
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2150 mm");
   });
+
+  test("a regulated change needs its acknowledgment on every save path", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+
+    // An agent's region change waits for the review's acknowledgment. Region 0
+    // keeps the simulator's 25 km/h and has no power cap, so the core accepts it.
+    const rpcPromise = page.evaluate(() => (window as any).webMcpServer.handleRequest("tools/call", {
+      name: "cranklink_set_setting",
+      arguments: { name: "destination", value: 0 },
+    }));
+    const approvalBanner = page.getByTestId("mcp-approval-banner");
+    await expect(approvalBanner.getByLabel("Regulated setting")).toBeVisible();
+    await expect(page.getByTestId("btn-mcp-approve")).toBeDisabled();
+    await page.getByTestId("mcp-ack-regulated").click();
+    await page.getByTestId("btn-mcp-approve").click();
+    expect(((await rpcPromise) as any).completed).toBe(1);
+
+    // Save & disconnect opens the review rather than writing straight away.
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.stageParameter("destination", 1));
+    await page.getByTestId("btn-disconnect").click();
+    await page.getByTestId("btn-save-disconnect").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-item-destination")).toBeVisible();
+    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
+    await review.getByTestId("ack-regulated").click();
+    await review.getByTestId("btn-commit-batch").click();
+    await expect(page.getByTestId("btn-connect-sim")).toBeVisible();
+  });
 });
 
 // Only the browser chooser is replaced. The selected device is the production

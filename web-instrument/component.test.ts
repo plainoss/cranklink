@@ -520,7 +520,7 @@ describe("Agent write review boundaries", () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
     const pending = request(serverFor(h.controller));
-    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => entry.name), ["switch-b-function"]);
+    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => [entry.name, entry.regulated]), [["switch-b-function", false]]);
     h.controller.stageParameter("switch-a-function", 0);
     h.controller.respondMcpApproval(true);
     await assert.rejects(pending, /Staged changes appeared during review/);
@@ -593,7 +593,7 @@ describe("Agent write review boundaries", () => {
     const pending = batchRequest(serverFor(h.controller), [
       { name: "destination", value: 1 }, { name: "speed-limit", value: 32 },
     ]);
-    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => entry.name), ["destination", "speed-limit"]);
+    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => [entry.name, entry.regulated]), [["destination", true], ["speed-limit", false]]);
     h.controller.respondMcpApproval(true);
     await pending;
     assert.deepEqual(h.controller.getState().stagedValues, {});

@@ -20,7 +20,7 @@ import type {
   OperationKind,
 } from "../types.ts";
 import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
-import { formatValue, formatSetting, settingLabel } from "../domain/settingFormat.ts";
+import { formatValue, formatSetting, isRegulatedSetting, settingLabel } from "../domain/settingFormat.ts";
 import { isLinkLost } from "../domain/errors.ts";
 import { CATALOG_NAME, detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
@@ -1189,6 +1189,7 @@ export class SessionController {
           label: settingLabel(this.state.schema, d.name),
           before: formatValue(spec, d.before),
           after: formatValue(spec, d.after),
+          regulated: isRegulatedSetting(spec, d.name),
         };
       });
       this.update({

@@ -76,15 +76,42 @@ export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
   );
 }
 
+interface RegulatedAcknowledgmentProps {
+  labels: string[];
+  isSelected: boolean;
+  onChange: (selected: boolean) => void;
+  "data-testid": string;
+}
+
+/** The explicit acknowledgment a write of regulated settings needs, from this review or an agent's. */
+export function RegulatedAcknowledgment({ labels, isSelected, onChange, "data-testid": testId }: RegulatedAcknowledgmentProps) {
+  return (
+    <Checkbox isSelected={isSelected} onChange={onChange} data-testid={testId}>
+      <Checkbox.Control>
+        <Checkbox.Indicator />
+      </Checkbox.Control>
+      <Checkbox.Content>
+        <Label className="text-xs leading-relaxed">
+          {labels.join(" and ")} {labels.length === 1 ? "changes" : "change"} legal
+          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
+          approved.
+        </Label>
+      </Checkbox.Content>
+    </Checkbox>
+  );
+}
+
 interface ReviewDialogProps {
   state: InstrumentState;
   controller: SessionController;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Disconnect once the save succeeds: the disconnect prompt's "Save & disconnect". */
+  disconnectAfterSave?: boolean;
 }
 
 /** The single save path: every write is reviewed here first. */
-export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDialogProps) {
+export function ReviewDialog({ state, controller, open, onOpenChange, disconnectAfterSave = false }: ReviewDialogProps) {
   const changes = stagedChanges(state);
   const count = changes.length;
   const regulated = changes.filter((change) => change.regulated);
@@ -99,10 +126,16 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
   }, [open]);
 
   const save = async () => {
+    // Closing the dialog clears the caller's disconnect request.
+    const thenDisconnect = disconnectAfterSave;
     onOpenChange(false);
-    await controller.commitStagedBatch().catch(() => {
+    try {
+      await controller.commitStagedBatch();
+    } catch {
       // The failure banner explains the bike's state; staged values remain.
-    });
+      return;
+    }
+    if (thenDisconnect) await controller.disconnect().catch(() => {});
   };
 
   return (
@@ -149,18 +182,12 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
               {regulated.length > 0 && (
                 <Alert status="warning">
                   <Alert.Content>
-                    <Checkbox isSelected={acknowledged} onChange={setAcknowledged} data-testid="ack-regulated">
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                      <Checkbox.Content>
-                        <Label className="text-xs leading-relaxed">
-                          {regulated.map((change) => change.label).join(" and ")} {regulated.length === 1 ? "changes" : "change"} legal
-                          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
-                          approved.
-                        </Label>
-                      </Checkbox.Content>
-                    </Checkbox>
+                    <RegulatedAcknowledgment
+                      labels={regulated.map((change) => change.label)}
+                      isSelected={acknowledged}
+                      onChange={setAcknowledged}
+                      data-testid="ack-regulated"
+                    />
                   </Alert.Content>
                 </Alert>
               )}
@@ -188,7 +215,7 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
                 onPress={save}
                 data-testid="btn-commit-batch"
               >
-                Save to bike
+                {disconnectAfterSave ? "Save & disconnect" : "Save to bike"}
               </Button>
             </Modal.Footer>
           </Modal.Dialog>
