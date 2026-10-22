@@ -5,6 +5,16 @@ export const characteristicUuid = (id) =>
 const IDS = [0x2af3, 0x2af4, 0x2af9, 0x2afa, 0x2afd, 0x2afe, 0x2aff];
 const RESPONSES = new Set([0x2af3, 0x2af9, 0x2afd]);
 const enc = new TextEncoder();
+// src/ble/browser.rs budgets ble.open for open()'s worst case: every connect
+// attempt times out, then both discovery steps use their full bound.
+export const CONNECT_ATTEMPTS = 3;
+export const CONNECT_TIMEOUT_MS = 12000;
+export const CONNECT_BACKOFF_MS = 800;
+export const DISCOVERY_TIMEOUT_MS = 10000;
+export const OPEN_WORST_CASE_MS =
+  CONNECT_ATTEMPTS * CONNECT_TIMEOUT_MS +
+  (CONNECT_BACKOFF_MS * CONNECT_ATTEMPTS * (CONNECT_ATTEMPTS - 1)) / 2 +
+  2 * DISCOVERY_TIMEOUT_MS;
 const bytesOf = (view) =>
   new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
 
@@ -45,8 +55,8 @@ export class WebBleGatt {
     this.opened = false;
     this.opening = false;
     this.failure = null;
-    this.connectTimeoutMs = 12000;
-    this.connectBackoffMs = 800;
+    this.connectTimeoutMs = CONNECT_TIMEOUT_MS;
+    this.connectBackoffMs = CONNECT_BACKOFF_MS;
     this.credential = null;
     this.credentialPrompt = null;
     this.onDisconnect = () => {
@@ -189,14 +199,14 @@ export class WebBleGatt {
       let lastError = null;
       // Shimano displays (e.g. SC-EM800) take a moment to resume advertising after
       // acknowledging a PC-link stop from a previous command. Retry connect with backoff.
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
         if (this.epoch !== epoch) break;
         try {
           server = await this.connectOnce(this.connectTimeoutMs);
           break;
         } catch (err) {
           lastError = err;
-          if (attempt < 3) {
+          if (attempt < CONNECT_ATTEMPTS) {
             await new Promise((r) =>
               setTimeout(r, this.connectBackoffMs * attempt),
             );
@@ -215,11 +225,13 @@ export class WebBleGatt {
         this.fail(err);
         throw err;
       }
-      const service = await this.bounded(() =>
-        server.getPrimaryService(ETUBE_SERVICE),
+      const service = await this.bounded(
+        () => server.getPrimaryService(ETUBE_SERVICE),
+        DISCOVERY_TIMEOUT_MS,
       );
-      const characteristics = await this.bounded(() =>
-        service.getCharacteristics(),
+      const characteristics = await this.bounded(
+        () => service.getCharacteristics(),
+        DISCOVERY_TIMEOUT_MS,
       );
       for (const id of IDS) {
         const c = characteristics.find(

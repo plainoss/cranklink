@@ -1,6 +1,8 @@
 import { it } from "node:test";
 import assert from "node:assert/strict";
-import { WebBleGatt, characteristicUuid } from "./ble.js";
+import fs from "node:fs";
+import path from "node:path";
+import { OPEN_WORST_CASE_MS, WebBleGatt, characteristicUuid } from "./ble.js";
 
 it("rejected gateway authentication clears the cached passkey and prompts again", async () => {
   const device = Object.assign(new EventTarget(), {
@@ -127,4 +129,17 @@ it("releasing the device during a pending connect aborts the open", async () => 
   assert.equal(link.connects, 1);
   assert.equal(ble.opened, false);
   assert.equal(link.connected, false, "a released object must not keep the link");
+});
+
+it("the Rust ble.open budget covers open()'s worst case", () => {
+  const source = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "src", "ble", "browser.rs"),
+    "utf8",
+  );
+  const budget = /rpc\("ble\.open", &\[\], (\d+)\)/.exec(source);
+  assert.ok(budget, "ble.open budget not found in src/ble/browser.rs");
+  assert.ok(
+    Number(budget[1]) >= OPEN_WORST_CASE_MS,
+    `ble.open budget ${budget[1]} ms is below open()'s worst case ${OPEN_WORST_CASE_MS} ms`,
+  );
 });
