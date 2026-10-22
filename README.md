@@ -119,7 +119,8 @@ See [settings](docs/settings.md) for protected fields, backups, and batch plans,
 Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only EP800 (`23/00`, DCASX board 1) is tested; other families need `--allow-unverified-model`, for dry runs too. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
 
 ```sh
-# 1. Inspect the containers offline
+# 1. Inspect the containers offline; compare the printed Source SHA-256
+#    (<D_SHA256> below) with your trusted record of the D file
 cranklink firmware inspect DUEP800-D.4.2.0.dat --companion DUEP800-M.4.1.11.dat
 
 # 2. Confirm the bootloader responds and note its Serial (use it as <SERIAL> below)
@@ -127,12 +128,15 @@ cranklink --port usb firmware probe --target dcas --recovery
 
 # 3. Dry run (default): validates target and container integrity, writes nothing
 cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
-  --companion DUEP800-M.4.1.11.dat --recovery
+  --companion DUEP800-M.4.1.11.dat --expect-sha256 <D_SHA256> --recovery
 
 # 4. Write
 cranklink --port usb -s <SERIAL> firmware flash dcas DUEP800-D.4.2.0.dat \
-  --companion DUEP800-M.4.1.11.dat --journal D.journal.jsonl --recovery --write
+  --companion DUEP800-M.4.1.11.dat --expect-sha256 <D_SHA256> \
+  --journal D.journal.jsonl --recovery --write
 ```
+
+Ordinary recovery compares the file's SHA-256 only when `--expect-sha256` is given (writing a plaintext image requires it) and checks the companion's kind, series and version but not its hash; `--bridge-recovery` pins the stock D 4.2.0.0 and M 4.1.11.0 hashes itself.
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion. M files such as `DUEP800-M.4.1.11.dat` are plaintext, so `--write` also needs `--expect-sha256 <SHA-256>` of the M file you verified (`firmware inspect` prints it and the integrity status).
 

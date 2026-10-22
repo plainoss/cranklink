@@ -66,6 +66,10 @@ cranklink firmware inspect DUEP800-D.4.2.0.patched.dat \
   --companion DUEP800-M.4.1.11.dat
 ```
 
+To bind a flash to this output, pass the `Source SHA-256` that `firmware inspect`
+prints as `--expect-sha256`. The patcher's `Patched SHA256` hashes the decrypted
+application, so for `.dat` output it differs from the file's hash.
+
 ## What changes
 
 The ceiling function becomes an eight-byte, position-independent sequence of
