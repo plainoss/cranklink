@@ -194,7 +194,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
     await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
 
-    // Verify single-MCU recovery override is collapsed by default
+    // Verify the single-MCU override is collapsed by default
     const overrideDetails = page.getByTestId("single-mcu-override");
     await expect(overrideDetails.getByRole("button", { name: /program one microcontroller/i })).toHaveAttribute("aria-expanded", "false");
 
@@ -207,6 +207,35 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(modal).toContainText("Limited compatibility checks");
     await page.getByTestId("btn-dismiss-warning").click();
     await expect(modal).toBeHidden();
+
+    // One loaded image enables neither single-MCU program; neither can reach a bootloader.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const dcasFile = { filename: "DUEP800-D.4.2.0.dat", sizeBytes: 1, sha256: "00".repeat(32), role: "dcas", metadata: null };
+      controller.update({ firmware: { ...controller.getState().firmware, dcasFile } });
+    });
+    await overrideDetails.getByRole("button", { name: /program one microcontroller/i }).click();
+    await expect(overrideDetails).toContainText("Bootloader recovery is not available in the browser");
+    await expect(overrideDetails.getByRole("button", { name: "Force program DCAS only" })).toBeDisabled();
+    await expect(overrideDetails.getByRole("button", { name: "Force program RX only" })).toBeDisabled();
+
+    // A checked pair enables programming both, but over Bluetooth the CLI
+    // refuses one MCU alone, and a closed link refuses every write.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const state = controller.getState();
+      const rxFile = { filename: "DUEP800-M.4.1.11.dat", sizeBytes: 1, sha256: "00".repeat(32), role: "rx", metadata: null };
+      controller.update({
+        firmware: { ...state.firmware, rxFile, companionValid: true, dryRunPassed: true, dryRunSerial: state.identity.serial },
+      });
+    });
+    await expect(page.getByTestId("btn-fw-flash-pair")).toBeEnabled();
+    await expect(overrideDetails).toContainText("needs a wired SM-PCE02 connection");
+    await expect(overrideDetails.getByRole("button", { name: "Force program DCAS only" })).toBeDisabled();
+    await expect(overrideDetails.getByRole("button", { name: "Force program RX only" })).toBeDisabled();
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.update({ linkLost: true }));
+    await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
+    await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
   });
 
   test("WebMCP external agent authorization flow", async ({ page }) => {

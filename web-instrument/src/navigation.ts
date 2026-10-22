@@ -32,7 +32,7 @@ export const TUNE_ITEMS: NavItem[] = [
 export const OVERVIEW_ITEM: NavItem = { destination: { goal: "overview" }, label: "Overview", icon: Gauge, testId: "nav-section-overview" };
 
 export const TOOL_ITEMS: NavItem[] = [
-  { destination: { goal: "firmware" }, label: "Firmware & Recovery", icon: Disc3, testId: "nav-section-firmware" },
+  { destination: { goal: "firmware" }, label: "Firmware", icon: Disc3, testId: "nav-section-firmware" },
   { destination: { goal: "backup" }, label: "Backup & Restore", icon: Archive, testId: "nav-section-journal" },
   { destination: { goal: "diagnostics" }, label: "Diagnostics & Logs", icon: Terminal, testId: "nav-section-diagnostics" },
 ];

@@ -3,8 +3,8 @@
  *
  * Instead of forcing the user to manually classify, inspect, dry-run, and flash DCAS (D)
  * and RX (M) chips separately, this module models the drive unit firmware release as a
- * synchronized companion package by default. Single-MCU flashing is relegated to an explicit
- * recovery override.
+ * synchronized companion package by default. Single-MCU flashing is an explicit override
+ * for a checked pair; bootloader recovery is CLI-only.
  */
 
 import type { FirmwareMetadata, InspectedFirmwareFile } from "../types.ts";

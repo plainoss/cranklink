@@ -1075,16 +1075,21 @@ export class SessionController {
     write: boolean,
     overrideSingleTarget?: "dcas" | "rx" | null,
   ): Promise<void> {
-    const { transport, identity, firmware } = this.state;
-    if (!transport || !identity) {
-      throw new Error("Connect to a drive unit before running firmware operations.");
+    if (this.state.phase === "flashing") {
+      // Not refuse(): the running operation owns the status line and the banner.
+      throw new Error("A firmware operation is already running. Wait for it to finish.");
     }
-    if (!identity.isMotor) throw new Error("Firmware operations are available only for supported drive units.");
+    const { transport, identity, firmware } = this.state;
+    if (!transport || !identity) this.refuse("firmware", "Connect to a drive unit before running firmware operations.");
+    if (this.state.phase !== "ready" || this.state.linkLost) {
+      this.refuse("firmware", "Reconnect to an idle drive unit before running firmware operations.");
+    }
+    if (!identity.isMotor) this.refuse("firmware", "Firmware operations are available only for supported drive units.");
     if (!firmware.dcasFile || !firmware.rxFile || !firmware.companionValid) {
-      throw new Error("Load a validated DCAS (-D) + RX (-M) firmware companion pair first.");
+      this.refuse("firmware", "Load a validated DCAS (-D) + RX (-M) firmware companion pair first.");
     }
     if (write && (!firmware.dryRunPassed || firmware.dryRunSerial !== identity.serial)) {
-      throw new Error("Complete a non-erasing compatibility check on this drive unit before programming.");
+      this.refuse("firmware", "Complete a non-erasing compatibility check on this drive unit before programming.");
     }
 
     const prefix = `fw_${write ? "write" : "check"}_${Date.now()}`;

@@ -380,6 +380,50 @@ describe("Firmware image import", () => {
   });
 });
 
+describe("Firmware programming preconditions", () => {
+  it("explains a refused single-MCU program instead of failing silently", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: { ...controller.getState().firmware, dcasFile: image("dcas", "DUEP800-D.4.2.0.dat") },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true, "dcas"), /companion pair first/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+
+    // A check that passed on another drive unit does not permit programming this one.
+    controller.dismissError();
+    (controller as any).update({
+      firmware: {
+        ...controller.getState().firmware, rxFile: image("rx", "DUEP800-M.4.1.11.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "0A0B0C0D0E0F",
+      },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true, "rx"), /non-erasing compatibility check on this drive unit/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+
+    // A closed link refuses every firmware operation, even after a passed check.
+    controller.dismissError();
+    (controller as any).update({ linkLost: true, firmware: { ...controller.getState().firmware, dryRunSerial: "010203040506" } });
+    await assert.rejects(controller.executeFirmwareSync(true), /Reconnect to an idle drive unit/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+    await assert.rejects(controller.executeFirmwareSync(false), /Reconnect to an idle drive unit/);
+    assert.deepEqual(commands, []);
+  });
+});
+
 describe("BLE initial settings connection", () => {
   function terminalFor(snapshot: any, commands: string[]) {
     return {
