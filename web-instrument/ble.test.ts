@@ -143,3 +143,13 @@ it("the Rust ble.open budget covers open()'s worst case", () => {
     `ble.open budget ${budget[1]} ms is below open()'s worst case ${OPEN_WORST_CASE_MS} ms`,
   );
 });
+
+it("a released device never reconnects", async () => {
+  const { ble, link } = fakeGateway(["settle"]);
+  await ble.forget();
+  await assert.rejects(
+    ble.request("ble.open", new Uint8Array(), 0),
+    /released; run connect ble again/,
+  );
+  assert.equal(link.connects, 0);
+});

@@ -312,22 +312,34 @@ async function withDeviceLock(action) {
   }
 }
 async function adoptPort(next, transport) {
-  if (port) {
-    await releaseSelectedPort();
-  }
-  if (transport === "ble") {
-    await new Promise((resolve, reject) => {
-      navigator.locks.request("cranklink-ble-session", { ifAvailable: true }, async (lock) => {
-        if (!lock) {
-          reject(new Error("Another tab has an active Bluetooth session. Disconnect it first."));
-          return;
-        }
-        await new Promise((release) => {
-          releaseBleSessionLock = release;
-          resolve();
-        });
-      }).catch(reject);
-    });
+  try {
+    if (port) {
+      try {
+        await releaseSelectedPort();
+      } finally {
+        // The old port is closed, forgotten and unlocked even when cleanup failed.
+        port = null;
+        selectedTransport = null;
+      }
+    }
+    if (transport === "ble") {
+      await new Promise((resolve, reject) => {
+        navigator.locks.request("cranklink-ble-session", { ifAvailable: true }, async (lock) => {
+          if (!lock) {
+            reject(new Error("Another tab has an active Bluetooth session. Disconnect it first."));
+            return;
+          }
+          await new Promise((release) => {
+            releaseBleSessionLock = release;
+            resolve();
+          });
+        }).catch(reject);
+      });
+    }
+  } catch (error) {
+    // Never adopted: drop the new device's disconnect listener.
+    await next.forget?.();
+    throw error;
   }
   port = next;
   selectedTransport = transport;

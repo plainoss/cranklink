@@ -54,6 +54,7 @@ export class WebBleGatt {
     this.epoch = 0;
     this.opened = false;
     this.opening = false;
+    this.forgotten = false;
     this.failure = null;
     this.connectTimeoutMs = CONNECT_TIMEOUT_MS;
     this.connectBackoffMs = CONNECT_BACKOFF_MS;
@@ -109,6 +110,9 @@ export class WebBleGatt {
     if (this.device.gatt?.connected) this.device.gatt.disconnect();
   }
   async forget() {
+    // Permanent: the host released this device's session lock and disconnect
+    // listener, so it must never reconnect through this object.
+    this.forgotten = true;
     this.credential = null;
     await this.close();
     this.device.removeEventListener(
@@ -190,6 +194,8 @@ export class WebBleGatt {
     }
   }
   async open() {
+    if (this.forgotten)
+      throw new Error("Bluetooth device was released; run connect ble again");
     await this.close();
     const epoch = this.epoch;
     this.failure = null;

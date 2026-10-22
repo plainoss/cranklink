@@ -371,3 +371,42 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
 });
+
+// The old port is already closed and unlocked when a switch fails, so it must
+// not stay selected for the next command.
+test("a failed switch to Bluetooth leaves no transport selected", async ({ page }) => {
+  await openInstrument(page);
+  const state = await page.evaluate(async () => {
+    const terminal = (window as any).estepsTerminal;
+    await terminal.run("connect sim");
+    const before = terminal.status().transport;
+    const simulatorModule = "/simulator.js";
+    const { DeviceSimulator } = await import(simulatorModule);
+    const device = new DeviceSimulator({ model: "ep800-crg" });
+    let listenerRemoved = false;
+    const remove = device.removeEventListener.bind(device);
+    device.removeEventListener = (type: string, listener: EventListener) => {
+      if (type === "gattserverdisconnected") listenerRemoved = true;
+      remove(type, listener);
+    };
+    Object.defineProperty(navigator, "bluetooth", {
+      configurable: true,
+      value: { requestDevice: async () => device },
+    });
+    // Another tab holds the Bluetooth session.
+    await new Promise<void>((held) => {
+      navigator.locks.request("cranklink-ble-session", () => {
+        held();
+        return new Promise(() => {});
+      });
+    });
+    const error = await terminal.run("connect ble").then(() => null, (e: Error) => e.message);
+    return { before, error, listenerRemoved, ...terminal.status() };
+  });
+  expect(state.before).toBe("sim");
+  expect(state.error).toContain("Another tab has an active Bluetooth session");
+  expect(state.listenerRemoved).toBe(true);
+  expect(state.transport).toBeNull();
+  expect(state.usbSelected).toBe(false);
+});
+
