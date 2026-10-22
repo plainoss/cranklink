@@ -9,10 +9,12 @@ export default defineConfig({
     timeout: 15_000,
   },
   fullyParallel: true,
+  forbidOnly: !!process.env.CI,
   workers: process.env.CI ? 4 : undefined,
   use: {
     baseURL: "http://127.0.0.1:8030",
-    trace: "on-first-retry",
+    // There are no retries, so "on-first-retry" would never record a trace.
+    trace: "retain-on-failure",
     viewport: { width: 1280, height: 840 },
   },
   projects: [
