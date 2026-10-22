@@ -11,9 +11,9 @@ Always prefer fast local tooling over slow manual loops:
 - **Fast Web Instrument Test Cycle**: When developing or testing in `web-instrument`, use the rapid iteration tiers:
   - `npm run test:fast` (<100ms): Fast domain schemas, firmware package rules, and SessionController FSM tests.
   - `npm run test:smoke` (~2s): Fast smoke E2E test verifying connect, inline staging, ordered batch commit, and rollback.
-  - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite (with automatic port 8030 cleanup).
+  - `npm run test:e2e` (~7s): Full parallel wire-level GATT simulator, auth, WebMCP, and mobile responsive test suite.
   - `npm run test:production` (~1s): Reserved for pre-push or CI to verify production build assets and `_headers` COOP/COEP isolation.
-- **E2E Port Safety**: `npm run test:e2e` automatically runs `scripts/ensure-port-free.mjs 8030` to prevent port collisions across worktrees.
+- **E2E Port Safety**: `npm run test:smoke` and `npm run test:e2e` use port 8030 and first run `scripts/ensure-port-free.mjs`, which stops only a leftover server started from this worktree's `web-instrument/` and refuses when another directory holds the port. Set `CRANKLINK_E2E_PORT=<port>` to run worktrees side by side; `CRANKLINK_E2E_REUSE=1` reuses this tree's running server.
 
 ## 3. Worktree Setup Protocol
 - When starting work in a new git worktree, if `web-instrument/node_modules` does not exist, run `npm ci` in `web-instrument/` before running web commands.

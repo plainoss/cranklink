@@ -27,6 +27,8 @@ npm run test:production   # built dist with only its _headers (COOP/COEP); needs
 
 `PLAYWRIGHT_BASE_URL` points `test:production` at a deployed preview. None of these exercise real adapters or radios.
 
+`test:smoke` and `test:e2e` start their own dev server on port 8030, or on `CRANKLINK_E2E_PORT` so worktrees can run side by side. Before starting, they stop a server left on that port from this `web-instrument/` directory, including `npm run dev`, and refuse to run when a server from anywhere else holds it. `CRANKLINK_E2E_REUSE=1` tests against this directory's running server instead; CI always starts its own.
+
 `components.spec.ts` exercises a mixed bus with levers, derailleurs, a power unit, hub actuator and display through the actual WASM client. For unchanged stock-firmware browser execution, supply local exact-hash SC-EM800 4.6.0 and MU-UR500 3.3.1 images in a JSON manifest mapping profile IDs to absolute paths:
 
 ```sh
