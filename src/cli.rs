@@ -655,15 +655,18 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         return execute_ble(cli, is_json);
     }
 
-    // Require BLE port for BLE-only operations
-    ensure!(
-        cli.passkey.is_none() && cli.passkey_file.is_none(),
-        "--passkey and --passkey-file require a Bluetooth port (--port ble:DEVICE_ID)"
-    );
-    ensure!(
-        cli.ble_master.is_none(),
-        "--ble-master requires a Bluetooth port (--port ble:DEVICE_ID)"
-    );
+    // Require BLE port for BLE-only operations. Offline commands and scans
+    // stay off BLE dispatch even with a Bluetooth port, and ignore its options.
+    if !cli.port.as_deref().is_some_and(crate::ble::is_port) {
+        ensure!(
+            cli.passkey.is_none() && cli.passkey_file.is_none(),
+            "--passkey and --passkey-file require a Bluetooth port (--port ble:DEVICE_ID)"
+        );
+        ensure!(
+            cli.ble_master.is_none(),
+            "--ble-master requires a Bluetooth port (--port ble:DEVICE_ID)"
+        );
+    }
 
     let port = cli.port;
     let slot = cli.slot;
@@ -3114,6 +3117,30 @@ mod cli_tests {
         // The hint must parse as the command it describes.
         let args = command.split(' ').collect::<Vec<_>>();
         assert!(Cli::try_parse_from(args).is_ok());
+    }
+
+    #[test]
+    fn offline_commands_accept_a_bluetooth_port_with_its_options() {
+        // Offline commands never open the port, so its passkey must not fail them.
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                "ble:AA",
+                "--passkey",
+                "123456",
+                "firmware",
+                "inspect",
+                "/nonexistent/fw.dat",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            !format!("{error:#}").contains("require a Bluetooth port"),
+            "{error:#}"
+        );
     }
 
     #[test]
