@@ -97,7 +97,7 @@ Settings writes (`set` and batches that set) and ordinary firmware flashing requ
 # Snapshot all settings
 cranklink --port usb -s <SERIAL> settings read --output settings.json
 
-# Preview a change without writing
+# Run the write's checks without writing
 cranklink --port usb -s <SERIAL> settings set profile1.boost.torque 85 --dry-run
 
 # Write it (saves a pre-write backup, then verifies by readback)

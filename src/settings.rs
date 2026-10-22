@@ -1050,29 +1050,24 @@ pub fn set(
     )
 }
 
-/// Readbacks after a hub adjustment SET while its actuator moves.
-const HUB_COMPLETION_POLLS: usize = 30;
+/// A numeric SET whose live checks passed; nothing has been written yet.
+struct NumericPlan {
+    unset: bool,
+    original: Vec<u8>,
+    payload: Vec<u8>,
+    before: Value,
+    after: Value,
+}
 
-/// Back up, issue the model-specific SET, and verify the current value by GET.
-/// The implemented setting path sends no additional generic EEPROM commit.
-/// A successful readback confirms the live value; persistence across power
-/// cycles needs a separate GET after the component restarts.
-pub fn set_for_model(
+/// Read the current record and run every live model check of a numeric SET.
+/// It sends only GETs, so `settings set --dry-run` runs the same checks.
+fn plan_numeric(
     session: &mut dyn UnitCommands,
     slot: u8,
-    name: &str,
+    s: &SettingSpec,
     value: &str,
-    backup_path: &Path,
     model: SettingsModel,
-) -> Result<ChangeReceipt> {
-    let s = spec_for_model(name, model)?;
-    validate_input(&s, value)?;
-    if s.value_type == "date" {
-        return set_date(session, slot, &s, value, backup_path);
-    }
-    if s.width == 0 {
-        return set_name(session, slot, &s, value, backup_path);
-    }
+) -> Result<NumericPlan> {
     let unset = value == "unset";
     ensure!(!unset || s.nullable, "this setting does not support unset");
     let n = if unset {
@@ -1081,11 +1076,11 @@ pub fn set_for_model(
         s.raw_value(value)?
     };
     let original = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
-    validate_model_reply(&s, &original)?;
+    validate_model_reply(s, &original)?;
     let before = s.decode(&original)?;
-    validate_current_value(model, &s, &before)?;
-    let payload = updated_payload(&s, &original, n, unset)?;
-    validate_combination(&s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
+    validate_current_value(model, s, &before)?;
+    let payload = updated_payload(s, &original, n, unset)?;
+    validate_combination(s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
     if s.name.contains(".torque") || s.name == "torque-maximum" {
         let drivetrain = session.command(slot, 0x0b, 0x84, &[0], 0x86)?;
         ensure!(drivetrain.len() >= 2, "short drivetrain reply");
@@ -1147,6 +1142,45 @@ pub fn set_for_model(
         }
     }
     let after = s.decode(&payload)?;
+    Ok(NumericPlan {
+        unset,
+        original,
+        payload,
+        before,
+        after,
+    })
+}
+
+/// Readbacks after a hub adjustment SET while its actuator moves.
+const HUB_COMPLETION_POLLS: usize = 30;
+
+/// Back up, issue the model-specific SET, and verify the current value by GET.
+/// The implemented setting path sends no additional generic EEPROM commit.
+/// A successful readback confirms the live value; persistence across power
+/// cycles needs a separate GET after the component restarts.
+pub fn set_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    backup_path: &Path,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
+    let s = spec_for_model(name, model)?;
+    validate_input(&s, value)?;
+    if s.value_type == "date" {
+        return set_date(session, slot, &s, value, backup_path);
+    }
+    if s.width == 0 {
+        return set_name(session, slot, &s, value, backup_path);
+    }
+    let NumericPlan {
+        unset,
+        original,
+        payload,
+        before,
+        after,
+    } = plan_numeric(session, slot, &s, value, model)?;
     // create_new prevents accidentally overwriting the only known original configuration.
     let mut backup = OpenOptions::new()
         .write(true)
@@ -1233,6 +1267,40 @@ pub fn set_for_model(
         backup: backup_path.display().to_string(),
         changed,
     })
+}
+
+/// Check a `set_for_model` without taking a backup or sending a SET: the same
+/// input checks and, for numeric settings, the same live GETs and model
+/// checks. Unit authentication is not exercised.
+pub fn dry_run_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    model: SettingsModel,
+) -> Result<Value> {
+    let s = spec_for_model(name, model)?;
+    validate_input(&s, value)?;
+    let mut report = json!({
+        "dry_run": true,
+        "valid": true,
+        "setting": name,
+        "planned_value": value,
+        "oem": s.oem,
+        "unit": s.unit,
+    });
+    if s.value_type == "date" || s.width == 0 {
+        // Date and name writes have no live checks beyond the current read.
+        let current = read_for_model(session, slot, name, model)?;
+        validate_current_value(model, &s, &current.value)?;
+        report["current_value"] = current.value;
+    } else {
+        let plan = plan_numeric(session, slot, &s, value, model)?;
+        report["changed"] = json!(plan.before != plan.after);
+        report["planned_parameters"] = json!(hex::encode(&plan.payload));
+        report["current_value"] = plan.before;
+    }
+    Ok(report)
 }
 
 // Read OEM destination first. FF means unset, not EU. Modern models fall back
@@ -2588,5 +2656,86 @@ mod tests {
         let s = spec("maintenance-day").unwrap();
         assert!(validate_combination(&s, &[24, 2, 29, 0]).is_ok());
         assert!(validate_combination(&s, &[25, 2, 29, 0]).is_err());
+    }
+    #[test]
+    fn dry_run_runs_the_live_checks_of_the_write_without_sending_a_set() {
+        struct Motor {
+            drivetrain: Vec<u8>,
+            profile: Vec<u8>,
+            date: Vec<u8>,
+            calls: Vec<(u8, u8)>,
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                self.calls.push((group, command));
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x16, 0xfc) => self.profile.clone(),
+                    (0x16, 0xf8) => {
+                        self.profile = params.to_vec();
+                        self.sets += 1;
+                        vec![]
+                    }
+                    (0x0b, 0x84) => self.drivetrain.clone(),
+                    (0x17, 0x1c) => vec![20, 85],
+                    (0x48, 0x54) => self.date.clone(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x} {params:02x?}"),
+                })
+            }
+        }
+        let motor = |drivetrain: Vec<u8>| Motor {
+            drivetrain,
+            profile: vec![2, 3, 70, 6, 3, 0, 0],
+            date: vec![25, 2, 10, 0],
+            calls: vec![],
+            sets: 0,
+        };
+        let dry_run = |motor: &mut Motor, name, value| {
+            dry_run_for_model(motor, 13, name, value, SettingsModel::Ep800Crg)
+        };
+
+        // An internal gear hub with eight speeds caps torque at 50 Nm.
+        let mut hub = motor(vec![3, 8]);
+        let error = dry_run(&mut hub, "profile1.boost.torque", "85").unwrap_err();
+        assert!(error.to_string().contains("50 Nm"), "{error:#}");
+        // February has no 30th.
+        let error = dry_run(&mut hub, "maintenance-day", "30").unwrap_err();
+        assert!(format!("{error:#}").contains("invalid setting combination"));
+
+        let mut chain = motor(vec![0, 12]);
+        let report = dry_run(&mut chain, "profile1.boost.torque", "85").unwrap();
+        assert_eq!(report["valid"], true);
+        assert_eq!(report["current_value"], 70);
+        assert_eq!(report["planned_parameters"], "02035506030000");
+        assert_eq!(report["changed"], true);
+        let checked = std::mem::take(&mut chain.calls);
+        assert_eq!(checked, [(0x16, 0xfc), (0x0b, 0x84), (0x17, 0x1c)]);
+        // The write sends the same GETs, then reads the serial for its backup.
+        let backup = std::env::temp_dir().join(format!(
+            "cranklink-dry-run-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        set_for_model(
+            &mut chain,
+            13,
+            "profile1.boost.torque",
+            "85",
+            &backup,
+            SettingsModel::Ep800Crg,
+        )
+        .unwrap();
+        std::fs::remove_file(&backup).unwrap();
+        assert_eq!(chain.calls[..checked.len()], checked);
+        assert_eq!(chain.calls[checked.len()], (1, 0x3c));
+        assert_eq!((hub.sets, chain.sets), (0, 1));
     }
 }

@@ -332,7 +332,7 @@ enum SettingsCommand {
         /// Pre-write backup path (auto-generated if omitted)
         #[arg(long)]
         backup: Option<PathBuf>,
-        /// Validate schema, bounds, and permissions without writing to EEPROM
+        /// Run the write's input and live checks without writing (no unit authentication)
         #[arg(long)]
         dry_run: bool,
     },
@@ -818,11 +818,11 @@ pub fn execute(args: Vec<String>) -> Result<()> {
 
                     let model = resolve_settings_model(&mut s, &id)?;
                     validate_settings_preflight(&command, model, &motor_serial)?;
+                    ensure!(
+                        !(no_auth && write_requires_unit_auth(&command, model, unit_auth)),
+                        "setting requires drive-unit authentication, but --no-auth was specified"
+                    );
                     if command_requires_unit_auth(&command, model, unit_auth) {
-                        ensure!(
-                            !no_auth,
-                            "setting requires drive-unit authentication, but --no-auth was specified"
-                        );
                         let _receipt = s.authenticate_unit_settings(&motor_serial)?;
                     }
 
@@ -1959,11 +1959,11 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
                 validate_settings_preflight(&command, model, &serial)?;
+                ensure!(
+                    !(cli.no_auth && write_requires_unit_auth(&command, model, cli.unit_auth)),
+                    "setting requires drive-unit authentication, but --no-auth was specified"
+                );
                 if command_requires_unit_auth(&command, model, cli.unit_auth) {
-                    ensure!(
-                        !cli.no_auth,
-                        "setting requires drive-unit authentication, but --no-auth was specified"
-                    );
                     let _receipt = session.authenticate_unit_settings(&serial)?;
                 }
                 let mut val = execute_settings(&mut session, &id, &command)?;
@@ -2659,9 +2659,17 @@ fn command_requires_unit_auth(
     model: crate::settings::SettingsModel,
     explicit_unit_auth: bool,
 ) -> bool {
-    if matches!(command, SettingsCommand::Set { dry_run: true, .. }) {
-        return false;
-    }
+    !matches!(command, SettingsCommand::Set { dry_run: true, .. })
+        && write_requires_unit_auth(command, model, explicit_unit_auth)
+}
+
+/// Whether the write `command` runs, or a dry run previews, needs drive-unit
+/// authentication; a dry run skips it but refuses `--no-auth` as the write does.
+fn write_requires_unit_auth(
+    command: &SettingsCommand,
+    model: crate::settings::SettingsModel,
+    explicit_unit_auth: bool,
+) -> bool {
     if explicit_unit_auth {
         return true;
     }
@@ -2672,11 +2680,7 @@ fn command_requires_unit_auth(
             .any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
     };
     match command {
-        SettingsCommand::Set {
-            name,
-            dry_run: false,
-            ..
-        } => is_oem_setting(name),
+        SettingsCommand::Set { name, .. } => is_oem_setting(name),
         SettingsCommand::Restore {
             parsed: Some(parsed),
             ..
@@ -2856,23 +2860,7 @@ fn execute_settings(
             dry_run,
         } => {
             if *dry_run {
-                let specs = crate::settings::schema_for_model(model);
-                let spec = specs
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| anyhow::anyhow!("unknown setting: {name}"))?;
-                crate::settings::validate_input(spec, value)?;
-                let current = crate::settings::read_for_model(session, id.slot, name, model)?;
-                crate::settings::validate_current_value(model, spec, &current.value)?;
-                return Ok(serde_json::json!({
-                    "dry_run": true,
-                    "valid": true,
-                    "setting": name,
-                    "current_value": current.value,
-                    "planned_value": value,
-                    "oem": spec.oem,
-                    "unit": spec.unit,
-                }));
+                return crate::settings::dry_run_for_model(session, id.slot, name, value, model);
             }
             let backup_path = backup.clone().unwrap_or_else(|| {
                 PathBuf::from(format!(
@@ -4869,6 +4857,8 @@ mod cli_tests {
         assert_eq!(dry_decision.route, "normal");
         assert!(dry_decision.reason.contains("dry-run"));
         assert!(!command_requires_unit_auth(&dry_run_cmd, model, true));
+        // The dry run still refuses --no-auth where the write would.
+        assert!(write_requires_unit_auth(&dry_run_cmd, model, false));
         assert_eq!(plan_ble_routing(None, &Command::Probe).route, "normal");
         assert_eq!(plan_ble_routing(None, &Command::Units).route, "normal");
     }

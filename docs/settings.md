@@ -54,6 +54,7 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 ## Backups and restore
 
 - `set` and batches containing a `set` require `-s <SERIAL>`, checked before connecting; `--dry-run`, reads and restores do not.
+- `set --dry-run` reads the device and runs the same checks as the write (destination limits, OEM torque bounds, drivetrain, calendar), then reports the current value and, for numeric fields, the `planned_parameters` the SET would send and whether it would change the value (`changed`). It takes no backup, sends no SET and skips unit authentication, but refuses `--no-auth` for a protected setting as the write does.
 - Every `set` writes a new backup file (component serial, original value, planned value) before sending, then verifies by readback. Component backups also record the settings model. Backup files are never overwritten.
 - Destination, assist-profile, profile-display and maximum-power replies must echo the requested record selector; a reply for another record is refused before the backup, and the SET always names the requested record.
 - `restore` takes such a backup, checks the serial, and writes a new backup of the current value first.
