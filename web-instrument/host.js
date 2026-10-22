@@ -11,10 +11,12 @@ export function configure(shared) {
     simulatorFlag = new Int32Array(shared.simulator);
   }
 }
+// Rust imports host_call with `catch` and reads string errors via as_string();
+// throwing Error objects would surface as JsValue debug text with a JS stack.
 export function host_call(op, payload, timeout) {
   if (poisoned)
-    throw new Error("Browser host failed; reload before another command");
-  if (!control) throw new Error("Worker host is not initialized");
+    throw "Browser host failed; reload before another command";
+  if (!control) throw "Worker host is not initialized";
   const id = ++sequence;
   Atomics.store(control, 3, id);
   Atomics.store(control, 0, 0);
@@ -30,16 +32,14 @@ export function host_call(op, payload, timeout) {
       poisoned = true;
       Atomics.compareExchange(control, 0, 0, 2);
       postMessage({ type: "host-failed", op });
-      throw new Error(
-        `Browser host timed out: ${op}; outcome may be uncertain. Reload before another command.`,
-      );
+      throw `Browser host timed out: ${op}; outcome may be uncertain. Reload before another command.`;
     }
     Atomics.wait(control, 0, state, remaining);
   }
   const length = Atomics.load(control, 2);
   const response = buffer.slice(0, length);
   if (Atomics.load(control, 1) !== 0)
-    throw new Error(new TextDecoder().decode(response));
+    throw new TextDecoder().decode(response);
   return response;
 }
 export function host_emit(stream, text) {

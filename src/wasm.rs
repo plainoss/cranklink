@@ -1,5 +1,6 @@
 //! The browser runs the same synchronous CLI in a dedicated worker. Host RPC
-//! bridges WebUSB and durable browser files; no firmware logic lives in JS.
+//! bridges WebUSB, Web Serial, Web Bluetooth and durable browser files; no
+//! firmware logic lives in JS.
 use wasm_bindgen::prelude::*;
 thread_local! {
     static BLE_SESSION: std::cell::RefCell<Option<crate::ble::BleSession>> = const { std::cell::RefCell::new(None) };
