@@ -36,8 +36,13 @@ jobs:
         run: node --test .github/scripts/prepare-rolling-release.test.cjs
       - uses: dtolnay/rust-toolchain@1.90.0
         if: steps.filter.outputs.has_changes == 'true'
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         if: steps.filter.outputs.has_changes == 'true'
+      - name: Check Rust formatting
+        if: steps.filter.outputs.has_changes == 'true'
+        run: cargo fmt --all --check
       - name: Test USB-only CLI and core
         if: steps.filter.outputs.has_changes == 'true'
         run: cargo test --locked --no-default-features --lib --bin cranklink
