@@ -97,6 +97,7 @@ cranklink --port usb probe     # drive unit model, serial, firmware versions
 Drive Unit Probe:
   Model:       DU-EP800-CRG (Slot 13)
   Serial:      010203040506
+  Cargo ID:    00-CRG
   DCAS (D):    v4.2.0.0
   Renesas (M): v4.1.11.0
 ```
