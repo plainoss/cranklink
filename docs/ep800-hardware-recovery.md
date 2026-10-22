@@ -58,17 +58,21 @@ The large connector on the reverse side links the two boards.
 With battery and USB disconnected, position the contacts on the connector
 board. The adaptor supplies power for recovery; no battery is needed.
 
-![Power and signal points for the temporary 20 ohm bridge](images/ep800-recovery/bridge-location-labelled.png)
+![VCC 3.3 V and SPI MISO points for the temporary 20 ohm bridge](images/ep800-recovery/bridge-location-labelled.png)
 
 With the **SHIMANO lettering upright**:
 
 | Point | Where to connect |
 |---|---|
-| **Power point** | The marked exposed via just left of the Shimano chip's lower-left corner, above the left of the two large ceramic capacitors. |
-| **Signal point** | The marked right-hand solder pad of the lower small horizontal component beneath the upper-right small chip. |
+| **VCC 3.3 V** | The marked exposed via just left of the Shimano chip's lower-left corner, above the left of the two large ceramic capacitors. |
+| **SPI MISO** | The marked right-hand solder pad of the lower small horizontal component beneath the upper-right small chip. |
+
+SPI MISO runs from the Renesas MCU's pin 45 (P22/MISOA), through the VC07A
+buffer (input pin 1 → output pin 2) and a 100 Ω resistor, to the Shimano chip.
+The marked signal point is on the Shimano side of that resistor.
 
 ```text
-Marked power point ── 20 ohm resistor ── Marked signal point
+VCC 3.3 V ── 20 ohm resistor ── SPI MISO
 ```
 
 Use the resistor, not a direct wire. **20 ohms worked on this board; confirm your
