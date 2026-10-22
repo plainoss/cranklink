@@ -23,7 +23,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev -- --host 0.0.0.0 --port 8030",
+    // Loopback only: the dev server serves every file under web-instrument/.
+    command: "npm run dev -- --host 127.0.0.1 --port 8030 --strictPort",
     url: "http://127.0.0.1:8030",
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

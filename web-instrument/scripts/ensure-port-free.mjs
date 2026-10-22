@@ -24,7 +24,9 @@ const inUse = await checkPort(port);
 if (inUse) {
   console.log(`[pretest] Port ${port} is currently occupied. Terminating stale process...`);
   try {
-    const pids = execSync(`lsof -ti :${port}`, { encoding: "utf8" }).trim();
+    // Only the listening server: `lsof -ti :PORT` also lists processes that are
+    // merely connected to it, such as a browser or another run's Chromium.
+    const pids = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: "utf8" }).trim();
     if (pids) {
       for (const pid of pids.split(/\s+/)) {
         try {
