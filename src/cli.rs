@@ -1387,6 +1387,8 @@ fn execute_firmware_command(
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
                     jnl.record("dry-run-complete", &after)?;
+                    // Predict the write: it refuses a retry-capable bootloader without the flag.
+                    crate::rx::validate_fast_capabilities(&rx, allow_unverified_model)?;
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- RX Bootloader: Verified ({}, Sequence {})",

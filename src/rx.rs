@@ -255,7 +255,7 @@ fn fast_transfer_reply(frame: &Frame, slot: u8, response: u8, packet_id: u8) -> 
         && frame.payload[3] == packet_id
 }
 
-fn validate_fast_capabilities(boot: &Boot, allow_unverified_model: bool) -> Result<()> {
+pub(crate) fn validate_fast_capabilities(boot: &Boot, allow_unverified_model: bool) -> Result<()> {
     ensure!(
         !boot.retry_capable || allow_unverified_model,
         "retry-capable RX fast bootloader is not hardware validated; refusing before erase (pass --allow-unverified-model to authorize)"
