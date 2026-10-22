@@ -457,8 +457,11 @@ export class SessionController {
     this.startOperation({ phase: "reading", statusMessage: `Reading ${unit.model || `component at slot ${unit.slot}`}…` });
     try {
       const target = `--slot ${unit.slot} ${unit.model ? `--component ${shellQuote(unit.model)} ` : ""}`;
-      const modern = isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
-      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${modern ? "--ble-unit-auth " : ""}settings read`);
+      // As in buildSessionFlags: only Bluetooth reads of a modern motor authenticate;
+      // wired reads never needed it, and a failed handshake would hide the motor.
+      const unitAuth = (transport === "ble" || transport === "sim")
+        && isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
+      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${unitAuth ? "--ble-unit-auth " : ""}settings read`);
       if (result.code !== 0) throw new Error(result.stderr || "Component settings read failed.");
       const snapshot = this.extractLastJsonObject(result.stdout);
       const identity = this.parseIdentity(snapshot?.identity);

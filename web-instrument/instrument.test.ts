@@ -603,6 +603,40 @@ describe("BLE initial settings connection", () => {
     }
   });
 
+  it("authenticates a modern motor's first read only over Bluetooth, as later reads do", async () => {
+    (globalThis as any).window = globalThis;
+    for (const [transport, prefix, auth] of [["usb", "", ""], ["serial", "", ""], ["ble", "--ble-master=master ", "--ble-unit-auth "]] as const) {
+      const controller = new SessionController();
+      const reads: string[] = [];
+      controller.attachTerminal({
+        setPasskeyPrompt: () => {},
+        status: () => ({ ready: true, busy: false, usbSelected: true, transport }),
+        files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+        run: async (line: string) => {
+          const print = (globalThis as any).estepsTerminalPrint;
+          if (line === `connect ${transport}`) return { code: 0 };
+          if (line === `${prefix}units`) {
+            print(JSON.stringify({ units: [{ slot: 13, model_series: 0x35, model_unit: 0, model: null, model_candidates: [] }] }), "stdout");
+            return { code: 0 };
+          }
+          if (line.startsWith("settings schema")) {
+            print(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep801.json"), "utf8"), "stdout");
+            return { code: 0 };
+          }
+          assert.match(line, /settings read$/);
+          reads.push(line);
+          print(JSON.stringify({
+            identity: { slot: 13, cargo: "01", serial: "010203040506", model_series: 0x35, model_unit: 0, dcas_version: "4.7.1.0", rx_version: "4.7.1.0" },
+            values: {}, unavailable: {},
+          }), "stdout");
+          return { code: 0 };
+        },
+      });
+      assert.equal((await controller.connectAndSync(transport))?.modelSlug, "ep801");
+      assert.deepEqual(reads, [`${prefix}--slot 13 ${auth}settings read`]);
+    }
+  });
+
   it("loads actual older motor schemas without EP8 speed or profile defaults", async () => {
     (globalThis as any).window = globalThis;
     for (const [series, slug, model, count] of [
