@@ -170,7 +170,7 @@ struct Cli {
         visible_aliases = ["expect-motor-serial", "ble-expect-serial"],
         global = true,
         help_heading = "Target Verification",
-        help = "Require this 12-hex-digit motor serial (auto-sanitized from colons/hyphens)"
+        help = "Require this 12-hex-digit unit serial from probe (auto-sanitized from colons/hyphens)"
     )]
     expect_serial: Option<String>,
 
@@ -278,7 +278,7 @@ enum Command {
     },
     /// Inventory connected E-TUBE bus components (motor, display, shifter)
     Units,
-    /// Probe active drive unit (model, serial, MCU firmware versions)
+    /// Probe the drive unit, or the component chosen with --component/--slot (model, serial, firmware versions)
     Probe,
     /// Persistent interactive JSON-RPC session driver for AI agents & test runners
     Session,
@@ -2667,6 +2667,14 @@ fn print_probe_card(
         cargo_bytes.push(0);
     }
     let model_candidates = crate::unit_models::candidates(model_series, model_unit, None, None);
+    // Component sessions report their resolved catalog model in `cargo`.
+    if model_candidates.contains(&cargo) {
+        out_println!("Component Probe:");
+        out_println!("  Model:       {} (Slot {})", cargo, slot);
+        out_println!("  Serial:      {}", serial);
+        out_println!("  Application: v{}", dcas_version.trim_start_matches('v'));
+        return;
+    }
     let resolved = crate::unit_models::identify(model_series, model_unit, None, Some(&cargo_bytes));
     let model_name = if let Some(m) = resolved {
         m.to_string()
