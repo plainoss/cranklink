@@ -173,8 +173,16 @@ async function rpc(message) {
   Atomics.notify(control, 0);
 }
 async function complete(code, error) {
+  // Persist the command's traces and journals even when closing the port fails.
+  if (error && port) {
+    try {
+      await port.close();
+    } catch (e) {
+      code = 1;
+      print(`Port close failed: ${e.message}\n`, "stderr");
+    }
+  }
   try {
-    if (error && port) await port.close();
     await files.syncAll();
   } catch (e) {
     code = 1;
