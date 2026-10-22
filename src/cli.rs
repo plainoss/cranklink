@@ -864,17 +864,30 @@ fn recovery_command(
     companion: &Path,
     allow_unverified_model: bool,
 ) -> String {
+    // Single-quote anything a shell would split or expand (Windows paths with
+    // spaces are common); POSIX shells and PowerShell both accept this form.
+    fn quote(value: &str) -> String {
+        if !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_./:\\".contains(c))
+        {
+            value.to_string()
+        } else {
+            format!("'{}'", value.replace('\'', "'\\''"))
+        }
+    }
     let mut command = String::from("cranklink");
     if let Some(port) = port {
-        command.push_str(&format!(" --port {port}"));
+        command.push_str(&format!(" --port {}", quote(port)));
     }
     if let Some(slot) = slot {
         command.push_str(&format!(" --slot {slot}"));
     }
     command.push_str(&format!(
         " -s {serial} firmware flash {target} {} --companion {} --recovery --write",
-        file.display(),
-        companion.display()
+        quote(&file.display().to_string()),
+        quote(&companion.display().to_string())
     ));
     if allow_unverified_model {
         command.push_str(" --allow-unverified-model");
@@ -3144,9 +3157,38 @@ mod cli_tests {
             command,
             "cranklink -s 010203040506 firmware flash rx M.dat --companion D.dat --recovery --write"
         );
-        // The hint must parse as the command it describes.
-        let args = command.split(' ').collect::<Vec<_>>();
-        assert!(Cli::try_parse_from(args).is_ok());
+        let spaced = recovery_command(
+            "dcas",
+            Some("COM3"),
+            Some(13),
+            "010203040506",
+            Path::new("C:\\Users\\First Last\\D's.dat"),
+            m,
+            true,
+        );
+        assert!(
+            spaced.contains("'C:\\Users\\First Last\\D'\\''s.dat'"),
+            "{spaced}"
+        );
+        // Every hint must parse, as a POSIX shell splits it, into the command it describes.
+        fn shell_split(line: &str) -> Vec<String> {
+            let (mut args, mut current, mut quoted, mut chars) =
+                (Vec::new(), String::new(), false, line.chars().peekable());
+            while let Some(c) = chars.next() {
+                match c {
+                    '\'' => quoted = !quoted,
+                    '\\' if !quoted => current.extend(chars.next()),
+                    ' ' if !quoted => args.push(std::mem::take(&mut current)),
+                    _ => current.push(c),
+                }
+            }
+            args.push(current);
+            args
+        }
+        for line in [command, spaced] {
+            let cli = Cli::try_parse_from(shell_split(&line)).unwrap();
+            assert!(matches!(cli.command, Command::Firmware { .. }), "{line}");
+        }
     }
 
     #[test]
