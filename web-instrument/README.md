@@ -4,7 +4,7 @@ User-facing usage is in the [main README](../README.md#web-app).
 
 ## Build
 
-Requires Node.js 22. From `web-instrument/`:
+Requires Node.js 22.12 or later and Python 3. From `web-instrument/`:
 
 ```sh
 npm ci
@@ -12,7 +12,7 @@ npm run build:cloudflare   # pinned Rust toolchain -> WASM core -> dist/
 npm run dev                # dev server, includes a hardware simulator
 ```
 
-On macOS, install wasm-bindgen first: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. After Rust changes, rerun `build:cloudflare`. After changing a motor settings table, run `node --experimental-strip-types tools/sync-schemas.ts` from the repository root to regenerate `schemas/`; `cargo test` fails while they differ. The dev simulator (Bluetooth gateway and drive unit, with optional Di2 components and fault injection) is omitted from production builds.
+`build:cloudflare` installs rustup if it is missing, without editing your shell profile, then the pinned Rust 1.90.0 toolchain with the wasm32 target; by default rustup keeps its tools in `~/.cargo` and its toolchains in `~/.rustup`. On Linux x86_64 it downloads a checksummed wasm-bindgen 0.2.129 into `~/.cache/cranklink-build`; on any other host, install it first: `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. It then runs `npm ci`, the unit tests, the production build and a Python asset check. After Rust changes, rerun `build:cloudflare`. After changing a motor settings table, run `node --experimental-strip-types tools/sync-schemas.ts` from the repository root to regenerate `schemas/`; `cargo test` fails while they differ. The dev simulator (Bluetooth gateway and drive unit, with optional Di2 components and fault injection) is omitted from production builds.
 
 The UI inventories the bus and loads the selected component's schema from the Rust core. Motor schemas retain their curated tuning views; nonmotor components use schema-based controls with read-only guards. Saves and restores carry the selected slot, model and serial. Inventory refresh and target changes are blocked while edits are staged or operations are running. Bluetooth connection help covers both STEPS power/button windows and Di2 function/Junction A buttons.
 
