@@ -267,10 +267,8 @@ pub fn available_ports() -> Result<Vec<PortInfo>> {
                 devices.len()
             ),
         }),
-        Err(error) => ports.push(PortInfo {
-            port_name: "usb".into(),
-            port_type: format!("Direct USB enumeration unavailable: {error:#}"),
-        }),
+        // Not a port: report it without listing a "usb" adapter that does not exist.
+        Err(error) => notice(&format!("Direct USB enumeration unavailable: {error:#}")),
     }
     Ok(ports)
 }
