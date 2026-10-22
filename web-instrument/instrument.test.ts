@@ -9,6 +9,7 @@ import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
+  shellQuote,
 } from "./src/domain/firmwarePackage.ts";
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
 import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
@@ -357,6 +358,25 @@ describe("Firmware image import", () => {
     // The firmware view ignores the rejection, so the banner must say it.
     assert.equal(controller.getState().failure?.kind, "firmware");
     assert.deepEqual(commands, []);
+  });
+
+  it("quotes a file name that contains an apostrophe", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    // The terminal parser reads 'a'\''b' as the single argument a'b.
+    assert.equal(shellQuote("a'b"), "'a'\\''b'");
+    await controller.importFirmwarePackageFiles([new File([new Uint8Array([1])], "Bob's DUEP800-D.dat")]);
+    assert.deepEqual(commands, ["firmware inspect 'Bob'\\''s DUEP800-D.dat'"]);
   });
 });
 

@@ -124,7 +124,8 @@ export interface SyncFlashPlan {
   journalFiles: string[];
 }
 
-function shellQuote(s: string): string {
+/** Quotes one argument for the terminal's shell-like command parser. */
+export function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
 }
 

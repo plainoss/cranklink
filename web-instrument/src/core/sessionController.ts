@@ -27,6 +27,7 @@ import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
+  shellQuote,
 } from "../domain/firmwarePackage.ts";
 import {
   detectPlatform,
@@ -440,7 +441,7 @@ export class SessionController {
     const transport = this.state.transport!;
     this.startOperation({ phase: "reading", statusMessage: `Reading ${unit.model || `component at slot ${unit.slot}`}…` });
     try {
-      const target = `--slot ${unit.slot} ${unit.model ? `--component '${unit.model}' ` : ""}`;
+      const target = `--slot ${unit.slot} ${unit.model ? `--component ${shellQuote(unit.model)} ` : ""}`;
       const modern = isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
       const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${modern ? "--ble-unit-auth " : ""}settings read`);
       if (result.code !== 0) throw new Error(result.stderr || "Component settings read failed.");
@@ -492,7 +493,7 @@ export class SessionController {
         // Offline schema queries use the same Rust model gate as live reads.
       }
     }
-    const schemaRes = await this.exec(`settings schema --model '${modelSlug}'`);
+    const schemaRes = await this.exec(`settings schema --model ${shellQuote(modelSlug)}`);
     if (schemaRes.code === 0) {
       const arr = JSON.parse(schemaRes.stdout);
       return enrichSchema(arr, modelSlug);
@@ -578,7 +579,7 @@ export class SessionController {
     requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    const component = identity.isMotor ? "" : `--component '${identity.model}' `;
+    const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
     const target = `--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
@@ -750,7 +751,7 @@ export class SessionController {
 
       const flags = this.buildSessionFlags(transport, identity, true);
       const batchRes = await this.exec(
-        `${flags}settings batch '${planFile}' --backup-prefix '${backupPrefix}'`,
+        `${flags}settings batch ${shellQuote(planFile)} --backup-prefix ${shellQuote(backupPrefix)}`,
       );
 
       if (batchRes.code !== 0) {
@@ -816,7 +817,7 @@ export class SessionController {
     try {
       const filename = `snapshot_${identity.modelSlug}_${identity.serial}_${fileStamp()}.json`;
       const flags = this.buildSessionFlags(transport, identity, false);
-      const res = await this.exec(`${flags}settings read --output '${filename}'`);
+      const res = await this.exec(`${flags}settings read --output ${shellQuote(filename)}`);
       if (res.code !== 0) {
         throw new Error(res.stderr || `Snapshot failed (${res.code})`);
       }
@@ -871,7 +872,7 @@ export class SessionController {
         new TextEncoder().encode(JSON.stringify(filenames.map((file) => ({ op: "restore", file })), null, 2)),
       );
       const flags = this.buildSessionFlags(transport, identity, true);
-      const res = await this.exec(`${flags}settings batch '${planFile}' --backup-prefix '${backupPrefix}'`);
+      const res = await this.exec(`${flags}settings batch ${shellQuote(planFile)} --backup-prefix ${shellQuote(backupPrefix)}`);
       if (res.code !== 0) {
         throw new Error(res.stderr || `Restore failed (${res.code})`);
       }
@@ -998,7 +999,7 @@ export class SessionController {
         throw new Error(error);
       }
 
-      const inspectRes = await this.exec(`firmware inspect '${filename}'`);
+      const inspectRes = await this.exec(`firmware inspect ${shellQuote(filename)}`);
       let metadata = null;
       let inspectErr: string | undefined;
       if (inspectRes.code === 0) {
@@ -1032,7 +1033,7 @@ export class SessionController {
     let companionEval = evaluateCompanionPair(dcasFile, rxFile);
     if (dcasFile && rxFile && !dcasFile.error && !rxFile.error) {
       const pairCheck = await this.exec(
-        `firmware inspect '${dcasFile.filename}' --companion '${rxFile.filename}'`,
+        `firmware inspect ${shellQuote(dcasFile.filename)} --companion ${shellQuote(rxFile.filename)}`,
       );
       if (pairCheck.code !== 0) {
         companionEval = {
@@ -1123,7 +1124,7 @@ export class SessionController {
   }
 
   public downloadVirtualFile(filename: string): void {
-    this.exec(`download '${filename}'`).catch(() => {});
+    this.exec(`download ${shellQuote(filename)}`).catch(() => {});
   }
 
   public async runRawCommand(cmd: string): Promise<void> {
