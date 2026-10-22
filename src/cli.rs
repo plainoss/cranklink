@@ -1982,7 +1982,11 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         )?;
 
         let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
-        let rx_boot = link.enter_rx()?;
+        // enter_rx resets a refusing RX bootloader; also restore normal routing.
+        let rx_boot = match link.enter_rx() {
+            Ok(boot) => boot,
+            Err(e) => return finish_operation(Err(e), link.application_return()),
+        };
         jnl.record("rx-boot-before", &rx_boot)?;
         link.reset_rx()?;
         link.application_return()?;
@@ -2079,12 +2083,21 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         } else {
             session.motor_firmware_with_policy(&serial, allow_model)?
         };
-        let boot = link.enter_rx()?;
-        ensure!(
-            boot.version == rx_boot.version
-                && boot.capability_sequence == rx_boot.capability_sequence,
-            "RX boot capability changed before erase"
-        );
+        let boot = match link.enter_rx() {
+            Ok(boot) => boot,
+            Err(e) => return finish_operation(Err(e), link.application_return()),
+        };
+        if boot.version != rx_boot.version
+            || boot.capability_sequence != rx_boot.capability_sequence
+        {
+            // Nothing in M is erased yet; return RX and the gateway to the
+            // application before reporting.
+            let cleanup = link.reset_rx().and_then(|()| link.application_return());
+            return finish_operation(
+                Err(anyhow::anyhow!("RX boot capability changed before erase")),
+                cleanup,
+            );
+        }
         jnl.record("rx-destructive-start", &m.metadata)?;
         let receipt = link.flash_rx(&m, boot, progress_reporter())?;
         jnl.record("rx-finish-and-reset", &receipt)?;
