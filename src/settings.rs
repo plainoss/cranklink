@@ -1179,11 +1179,13 @@ pub fn set_for_model(
                 "shared setting bits changed unexpectedly"
             );
         }
-        // Unsetting any calendar component clears the whole date tuple.
+        // Unsetting any calendar component clears the whole date; like decode()
+        // and restore_date, only year, month and day (bytes 0..3) are meaningful.
         let calendar_unset = unset && s.group == 0x48 && s.set == 0x50;
         if calendar_unset {
             ensure!(
-                got.len() >= payload.len() && got[..payload.len()].iter().all(|&b| b == 0xff),
+                got.get(..3)
+                    .is_some_and(|date| date.iter().all(|&b| b == 0xff)),
                 "maintenance calendar did not clear; original preserved in {}",
                 backup_path.display()
             );
@@ -2221,6 +2223,7 @@ mod tests {
     fn unsetting_any_calendar_component_clears_the_date() {
         struct Calendar {
             date: Vec<u8>,
+            reserved_reads_zero: bool,
         }
         impl UnitCommands for Calendar {
             fn command(
@@ -2235,6 +2238,9 @@ mod tests {
                     (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
                     (0x48, 0x50) => {
                         self.date = params.to_vec();
+                        if self.reserved_reads_zero {
+                            self.date[3] = 0;
+                        }
                         vec![]
                     }
                     (0x48, _) => self.date.clone(),
@@ -2242,12 +2248,22 @@ mod tests {
                 })
             }
         }
-        for name in ["maintenance-year", "maintenance-month", "maintenance-day"] {
+        for (case, (name, reserved_reads_zero)) in [
+            ("maintenance-year", false),
+            ("maintenance-month", false),
+            ("maintenance-day", false),
+            // Byte 3 is not part of the date; firmware need not echo it as FF.
+            ("maintenance-day", true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut calendar = Calendar {
                 date: vec![24, 5, 10, 0],
+                reserved_reads_zero,
             };
             let backup = std::env::temp_dir().join(format!(
-                "cranklink-calendar-{name}-{}-{}.json",
+                "cranklink-calendar-{case}-{name}-{}-{}.json",
                 std::process::id(),
                 crate::platform::now_ms()
             ));
@@ -2261,7 +2277,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(receipt.after, Value::Null, "{name}");
-            assert_eq!(calendar.date, [255; 4], "{name}");
+            assert_eq!(calendar.date[..3], [255; 3], "{name}");
             std::fs::remove_file(backup).unwrap();
         }
     }
