@@ -311,12 +311,20 @@ impl BleSession {
             return Ok(());
         }
         if let Some(f) = &mut self.trace {
-            writeln!(
+            let written = writeln!(
                 f,
                 "{}",
                 serde_json::json!({"time_ms":crate::platform::now_ms(),"transport":"ble","direction":direction,"characteristic":uuid(id),"bytes":hex::encode(bytes)})
-            )?;
-            f.flush()?;
+            )
+            .and_then(|()| f.flush());
+            // Tracing is diagnostic: a failed write must not abort a relay
+            // transfer mid-image or drop a notification already received.
+            if let Err(error) = written {
+                self.trace = None;
+                crate::platform::notice(&format!(
+                    "Bluetooth trace disabled after a write failure: {error:#}"
+                ));
+            }
         }
         Ok(())
     }
@@ -1855,6 +1863,15 @@ pub(crate) mod tests {
                 && (bytes[1] == 0x32 || matches!((bytes[1], bytes[2]), (1, 0x84 | 0xc0)))
         }));
         session.stop().unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_trace_writes_disable_the_trace_without_failing_the_command() {
+        let (mut session, _) = mock();
+        // Every write to /dev/full fails with ENOSPC.
+        session.trace = Some(OpenOptions::new().append(true).open("/dev/full").unwrap());
+        session.log("tx", PCE_COMMAND, &[0, 4]).unwrap();
+        assert!(session.trace.is_none());
     }
     #[test]
     fn browser_command_trace_replacement_is_atomic_and_redacts_credentials() {
