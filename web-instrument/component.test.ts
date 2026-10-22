@@ -430,8 +430,13 @@ describe("Agent write review boundaries", () => {
     const pending = request(serverFor(h.controller));
     const identity = h.controller.getState().identity!;
     assert.deepEqual(h.controller.getState().mcpApproval?.target, { model: LEVER, slot: 4, serial: identity.serial });
-    await h.controller.disconnect();
+    const disconnecting = h.controller.disconnect();
+    // Authorizing, or a new request, while the disconnect runs must not queue a write behind it.
+    h.controller.respondMcpApproval(true);
+    const late = request(serverFor(h.controller));
+    await disconnecting;
     await assert.rejects(pending, /rejected by operator/);
+    await assert.rejects(late);
     assert.equal(h.controller.getState().mcpApproval, null);
     assert.ok(!h.commands.some((line) => line.includes("settings batch")));
   });

@@ -71,6 +71,8 @@ export class SessionController {
   private pendingPasskey: ((value: string | null) => void) | null = null;
   private syncInProgress: Promise<DeviceIdentity | null> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
+  /** True while disconnect() runs; agent reviews are refused until it settles. */
+  private disconnecting = false;
 
   constructor() {
     this.state = {
@@ -582,6 +584,10 @@ export class SessionController {
 
   public async disconnect(): Promise<void> {
     let cleanupError: string | null = null;
+    this.disconnecting = true;
+    // Refuse the review now: approving it while the disconnect runs would
+    // queue the write behind it.
+    this.state.mcpApproval?.resolve(false);
     try {
       if (this.terminal) {
         const result = await this.exec("disconnect");
@@ -593,6 +599,7 @@ export class SessionController {
       cleanupError = err?.message || String(err);
       throw err;
     } finally {
+      this.disconnecting = false;
       this.speedDestinationBeforeAuto = null;
       // A review shown for this session must not authorize a write in the next one.
       this.state.mcpApproval?.resolve(false);
@@ -1113,7 +1120,7 @@ export class SessionController {
   ): Promise<boolean> {
     return new Promise((resolve, reject) => {
       const identity = this.state.identity;
-      if (!identity) {
+      if (!identity || this.disconnecting) {
         reject(new Error("Select a connected component first."));
         return;
       }
