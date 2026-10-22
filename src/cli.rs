@@ -3130,6 +3130,63 @@ mod cli_tests {
     }
 
     #[test]
+    fn ble_pair_dry_run_needs_the_opt_in_for_unverified_models() {
+        // Synthetic plaintext EP600 (30/00) D and M images; refused offline.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x44, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x30, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x44, 0, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x44, 0, 0, 1]);
+        m[14..19].copy_from_slice(&[0x30, 0, 0x44, 0, 0]);
+        m[126..].copy_from_slice(b"et");
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-ble-pair-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        let args = |extra: &[&str]| {
+            let mut args = vec![
+                "cranklink".to_string(),
+                "--port".into(),
+                "ble:any".into(),
+                "-s".into(),
+                "010203040506".into(),
+                "firmware".into(),
+                "flash".into(),
+            ];
+            args.extend(extra.iter().map(|s| s.to_string()));
+            args.extend([
+                "ble-pair".into(),
+                "--dcas".into(),
+                d_path.display().to_string(),
+                "--rx".into(),
+                m_path.display().to_string(),
+            ]);
+            args
+        };
+        let error = execute(args(&[])).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("without --allow-unverified-model"),
+            "{error:#}"
+        );
+        // With the opt-in it gets past the model policy (and then fails to connect).
+        let error = execute(args(&["--allow-unverified-model"])).unwrap_err();
+        assert!(
+            !format!("{error:#}").contains("without --allow-unverified-model"),
+            "{error:#}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn firmware_pair_start_keeps_the_motor_gate_for_an_explicit_slot() {
         use crate::ble::tests::component_mock;
         // A derailleur answers at slot 4: settings may start it, firmware may not.
