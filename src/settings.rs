@@ -2199,7 +2199,7 @@ mod tests {
     #[test]
     fn committed_web_schemas_match_the_rust_tables() {
         // The web app prefers these static files over the WASM schema; regenerate
-        // them with `node tools/sync-schemas.ts` after changing a table.
+        // them with `node --experimental-strip-types tools/sync-schemas.ts` after changing a table.
         macro_rules! schemas {
             ($($slug:literal),*) => {
                 [$(($slug, include_str!(concat!("../web-instrument/schemas/", $slug, ".json")))),*]
@@ -2222,7 +2222,7 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(schema_for_model(model)).unwrap(),
                 committed,
-                "web-instrument/schemas/{slug}.json is stale; run node tools/sync-schemas.ts"
+                "web-instrument/schemas/{slug}.json is stale; run node --experimental-strip-types tools/sync-schemas.ts"
             );
         }
     }
