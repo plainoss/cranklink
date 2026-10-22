@@ -1193,6 +1193,7 @@ pub fn set_for_model(
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
+    crate::storage::sync_parent(backup_path).context("persist settings backup directory")?;
     let changed = before != after;
     // A previous adjustment may still be moving toward another target even
     // when GET reports the requested current value. Always apply this target
@@ -1773,6 +1774,7 @@ fn restore_date(
     )?;
     file.write_all(b"\n")?;
     file.sync_all()?;
+    crate::storage::sync_parent(path).context("persist settings backup directory")?;
     let changed = current[..3] != original[..3];
     if changed {
         session
@@ -1860,6 +1862,7 @@ fn set_name(
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
+    crate::storage::sync_parent(backup_path).context("persist settings backup directory")?;
     let changed = before != after;
     if changed {
         let mut bytes = [0u8; 10];

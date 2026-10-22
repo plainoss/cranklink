@@ -279,6 +279,7 @@ pub fn run(
         json!({"stage":"started","serial":serial,"slot":slot,"model":model.name(),"operations":operations,
             "order":order.iter().map(|index| index + 1).collect::<Vec<_>>()}),
     )?;
+    crate::storage::sync_parent(&journal_path).context("persist batch journal")?;
     let mut completed = Vec::new();
     for index in order {
         let op = &operations[index];
