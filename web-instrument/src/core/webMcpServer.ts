@@ -131,6 +131,10 @@ export class WebMCPServer {
 
   private installBridge(): void {
     window.addEventListener("message", async (event) => {
+      // Only this page and same-origin windows may drive the device; another
+      // origin (a framing or opening page) must not read serials or settings.
+      const origin = window.location.origin;
+      if (event.source !== window && event.origin !== origin) return;
       const data = event.data;
       if (data && data.jsonrpc === "2.0" && data.method) {
         try {
@@ -138,7 +142,7 @@ export class WebMCPServer {
           event.source?.postMessage(
             { jsonrpc: "2.0", id: data.id, result },
             // @ts-ignore
-            event.origin || "*",
+            origin,
           );
         } catch (err: any) {
           event.source?.postMessage(
@@ -148,7 +152,7 @@ export class WebMCPServer {
               error: { code: -32603, message: err?.message || String(err) },
             },
             // @ts-ignore
-            event.origin || "*",
+            origin,
           );
         }
       }

@@ -403,6 +403,27 @@ describe("Agent write review boundaries", () => {
     return h;
   }
 
+  it("answers WebMCP messages only from this page's origin", async () => {
+    const h = harness();
+    let listener: ((event: any) => Promise<void>) | null = null;
+    const page = { addEventListener: (_: string, fn: any) => { listener = fn; }, location: { origin: "https://app.example" } };
+    const browserWindow = (globalThis as any).window;
+    (globalThis as any).window = page;
+    try { new WebMCPServer(h.controller); }
+    finally { (globalThis as any).window = browserWindow; }
+    const replies: Array<[unknown, string]> = [];
+    const source = { postMessage: (message: unknown, origin: string) => { replies.push([message, origin]); } };
+    const data = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    (globalThis as any).window = page;
+    try {
+      await listener!({ data, origin: "https://evil.example", source });
+      assert.deepEqual(replies, []);
+      await listener!({ data, origin: "https://app.example", source });
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0][1], "https://app.example");
+    } finally { (globalThis as any).window = browserWindow; }
+  });
+
   it("names the target in the review and drops a pending review on disconnect", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
