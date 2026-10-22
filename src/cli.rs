@@ -830,10 +830,11 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     Ok((val, model))
                 });
             let stopped = s.normal_stop();
-            let (value, model) =
-                finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
-            print_settings_result(&value, &command, model, is_json)?;
-            Ok(())
+            finish_reporting(
+                result,
+                stopped.context("PC-link Stop acknowledgement"),
+                |(value, model)| print_settings_result(value, &command, *model, is_json),
+            )
         }
         Command::Firmware { command } => execute_firmware_command(
             port.as_deref(),
@@ -2004,15 +2005,16 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     };
     let stopped = session.stop();
     let closed = session.close();
-    let result = finish_operation(
-        result,
+    let cleanup = finish_operation(
         stopped.context("BLE PC-link stop was not confirmed"),
+        closed.context("BLE disconnect failed"),
     );
-    let value = finish_operation(result, closed.context("BLE disconnect failed"))?;
-    if let Some(val) = value {
-        out_println!("{}", serde_json::to_string_pretty(&val)?);
-    }
-    Ok(())
+    finish_reporting(result, cleanup, |value| {
+        if let Some(val) = value {
+            out_println!("{}", serde_json::to_string_pretty(val)?);
+        }
+        Ok(())
+    })
 }
 
 fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
@@ -2491,6 +2493,25 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
             Err(error.context(format!("cleanup also failed: {cleanup:#}")))
         }
     }
+}
+
+/// Report a completed operation even when its cleanup fails: a verified
+/// write must still print its receipt and backup path, or a retry would back
+/// up the already changed value as the original.
+fn finish_reporting<T>(
+    result: Result<T>,
+    cleanup: Result<()>,
+    report: impl FnOnce(&T) -> Result<()>,
+) -> Result<()> {
+    let value = match result {
+        Ok(value) => value,
+        Err(error) => return finish_operation(Err(error), cleanup),
+    };
+    finish_operation(
+        report(&value),
+        cleanup
+            .context("the operation completed and its result is shown above, but cleanup failed"),
+    )
 }
 
 fn read_only_command_allowed(command: &Command) -> bool {
@@ -4399,6 +4420,35 @@ mod cli_tests {
         assert_eq!(snapshot["identity"]["settings_model"], "SM-BMR1");
         assert_eq!(snapshot["capabilities"]["settings_available"], true);
         assert_eq!(snapshot["values"]["multi-shift-limit.up"]["value"], 2);
+    }
+
+    #[test]
+    fn a_completed_operation_is_reported_even_when_cleanup_fails() {
+        let mut seen = None;
+        let error = finish_reporting(Ok(5), Err(anyhow::anyhow!("stop")), |value| {
+            seen = Some(*value);
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(seen, Some(5));
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("completed") && message.contains("stop"),
+            "{message}"
+        );
+
+        let mut reports = 0;
+        finish_reporting(Ok(5), Ok(()), |_| {
+            reports += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(reports, 1);
+        let error = finish_reporting(Err::<i32, _>(anyhow::anyhow!("write")), Ok(()), |_| {
+            panic!("a failed operation has no result to report")
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "write");
     }
 
     #[test]
