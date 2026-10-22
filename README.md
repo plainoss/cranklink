@@ -69,6 +69,8 @@ cargo build --release --locked --bin cranklink
 
 Bluetooth support is a default feature; add `--no-default-features` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
 
+The prebuilt binaries are all built on Linux, and CI runs only the Linux one. The macOS binaries are not notarized: if macOS blocks the extracted binary, run `xattr -d com.apple.quarantine ./cranklink`.
+
 **Connecting the adapter**
 
 - **macOS**: `--port usb` for direct SM-PCE02 access.
