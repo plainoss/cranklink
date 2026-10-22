@@ -571,7 +571,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     // Safety check: read-only rejection
     ensure!(
         !cli.read_only || read_only_command_allowed(&cli.command),
-        "--read-only rejects mutating commands (settings set/restore, firmware flash, power-cycle)"
+        "--read-only rejects mutating commands (settings set/restore/batch, firmware flash/probe, adapter power-cycle)"
     );
     ensure!(
         !(cli.unit_auth && cli.no_auth),
@@ -2135,9 +2135,12 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
 fn read_only_command_allowed(command: &Command) -> bool {
     match command {
         Command::Scan { .. } | Command::Units | Command::Probe | Command::Session => true,
+        // A settings dry run only reads; firmware dry runs enter bootloaders.
         Command::Settings { command } => matches!(
             command,
-            SettingsCommand::Read { .. } | SettingsCommand::Schema { .. }
+            SettingsCommand::Read { .. }
+                | SettingsCommand::Schema { .. }
+                | SettingsCommand::Set { dry_run: true, .. }
         ),
         Command::Firmware { command } => matches!(
             command,
@@ -3201,6 +3204,7 @@ mod cli_tests {
                 "comp.dat",
             ],
             vec!["adapter", "power-cycle"],
+            vec!["firmware", "probe", "--target", "dcas"],
         ] {
             let mut command = vec!["cranklink", "--read-only"];
             command.extend(args);
@@ -3217,14 +3221,14 @@ mod cli_tests {
             vec!["units"],
             vec!["probe"],
             vec!["settings", "read"],
-            vec!["settings", "schema"],
+            vec!["settings", "schema", "--model", "ep800"],
+            vec!["settings", "set", "lamp", "1", "--dry-run"],
             vec!["firmware", "inspect", "fw.dat"],
         ] {
             let mut command = vec!["cranklink", "--read-only"];
             command.extend(args);
-            if let Ok(cli) = Cli::try_parse_from(command) {
-                assert!(read_only_command_allowed(&cli.command));
-            }
+            let cli = Cli::try_parse_from(command.clone()).unwrap();
+            assert!(read_only_command_allowed(&cli.command), "{command:?}");
         }
     }
 
