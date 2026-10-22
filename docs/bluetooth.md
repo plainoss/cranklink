@@ -28,4 +28,4 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically; `--ble-master` overrides the policy.
 
-Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware; with `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
+Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.

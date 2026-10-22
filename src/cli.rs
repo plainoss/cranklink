@@ -1883,8 +1883,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             "BLE pair updates support EP800 board 1 only without --allow-unverified-model"
         );
         ensure!(
-            matches!(d.metadata.version.0, [4, 1, 11, 0] | [4, 2, 0, 0] | [4, 3, 0, 0]),
-            "BLE pair updater requires a supported EP800 target version without --allow-unverified-model"
+            crate::firmware::EP800_BLE_TARGET_VERSIONS.contains(&d.metadata.version),
+            "BLE pair updater requires a supported EP800 target version (4.1.11 or 4.2.0) without --allow-unverified-model"
         );
     } else {
         ensure!(
@@ -3329,6 +3329,62 @@ mod cli_tests {
         let error = execute(args(&["--allow-unverified-model"])).unwrap_err();
         assert!(
             !format!("{error:#}").contains("without --allow-unverified-model"),
+            "{error:#}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ble_pair_refuses_an_unanalysed_ep800_target_offline() {
+        // Synthetic plaintext EP800 (23/00) D4.3.0: live BLE entry does not
+        // admit 4.3.0, so the pair would fail after writing D.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x43, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x23, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x41, 11, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x41, 11, 0, 1]);
+        m[14..19].copy_from_slice(&[0x23, 0, 0x41, 11, 0]);
+        m[126..].copy_from_slice(b"et");
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-ble-target-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        let port = format!("ble-sim:{}", dir.join("absent.sock").display());
+        // A regressed gate gets further; keep its journal and backup in `dir`.
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                &port,
+                "-s",
+                "010203040506",
+                "firmware",
+                "flash",
+                "ble-pair",
+                "--dcas",
+                &d_path.display().to_string(),
+                "--rx",
+                &m_path.display().to_string(),
+                "--journal",
+                &dir.join("pair.jsonl").display().to_string(),
+                "--backup",
+                &dir.join("pair.json").display().to_string(),
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("supported EP800 target version"),
             "{error:#}"
         );
         std::fs::remove_dir_all(dir).unwrap();

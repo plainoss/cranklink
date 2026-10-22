@@ -244,7 +244,8 @@ impl BleSession {
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
         if !allow_unverified_model {
             ensure!(
-                matches!(version(&d)?.as_str(), "4.1.10.0" | "4.1.11.0" | "4.2.0.0"),
+                crate::firmware::EP800_BLE_LIVE_VERSIONS
+                    .contains(&crate::firmware::Version::packed(&d)?),
                 "BLE firmware entry supports supported EP800 4.1.10/4.1.11/4.2.0 only without --allow-unverified-model"
             );
         } else {

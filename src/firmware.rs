@@ -239,6 +239,18 @@ pub fn is_allowed_motor_board(board: u8) -> bool {
     matches!(board, 1 | 2)
 }
 
+/// Live EP800 D releases BLE firmware entry admits without
+/// --allow-unverified-model. It must contain every target below: ble-pair
+/// re-enters RX through this gate right after writing the target D.
+pub(crate) const EP800_BLE_LIVE_VERSIONS: &[Version] = &[
+    Version([4, 1, 10, 0]),
+    Version([4, 1, 11, 0]),
+    Version([4, 2, 0, 0]),
+];
+/// EP800 D images ble-pair writes without --allow-unverified-model.
+pub(crate) const EP800_BLE_TARGET_VERSIONS: &[Version] =
+    &[Version([4, 1, 11, 0]), Version([4, 2, 0, 0])];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FirmwareMetadata {
     pub kind: FirmwareKind,
@@ -997,6 +1009,12 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_ble_pair_target_passes_the_live_entry_gate() {
+        assert!(EP800_BLE_TARGET_VERSIONS
+            .iter()
+            .all(|v| EP800_BLE_LIVE_VERSIONS.contains(v)));
+    }
     #[test]
     fn companion_pair_and_version_checks() {
         let d = Firmware::from_bytes(&image(FirmwareKind::DcasX)).unwrap();
