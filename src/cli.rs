@@ -968,7 +968,8 @@ fn execute_firmware_command(
                                 .map_err(anyhow::Error::from)
                                 .and_then(|serial| {
                                     check_application_serial(&mut s, application.slot, &serial)
-                                });
+                                })
+                                .context("bootloader not entered");
                             if let Err(e) = checked {
                                 s.normal_stop()
                                     .context("serial check failed; PC-link stop failed")?;
@@ -1143,8 +1144,9 @@ fn execute_firmware_command(
                 };
                 if let Some(i) = &before {
                     jnl.record("application-before", i)?;
-                    let preflight =
-                        check_application_serial(&mut s, i.slot, &serial).and_then(|()| {
+                    let preflight = check_application_serial(&mut s, i.slot, &serial)
+                        .context("bootloader not entered")
+                        .and_then(|()| {
                             fw.validate_companion_version_for_pair(
                                 &comp,
                                 parse_version(&i.rx_version)?,
@@ -1246,24 +1248,32 @@ fn execute_firmware_command(
                 };
                 jnl.record("finish-and-reset", &receipt)?;
                 let after = s.normal_start(if recovery { None } else { slot })?;
+                let serial_check = check_application_serial(&mut s, after.slot, &serial);
                 let stop = s.normal_stop();
                 jnl.record("application-after", &after)?;
-                stop?;
-                ensure!(
-                    after.dcas_version == fw.metadata.version.to_string(),
-                    "post-flash DCAS version mismatch"
-                );
-                ensure!(
-                    after.rx_version == fw.metadata.compatibility_version.to_string()
-                        || after.rx_version == comp.metadata.version.to_string(),
-                    "post-flash RX version mismatch"
-                );
-                if let Some(before) = before {
+                let verified = serial_check.and_then(|()| {
                     ensure!(
-                        before.cargo == after.cargo,
-                        "cargo identity changed after flashing"
+                        after.dcas_version == fw.metadata.version.to_string(),
+                        "post-flash DCAS version mismatch"
                     );
+                    ensure!(
+                        after.rx_version == fw.metadata.compatibility_version.to_string()
+                            || after.rx_version == comp.metadata.version.to_string(),
+                        "post-flash RX version mismatch"
+                    );
+                    if let Some(before) = &before {
+                        ensure!(
+                            before.cargo == after.cargo,
+                            "cargo identity changed after flashing"
+                        );
+                    }
+                    Ok(())
+                });
+                if let Err(e) = &verified {
+                    jnl.record("verification-failed", &format!("{e:#}"))?;
                 }
+                stop?;
+                verified?;
                 jnl.record("verified", &after)?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
@@ -1317,6 +1327,7 @@ fn execute_firmware_command(
                 let before = start_rx_session(&mut s, slot, recovery)?;
                 if !recovery {
                     let preflight = check_application_serial(&mut s, before.slot, &serial)
+                        .context("bootloader not entered")
                         .and_then(|()| {
                             ensure!(
                                 before.dcas_version == d.metadata.version.to_string(),
@@ -1416,17 +1427,26 @@ fn execute_firmware_command(
                 };
                 jnl.record("finish-and-reset", &receipt)?;
                 let after = s.normal_start(Some(before.slot))?;
-                s.normal_stop()?;
+                let serial_check = check_application_serial(&mut s, after.slot, &serial);
+                let stop = s.normal_stop();
                 jnl.record("application-after", &after)?;
-                ensure!(
-                    after.cargo == before.cargo
-                        && after.dcas_version == d.metadata.version.to_string(),
-                    "cargo or D version changed after RX update"
-                );
-                ensure!(
-                    after.rx_version == fw.metadata.version.to_string(),
-                    "post-flash RX version mismatch"
-                );
+                let verified = serial_check.and_then(|()| {
+                    ensure!(
+                        after.cargo == before.cargo
+                            && after.dcas_version == d.metadata.version.to_string(),
+                        "cargo or D version changed after RX update"
+                    );
+                    ensure!(
+                        after.rx_version == fw.metadata.version.to_string(),
+                        "post-flash RX version mismatch"
+                    );
+                    Ok(())
+                });
+                if let Err(e) = &verified {
+                    jnl.record("verification-failed", &format!("{e:#}"))?;
+                }
+                stop?;
+                verified?;
                 jnl.record("verified", &after)?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
@@ -2570,13 +2590,13 @@ fn execute_settings(
     }
 }
 
-/// Compare the application's serial with -s before entering any bootloader,
-/// so a wrong motor is never switched into boot mode.
+/// Compare the application's serial with -s: before entering any bootloader,
+/// so a wrong motor is never switched into boot mode, and again after a flash.
 fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) -> Result<()> {
     let live = crate::device::serial_bytes(&session.command(slot, 1, 0x3c, &[0], 0x3e)?)?;
     ensure!(
         live.as_slice() == expected,
-        "live serial {} differs from --expect-serial {}; bootloader not entered",
+        "live serial {} differs from --expect-serial {}",
         hex::encode(live),
         hex::encode(expected)
     );
@@ -3075,7 +3095,7 @@ mod cli_tests {
         assert!(steps.borrow().is_empty());
         let (mut session, _) = scripted(vec![(query, reply)]);
         let error = check_application_serial(&mut session, 13, &[9, 9, 9, 9, 9, 9]).unwrap_err();
-        assert!(format!("{error:#}").contains("bootloader not entered"));
+        assert!(format!("{error:#}").contains("differs from --expect-serial"));
     }
 
     #[test]
