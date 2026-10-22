@@ -851,8 +851,21 @@ impl BleSession {
         // session. Restore and confirm slave routing before that final command.
         // Timeouts still fence all further protocol traffic.
         if !was_master {
-            stopped?;
-            return self.stop_gateway_pc_link();
+            // A rejected unit stop leaves the session responsive, so the
+            // gateway is still stopped, as on the master path.
+            if self.poisoned {
+                return stopped;
+            }
+            let gateway = self.stop_gateway_pc_link();
+            return match (stopped, gateway) {
+                (Ok(()), gateway) => gateway,
+                (Err(unit), Ok(())) => {
+                    bail!("BLE cleanup failed; gateway PC-link was stopped: unit stop: {unit:#}")
+                }
+                (Err(unit), Err(gateway)) => {
+                    bail!("BLE cleanup failed; unit stop: {unit:#}; gateway stop: {gateway:#}")
+                }
+            };
         }
         let mut errors = Vec::new();
         if let Err(error) = stopped {
@@ -2366,6 +2379,27 @@ pub(crate) mod tests {
                 .count(),
             1
         );
+    }
+    #[test]
+    fn rejected_unit_stop_still_stops_a_responsive_slave_gateway() {
+        let gateway_stop = (PCE_COMMAND, vec![0, 0x0c, 0]);
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        state.borrow_mut().reject_pc_stop = true;
+        let error = session.stop().unwrap_err().to_string();
+        assert!(error.contains("BLE cleanup failed; gateway PC-link was stopped"));
+        assert!(error.contains("unit PC-link stop rejected"));
+        assert!(!session.poisoned && !session.gateway_mode);
+        assert_eq!(state.borrow().writes.last(), Some(&gateway_stop));
+        // A unit stop timeout fences the session: no gateway stop follows.
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        state.borrow_mut().timeout_pc_stop = true;
+        assert!(session.stop().is_err());
+        assert!(session.poisoned);
+        assert!(!state.borrow().writes.contains(&gateway_stop));
     }
     #[test]
     fn master_stop_timeout_never_claims_restore_or_dispatches_more_commands() {

@@ -423,7 +423,9 @@ The [slave discovery](../src/ble.rs#L519) and [master discovery](../src/ble.rs#L
 methods explain master-slot inclusion, cache selection and the existing start
 receipt. [Cleanup](../src/ble.rs#L828) orders motor stop,
 slave-mode restoration/readback, gateway stop and GATT close; gateway stop can
-end connection mode. Keep ownership until explicit disconnect.
+end connection mode. A rejected motor stop is reported but still followed by
+the gateway stop; a timeout fences all further traffic, so none is sent. Keep
+ownership until explicit disconnect.
 
 ### Motor settings and update traffic
 
