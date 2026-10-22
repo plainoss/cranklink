@@ -1391,11 +1391,19 @@ fn execute_firmware_command(
                         return Err(e);
                     }
                 };
-                jnl.record("finish-and-reset", &receipt)?;
-                let after = s.normal_start(if recovery { None } else { slot })?;
+                // The transfer has finished: a journal failure must not skip the
+                // application return and verification below.
+                let finished = jnl.record("finish-and-reset", &receipt);
+                let after = match s
+                    .normal_start(if recovery { None } else { slot })
+                    .context("transfer finished, but the application did not return")
+                {
+                    Ok(after) => after,
+                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
+                };
                 let serial_check = check_application_serial(&mut s, after.slot, &serial);
                 let stop = s.normal_stop();
-                jnl.record("application-after", &after)?;
+                let journaled = finished.and_then(|()| jnl.record("application-after", &after));
                 let verified = serial_check.and_then(|()| {
                     ensure!(
                         after.dcas_version == fw.metadata.version.to_string(),
@@ -1414,12 +1422,16 @@ fn execute_firmware_command(
                     }
                     Ok(())
                 });
-                if let Err(e) = &verified {
-                    jnl.record("verification-failed", &format!("{e:#}"))?;
-                }
-                stop?;
-                verified?;
-                jnl.record("verified", &after)?;
+                let verified = verified
+                    .map_err(|e| journal_failure(&mut jnl, "verification-failed", e))
+                    .and_then(|()| {
+                        journaled.context(
+                            "transfer finished and verified, but the flash journal is incomplete",
+                        )
+                    });
+                finish_operation(verified, stop)?;
+                jnl.record("verified", &after)
+                    .context("flash verified, but the flash journal is incomplete")?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
@@ -1636,11 +1648,19 @@ fn execute_firmware_command(
                         return Err(e);
                     }
                 };
-                jnl.record("finish-and-reset", &receipt)?;
-                let after = s.normal_start(Some(before.slot))?;
+                // The transfer has finished: a journal failure must not skip the
+                // application return and verification below.
+                let finished = jnl.record("finish-and-reset", &receipt);
+                let after = match s
+                    .normal_start(Some(before.slot))
+                    .context("transfer finished, but the application did not return")
+                {
+                    Ok(after) => after,
+                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
+                };
                 let serial_check = check_application_serial(&mut s, after.slot, &serial);
                 let stop = s.normal_stop();
-                jnl.record("application-after", &after)?;
+                let journaled = finished.and_then(|()| jnl.record("application-after", &after));
                 let verified = serial_check.and_then(|()| {
                     ensure!(
                         after.cargo == before.cargo
@@ -1653,12 +1673,16 @@ fn execute_firmware_command(
                     );
                     Ok(())
                 });
-                if let Err(e) = &verified {
-                    jnl.record("verification-failed", &format!("{e:#}"))?;
-                }
-                stop?;
-                verified?;
-                jnl.record("verified", &after)?;
+                let verified = verified
+                    .map_err(|e| journal_failure(&mut jnl, "verification-failed", e))
+                    .and_then(|()| {
+                        journaled.context(
+                            "transfer finished and verified, but the flash journal is incomplete",
+                        )
+                    });
+                finish_operation(verified, stop)?;
+                jnl.record("verified", &after)
+                    .context("flash verified, but the flash journal is incomplete")?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
