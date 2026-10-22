@@ -364,9 +364,12 @@ impl SettingSpec {
             )));
         }
         if self.width == 0 {
-            return Ok(json!(
-                String::from_utf8(p.to_vec())?.trim_end_matches(char::from(0))
-            ));
+            // Names are zero-filled, and unwritten (erased) bytes read FF.
+            let end = p
+                .iter()
+                .rposition(|&b| b != 0 && b != 0xff)
+                .map_or(0, |i| i + 1);
+            return Ok(json!(String::from_utf8(p[..end].to_vec())?));
         }
         ensure!(
             p.len() >= self.offset + self.width,
@@ -2029,6 +2032,67 @@ mod tests {
             assert_eq!(motor.name, *b"NewName\0\0\0");
             std::fs::remove_file(backup).unwrap();
         }
+    }
+    #[test]
+    fn erased_profile_name_bytes_read_as_padding_and_can_be_overwritten() {
+        struct Motor {
+            name: [u8; 10],
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                let start = (params[0] & 1) as usize * 5;
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x17, 0x24) => [&params[..1], &self.name[start..start + 5]].concat(),
+                    (0x17, 0x20) => {
+                        self.name[start..start + 5].copy_from_slice(&params[1..6]);
+                        self.sets += 1;
+                        vec![]
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        let name = spec("profile1.name").unwrap();
+        assert_eq!(
+            name.decode(b"Trail\xff\xff\xff\xff\xff").unwrap(),
+            json!("Trail")
+        );
+        assert_eq!(
+            name.decode(b"Trail\0\xff\xff\xff\xff").unwrap(),
+            json!("Trail")
+        );
+        assert_eq!(name.decode(&[0xff; 10]).unwrap(), json!(""));
+        assert!(name.decode(b"Tr\xffil\0\0\0\0\0").is_err());
+
+        let mut motor = Motor {
+            name: *b"Trail\xff\xff\xff\xff\xff",
+            sets: 0,
+        };
+        assert_eq!(
+            read(&mut motor, 13, "profile1.name").unwrap().value,
+            json!("Trail")
+        );
+        let backup = std::env::temp_dir().join(format!(
+            "cranklink-erased-name-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let receipt = set(&mut motor, 13, "profile1.name", "New", &backup).unwrap();
+        assert_eq!(receipt.before, json!("Trail"));
+        let saved: Value = serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
+        assert_eq!(saved["before"], json!("Trail"));
+        assert_eq!(motor.sets, 2);
+        assert_eq!(motor.name, *b"New\0\0\0\0\0\0\0");
+        std::fs::remove_file(backup).unwrap();
     }
     #[test]
     fn modern_destination_speed_ranges_do_not_change_ep800_limits() {
