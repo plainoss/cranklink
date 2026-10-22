@@ -1038,6 +1038,9 @@ pub fn set(
 /// The implemented setting path sends no additional generic EEPROM commit.
 /// A successful readback confirms the live value; persistence across power
 /// cycles needs a separate GET after the component restarts.
+/// Readbacks after a hub adjustment SET while its actuator moves.
+const HUB_COMPLETION_POLLS: usize = 30;
+
 pub fn set_for_model(
     session: &mut dyn UnitCommands,
     slot: u8,
@@ -1154,6 +1157,7 @@ pub fn set_for_model(
                 "setting write failed; outcome may be uncertain, inspect backup and read device",
             )?;
         let started = crate::platform::Instant::now();
+        let mut polls = 0;
         let got = loop {
             let got = session
                 .command(slot, s.group, s.get, &s.query, s.get + 2)
@@ -1164,7 +1168,10 @@ pub fn set_for_model(
             if s.name != "hub-adjustment" || s.decode(&got)? == after {
                 break got;
             }
-            ensure!(started.elapsed() < std::time::Duration::from_secs(3),
+            // About three seconds of 100 ms polls; the count also bounds the
+            // loop when the transport answers instantly.
+            polls += 1;
+            ensure!(polls < HUB_COMPLETION_POLLS && started.elapsed() < std::time::Duration::from_secs(3),
                 "hub adjustment readback mismatch: actuator completion unconfirmed; outcome may be uncertain; original preserved in {}", backup_path.display());
             crate::platform::sleep(std::time::Duration::from_millis(100));
         };

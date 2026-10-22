@@ -137,7 +137,8 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
             // An unfinished actuator is an uncertain outcome: no second SET.
             let error = result.unwrap_err().to_string();
             assert!(error.contains("actuator completion unconfirmed"), "{error}");
-            assert!(hub.reads > 3, "polled {} times", hub.reads);
+            // One GET before the SET, then the bounded completion polls.
+            assert_eq!(hub.reads, 1 + 30);
             let saved: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
             assert_eq!(saved["original_parameters"], "0004");
