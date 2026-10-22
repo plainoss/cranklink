@@ -477,8 +477,15 @@ impl Wire {
                 self.send(0x88, &[key, k[0], k[1], k[2]])?;
                 self.event("key-tx")?;
             }
-            let mut deadline = self.seq.start + WINDOW;
-            if !self.decoder.has_partial() && !(self.seq.progress && self.seq.outstanding) {
+            let window_end = self.seq.start + WINDOW;
+            let mut deadline = window_end;
+            // Wake early only for a send that is still allowed, or to end the
+            // attempt once the TX at the cap has had its RETRY. In the window's
+            // last RETRY no key may be sent, but replies must still be read.
+            if !self.decoder.has_partial()
+                && !(self.seq.progress && self.seq.outstanding)
+                && (self.seq.next_send + RETRY <= window_end || self.seq.tx_count >= MAX_TX)
+            {
                 deadline = deadline.min(self.seq.next_send);
             }
             if let Some(r) = self.next(deadline)? {
@@ -1153,6 +1160,70 @@ mod tests {
         s.tx_count = MAX_TX;
         assert!(!s.can_send(x));
         assert!(!s.can_send(t + WINDOW));
+    }
+    /// Answers key 1 at once and makes ACK2 readable at a fixed instant.
+    struct TailPort {
+        pending: VecDeque<u8>,
+        late: Option<(Instant, Vec<u8>)>,
+    }
+    impl Read for TailPort {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if self
+                .late
+                .as_ref()
+                .is_some_and(|(at, _)| Instant::now() >= *at)
+            {
+                self.pending.extend(self.late.take().unwrap().1);
+            }
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = bytes.len().min(self.pending.len());
+            for b in &mut bytes[..n] {
+                *b = self.pending.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+    impl Write for TailPort {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let f = Decoder::default().feed(bytes).remove(0).unwrap();
+            if f.control == 0x88 && f.payload[0] == 1 {
+                self.pending
+                    .extend(protocol::encode(0x88, &[0x11, 1, 0, 0x1a]));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Port for TailPort {
+        fn set_timeout(&mut self, _: Duration) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn ack2_arriving_in_the_window_tail_is_read_and_halts() {
+        // 500 ms of window remain; ACK2 becomes readable 50 ms before its end,
+        // inside the last RETRY where no new key may be sent.
+        let start = Instant::now() - (WINDOW - Duration::from_millis(500));
+        let end = start + WINDOW;
+        let port = TailPort {
+            pending: VecDeque::new(),
+            late: Some((
+                end - Duration::from_millis(50),
+                protocol::encode(0x88, &[0x11, 2, 0, 0x1b]),
+            )),
+        };
+        let (path, trace) = temp_file();
+        let mut wire = Wire::new(Box::new(port), trace);
+        wire.seq = Sequence::new(start);
+        let error = wire.handshake(&mut |_| {}).unwrap_err();
+        assert!(format!("{error:#}").contains("after ACK2"), "{error:#}");
+        assert_eq!(wire.seq.acks, [1, 2]);
+        drop(wire);
+        let _ = fs::remove_file(path);
     }
     #[test]
     fn last_key_gets_a_full_retry_before_clean_expiry() {
