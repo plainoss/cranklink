@@ -307,6 +307,7 @@ describe("Component staging and restore boundaries", () => {
       const commands = [...h.commands];
       await assert.rejects(h.controller.restoreBackupFiles(["backup.json"]), /model or serial does not match/);
       assert.deepEqual(h.commands, commands);
+      assert.equal(h.controller.getState().failure?.kind, "restore");
       assert.equal(h.controller.getState().liveValues["switch-a-function"].value, 2);
     });
   }
@@ -330,6 +331,33 @@ describe("Component staging and restore boundaries", () => {
     assert.equal(plan[1], `${plan[2]}.plan.json`);
     assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), files.map((file) => ({ op: "restore", file })));
     assert.equal(h.controller.getState().phase, "ready");
+  });
+
+  it("records a refused restore while edits are staged or the backup is unreadable", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.files.set("backup.json", new TextEncoder().encode(JSON.stringify({
+      format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER,
+      setting: "switch-a-function", before: 0, raw_before: "0300",
+    })));
+    h.files.set("broken.json", new TextEncoder().encode("{"));
+    h.controller.stageParameter("switch-b-function", 1);
+    const commands = [...h.commands];
+    await assert.rejects(h.controller.restoreBackupFiles(["backup.json"]), /Save or discard staged changes/);
+    assert.equal(h.controller.getState().failure?.kind, "restore");
+    h.controller.discardAllStaged();
+    h.controller.dismissError();
+    await assert.rejects(h.controller.restoreBackupFiles(["backup.json", "broken.json"]), /broken\.json is not valid JSON/);
+    assert.equal(h.controller.getState().failure?.kind, "restore");
+    // Like files.js, a missing file throws; it must not read as invalid JSON.
+    const store = (h.controller as any).terminal.files;
+    const bytes = store.bytes;
+    store.bytes = (path: string) => {
+      if (!h.files.has(path)) throw new Error(`File not found: ${path}`);
+      return bytes(path);
+    };
+    await assert.rejects(h.controller.restoreBackupFiles(["gone.json"]), /gone\.json could not be read: File not found/);
+    assert.deepEqual(h.commands, commands);
   });
 
   it("reconnects the previously selected component and restores edits only after its identity matches", async () => {

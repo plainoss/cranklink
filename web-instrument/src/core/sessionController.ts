@@ -850,19 +850,28 @@ export class SessionController {
       await this.syncInProgress.catch(() => {});
     }
     const { transport, identity } = this.state;
-    if (!transport || !identity) {
-      throw new Error("Connect to the target component before restoring a backup.");
-    }
+    if (!transport || !identity) this.refuse("restore", "Connect to the target component before restoring a backup.");
     if (filenames.length === 0) return;
-    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before restoring.");
-    if (Object.keys(this.state.stagedValues).length) throw new Error("Save or discard staged changes before restoring a backup.");
+    if (this.state.phase !== "ready" || this.state.linkLost) this.refuse("restore", "Reconnect to an idle component before restoring.");
+    if (Object.keys(this.state.stagedValues).length) this.refuse("restore", "Save or discard staged changes before restoring a backup.");
     for (const filename of filenames) {
-      const backup = JSON.parse(new TextDecoder().decode(this.terminal!.files.bytes(filename)));
-      if (!["cranklink-setting-backup-v1", "esteps-setting-backup-v1"].includes(backup.format)
+      let bytes: Uint8Array;
+      try {
+        bytes = this.terminal!.files.bytes(filename);
+      } catch (error) {
+        this.refuse("restore", `Backup ${filename} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      let backup: any;
+      try {
+        backup = JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        this.refuse("restore", `Backup ${filename} is not valid JSON.`);
+      }
+      if (!["cranklink-setting-backup-v1", "esteps-setting-backup-v1"].includes(backup?.format)
           || String(backup.serial).toUpperCase() !== identity.serial
           || (!identity.isMotor && backup.settings_model !== identity.modelSlug)
           || (backup.settings_model !== undefined && backup.settings_model !== identity.modelSlug)) {
-        throw new Error("Backup model or serial does not match the selected component.");
+        this.refuse("restore", "Backup model or serial does not match the selected component.");
       }
     }
     this.startOperation({

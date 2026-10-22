@@ -131,6 +131,25 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
   });
 
+  test("restore waits until staged edits are saved or discarded", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    await page.getByTestId("btn-review-save").click();
+    await page.getByTestId("btn-commit-batch").click();
+    await expect(page.getByTestId("transaction-rail")).toBeHidden();
+
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    await page.getByTestId("nav-section-journal").click();
+    const restore = page.locator('[data-action="restore-snapshot"]').first();
+    await expect(restore).toBeDisabled();
+    await expect(page.getByTestId("restore-staged-hint")).toBeVisible();
+    await page.getByTestId("btn-discard-staged").click();
+    await expect(restore).toBeEnabled();
+    await expect(page.getByTestId("restore-staged-hint")).toHaveCount(0);
+  });
+
   test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
     await openInstrument(page);
 

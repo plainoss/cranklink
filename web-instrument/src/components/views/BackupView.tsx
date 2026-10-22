@@ -75,6 +75,7 @@ export function BackupView({ state, controller }: BackupViewProps) {
   useEffect(() => setPending(null), [state.identity?.slot, state.identity?.serial, state.identity?.modelSlug]);
   const points = restorePoints(state);
   const busy = state.phase !== "ready" || state.linkLost || !state.identity;
+  const hasStaged = Object.keys(state.stagedValues).length > 0;
 
   const restore = async () => {
     if (!pending) return;
@@ -95,6 +96,10 @@ export function BackupView({ state, controller }: BackupViewProps) {
           Back up all settings now
         </Button>
       </div>
+
+      {hasStaged && points.some((point) => point.restorable.length > 0) && (
+        <p className="text-sm text-muted" data-testid="restore-staged-hint">Save or discard staged changes before restoring a backup.</p>
+      )}
 
       {points.length === 0 ? (
         <Card variant="transparent" className="items-center text-center py-12 border border-dashed border-separator">
@@ -122,7 +127,7 @@ export function BackupView({ state, controller }: BackupViewProps) {
                     </ul>
                   </div>
                   {point.restorable.length > 0 && (
-                    <Button variant="outline" isDisabled={busy} onPress={() => {
+                    <Button variant="outline" isDisabled={busy || hasStaged} onPress={() => {
                       toast.clear();
                       setPending(point);
                     }} data-action="restore-snapshot" className="shrink-0 self-start">
