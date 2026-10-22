@@ -218,6 +218,7 @@ function startWorker() {
     if (m.type === "ble-disconnected") {
       const pending = pendingBleDisconnect;
       pendingBleDisconnect = null;
+      if (m.trapped) ready = false;
       if (m.code) pending?.reject(new Error(m.error || "Bluetooth cleanup failed; check the bike before reconnecting."));
       else pending?.resolve();
       return;

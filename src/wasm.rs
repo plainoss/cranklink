@@ -31,6 +31,14 @@ pub(crate) fn end_ble_session() -> anyhow::Result<()> {
     }
     Ok(())
 }
+/// A panic traps without unwinding and the default hook writes nowhere in the
+/// browser, so report the message and location before the trap.
+#[wasm_bindgen(start)]
+pub fn start() {
+    std::panic::set_hook(Box::new(|info| {
+        host_emit("stderr", &format!("error: {info}\n"))
+    }));
+}
 #[wasm_bindgen]
 pub fn disconnect_ble() -> i32 {
     match end_ble_session() {
