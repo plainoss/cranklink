@@ -3231,7 +3231,11 @@ mod cli_tests {
             value: "1".into(),
         }]);
         assert!(require_write_serial(&writes, None).is_err());
-        // Rejected offline, before any transport opens.
+        // Rejected offline, before any transport opens (unless the documented
+        // CRANKLINK_SERIAL is exported, which satisfies the requirement).
+        if std::env::var_os("CRANKLINK_SERIAL").is_some() {
+            return;
+        }
         let error = execute(
             [
                 "cranklink",
