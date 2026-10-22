@@ -140,7 +140,7 @@ For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames bef
 
 For bootloader research on a working, powered EP800-CRG, `firmware dump-bootloader --output NEW_DIR` reads the 64 KiB resident window without flashing. See the [extraction instructions](docs/ep800-hardware-recovery.md#read-a-working-motors-bootloader).
 
-`cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts.
+`cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output; `cranklink session --json` keeps one connection open for scripts. `CRANKLINK_PORT`, `CRANKLINK_SERIAL` and `CRANKLINK_FORMAT` (`json` or `text`) stand in for `--port`, `-s` and `--format` when those are omitted; `CRANKLINK_PASSKEY` supplies the passkey for `ble:` ports.
 
 ## Documentation
 

@@ -551,11 +551,14 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     let mut format = cli.format;
     if cli.json {
         format = OutputFormat::Json;
-    } else if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
-        if f.eq_ignore_ascii_case("json") {
-            format = OutputFormat::Json;
-        } else if f.eq_ignore_ascii_case("text") {
-            format = OutputFormat::Text;
+    } else if cli.format == OutputFormat::Auto {
+        // An explicit --format wins over the environment.
+        if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
+            if f.eq_ignore_ascii_case("json") {
+                format = OutputFormat::Json;
+            } else if f.eq_ignore_ascii_case("text") {
+                format = OutputFormat::Text;
+            }
         }
     }
     let is_json = format.is_json();
