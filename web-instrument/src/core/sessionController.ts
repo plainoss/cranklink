@@ -903,6 +903,7 @@ export class SessionController {
     if (filenames.length === 0) return;
     if (this.state.phase !== "ready" || this.state.linkLost) this.refuse("restore", "Reconnect to an idle component before restoring.");
     if (Object.keys(this.state.stagedValues).length) this.refuse("restore", "Save or discard staged changes before restoring a backup.");
+    const settings = new Map<string, unknown>();
     for (const filename of filenames) {
       let bytes: Uint8Array;
       try {
@@ -922,7 +923,9 @@ export class SessionController {
           || (backup.settings_model !== undefined && backup.settings_model !== identity.modelSlug)) {
         this.refuse("restore", "Backup model or serial does not match the selected component.");
       }
+      settings.set(filename, backup.setting);
     }
+    filenames = planOrder(filenames, settings);
     this.startOperation({
       phase: "committing",
       statusMessage: `Restoring ${filenames.length} backup file${filenames.length > 1 ? "s" : ""}…`,
@@ -1285,4 +1288,17 @@ function parseFileStamp(path: string): Date | null {
 /** Files from one operation share the prefix before their per-setting index. */
 function snapshotGroup(path: string): string {
   return path.replace(/(?:\.\d{3})?\.(?:backup\.json|journal\.jsonl|plan\.json)$/, "");
+}
+
+/**
+ * A save's backups in its plan order with the destination first, which the
+ * core expects to order a region change. This session's file list holds them
+ * in write order, and lowering a region writes the speed first; a CLI batch
+ * may also plan the speed first. Restored in either order, the old speed is
+ * refused against the region it was lowered to.
+ */
+function planOrder(filenames: string[], settings: Map<string, unknown>): string[] {
+  const index = (path: string) => Number(path.match(/\.(\d{3})\.backup\.json$/)?.[1] ?? 0);
+  const region = (path: string) => (settings.get(path) === "destination" ? 0 : 1);
+  return [...filenames].sort((a, b) => region(a) - region(b) || index(a) - index(b));
 }

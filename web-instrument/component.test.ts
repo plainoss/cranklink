@@ -313,7 +313,7 @@ describe("Component staging and restore boundaries", () => {
     });
   }
 
-  it("restores one save's backups in their order through a single batch", async () => {
+  it("restores one save's backups in their plan order through a single batch", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
     const files = ["tx_1.001.backup.json", "tx_1.002.backup.json"];
@@ -323,7 +323,9 @@ describe("Component staging and restore boundaries", () => {
       })));
     }
     const start = h.commands.length;
-    await h.controller.restoreBackupFiles(files);
+    // This session's file list keeps write order: lowering a region backs up
+    // the speed (.002) before the destination (.001).
+    await h.controller.restoreBackupFiles([...files].reverse());
     // One file at a time, the core refuses to undo a region raise.
     const writes = h.commands.slice(start).filter((line) => /settings (restore|batch)/.test(line));
     assert.equal(writes.length, 1);
@@ -332,6 +334,24 @@ describe("Component staging and restore boundaries", () => {
     assert.equal(plan[1], `${plan[2]}.plan.json`);
     assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), files.map((file) => ({ op: "restore", file })));
     assert.equal(h.controller.getState().phase, "ready");
+  });
+
+  it("restores a save's destination before a limit it planned first", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    // A CLI batch may lower 1 / 32 km/h to 3 / 25 km/h as [speed-limit, destination].
+    // Only the setting names matter to this ordering.
+    const files = ["tx_1.001.backup.json", "tx_1.002.backup.json"];
+    for (const [file, setting, before] of [[files[0], "speed-limit", 32], [files[1], "destination", 1]] as const) {
+      h.files.set(file, new TextEncoder().encode(JSON.stringify({
+        format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER, setting, before,
+      })));
+    }
+    const start = h.commands.length;
+    await h.controller.restoreBackupFiles(files);
+    const plan = h.commands.slice(start).find((line) => /settings batch/.test(line))?.match(/settings batch '?([^' ]+)'?/);
+    assert.ok(plan);
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), [files[1], files[0]].map((file) => ({ op: "restore", file })));
   });
 
   it("records a refused restore while edits are staged or the backup is unreadable", async () => {
