@@ -3669,11 +3669,14 @@ mod cli_tests {
         let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
         std::fs::write(&d_path, d).unwrap();
         std::fs::write(&m_path, m).unwrap();
+        // An absent simulator socket: never a radio scan, and the opt-in run
+        // fails at connect with its journal and backup kept in `dir`.
+        let port = format!("ble-sim:{}", dir.join("absent.sock").display());
         let args = |extra: &[&str]| {
             let mut args = vec![
                 "cranklink".to_string(),
                 "--port".into(),
-                "ble:any".into(),
+                port.clone(),
                 "-s".into(),
                 "010203040506".into(),
                 "firmware".into(),
@@ -3686,6 +3689,10 @@ mod cli_tests {
                 d_path.display().to_string(),
                 "--rx".into(),
                 m_path.display().to_string(),
+                "--journal".into(),
+                dir.join("pair.jsonl").display().to_string(),
+                "--backup".into(),
+                dir.join("pair.json").display().to_string(),
             ]);
             args
         };
