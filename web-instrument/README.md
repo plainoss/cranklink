@@ -38,6 +38,19 @@ CRANKLINK_COMPONENT_BROWSER_REPORT_DIR=/tmp/component-browser-results \
 
 Build `dist/` first; this configuration serves the production assets with their declared isolation headers. These opt-in tests run the current UI, WebBleGatt and WASM against `tools/firmware-sim/component_browser_peer.py`. They verify durable backups before real SETs, stock commits, modeled power-cycle persistence, restore and safe uncertainty for unfinished hub actuation. They skip without local firmware; scripted tests do not count as stock-firmware execution. See [execution boundaries](../docs/firmware-simulator.md#component-settings-execution).
 
+## Agent access (WebMCP)
+
+The page answers a small Model Context Protocol surface for in-page agents: JSON-RPC 2.0 messages posted with `window.postMessage` from the same window or the same origin (other origins are ignored), or direct calls to `window.mcp.handleRequest(method, params)`. Methods are `tools/list`, `tools/call`, `resources/list` and `resources/read`; resources are `cranklink://device/identity` and `cranklink://device/settings`.
+
+| Tool | Effect |
+| --- | --- |
+| `cranklink_list_components`, `cranklink_select_component` | Inventory and target selection; refused while edits are staged or an operation runs |
+| `cranklink_probe`, `cranklink_get_schema` | Active component identity and schema |
+| `cranklink_read_settings`, `cranklink_create_backup` | Read values or save a snapshot; refused unless the component is connected and idle |
+| `cranklink_set_setting`, `cranklink_batch_settings` | Request writes; nothing is sent until the operator authorizes them in a banner that names the target model, slot and serial |
+
+`esteps_*` names are aliases. Agent writes are refused while operator edits are staged, while another review is pending, or when the link is lost; a pending review is rejected on disconnect. Approved writes go through the same backed-up, verified batch save as the UI.
+
 ## Deploy
 
 [Cloudflare Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) builds and deploys the web app as a static-assets Worker (`wrangler.jsonc`). Pushes to `main` deploy to production at <https://cranklink.plainoss.workers.dev/>; every other branch gets its own preview on `*-cranklink.plainoss.workers.dev`, linked from the Workers Builds check on its commit. `_headers` supplies the COOP/COEP isolation headers. The Workers Builds project uses:
