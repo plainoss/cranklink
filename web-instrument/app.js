@@ -501,7 +501,7 @@ async function run(line) {
   if (command === "cranklink" || command === "esteps") toolArgs = tokens.slice(1);
   if (
     !toolArgs.some(
-      (argument) => argument === "--port" || argument.startsWith("--port="),
+      (argument) => argument === "--port" || argument.startsWith("--port=") || /^-p(?:$|[=\w])/.test(argument),
     )
   )
     toolArgs = [
