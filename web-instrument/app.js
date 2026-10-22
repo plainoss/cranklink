@@ -311,7 +311,7 @@ async function withDeviceLock(action) {
     }
   }
 }
-async function adoptPort(next, transport) {
+async function adoptPort(next, transport, simulator = null) {
   try {
     if (port) {
       try {
@@ -320,6 +320,8 @@ async function adoptPort(next, transport) {
         // The old port is closed, forgotten and unlocked even when cleanup failed.
         port = null;
         selectedTransport = null;
+        activeSimulator = null;
+        setSimulatorActive(false);
       }
     }
     if (transport === "ble") {
@@ -343,6 +345,10 @@ async function adoptPort(next, transport) {
   }
   port = next;
   selectedTransport = transport;
+  // Set only here, after the old port was released under its own setting:
+  // the flag makes host_sleep skip the Rust pacing sleeps.
+  activeSimulator = simulator;
+  setSimulatorActive(!!simulator);
   return { transport, ...port.describe() };
 }
 async function releaseSelectedPort() {
@@ -425,11 +431,9 @@ async function run(line) {
         if (!DeviceSimulator) throw new Error("The simulator is available in development builds only.");
         const model = tokens[2] || "ep800-crg";
         const sim = new DeviceSimulator({ model, ...activeSimulatorOptions });
-        activeSimulator = sim;
-        setSimulatorActive(true);
         const passkeyPrompt = async () => "000000";
         const next = new WebBleGatt(sim, passkeyPrompt);
-        const info = await adoptPort(next, "sim");
+        const info = await adoptPort(next, "sim", sim);
         print(
           `${JSON.stringify(info, null, 2)}\nSelected sim (${model}). Run probe to open the interface.\n`,
         );
@@ -441,13 +445,6 @@ async function run(line) {
         tokens[1] === "ble"
           ? { transport: "ble", selected: await WebBleGatt.choose() }
           : await requestAdapter(tokens[1] || "auto");
-      if (selected?.isSimulator) {
-        activeSimulator = selected;
-        setSimulatorActive(true);
-      } else {
-        activeSimulator = null;
-        setSimulatorActive(false);
-      }
       if (transport === "ble") activeBleDevice = selected.id ?? null;
       const next =
         transport === "ble"
@@ -455,7 +452,11 @@ async function run(line) {
           : transport === "serial"
             ? new WebSerialPort(selected)
             : new WebUsbPort(selected);
-      const info = await adoptPort(next, transport);
+      const info = await adoptPort(
+        next,
+        transport,
+        selected?.isSimulator ? selected : null,
+      );
       print(
         `${JSON.stringify(info, null, 2)}\nSelected ${transport}. Run probe to open the interface.\n`,
       );

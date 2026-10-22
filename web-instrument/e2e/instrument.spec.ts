@@ -410,3 +410,24 @@ test("a failed switch to Bluetooth leaves no transport selected", async ({ page 
   expect(state.usbSelected).toBe(false);
 });
 
+// The simulator flag makes host_sleep skip the Rust pacing sleeps, so it must
+// never outlive the simulator on a real adapter.
+test("adopting a granted USB adapter after the simulator ends simulated timing", async ({ page }) => {
+  await openInstrument(page);
+  const state = await page.evaluate(async () => {
+    const terminal = (window as any).estepsTerminal;
+    await terminal.run("connect sim");
+    const simulated = Boolean((window as any).estepsDeviceSimulator);
+    Object.defineProperty(navigator, "usb", {
+      configurable: true,
+      value: { getDevices: async () => [{ vendorId: 0x1e44, productId: 0x7151, configurations: [] }] },
+    });
+    await terminal.selectGranted("usb");
+    return {
+      simulated,
+      simulator: Boolean((window as any).estepsDeviceSimulator),
+      transport: terminal.status().transport,
+    };
+  });
+  expect(state).toEqual({ simulated: true, simulator: false, transport: "usb" });
+});
