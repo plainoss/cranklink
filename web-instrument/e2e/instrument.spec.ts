@@ -564,3 +564,22 @@ test("adopting a granted USB adapter after the simulator ends simulated timing",
   });
   expect(state).toEqual({ simulated: true, simulator: false, transport: "usb" });
 });
+
+// Windows exposes the SM-PCE02 as an FTDI COM port; WebUSB needs WinUSB there.
+test("Windows offers the SM-PCE02 COM port before WebUSB", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "platform", { configurable: true, get: () => "Win32" });
+    Object.defineProperty(Navigator.prototype, "userAgentData", { configurable: true, get: () => undefined });
+    Object.defineProperty(Navigator.prototype, "bluetooth", {
+      configurable: true,
+      get: () => ({ getAvailability: async () => true, requestDevice: async () => { throw new Error("not used"); } }),
+    });
+  });
+  await openInstrument(page);
+  await expect(page.getByTestId("btn-connect-ble")).toHaveText("Connect via Bluetooth");
+  await page.getByTestId("btn-more-menu").click();
+  await expect(page.locator(".menu-dropdown").getByRole("button")).toHaveText([
+    "SM-PCE02 (COM port)",
+    "USB adapter (SM-PCE02, needs WinUSB)",
+  ]);
+});

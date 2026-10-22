@@ -15,6 +15,7 @@ import { describeFailure, userFacingError } from "./src/domain/errors.ts";
 import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
+import { preferredTransport } from "./src/core/platform.ts";
 import { DeviceSimulator } from "./simulator.js";
 
 describe("Domain Schema Enrichment & Ordering", () => {
@@ -807,6 +808,22 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
     assert.equal(replies.length, 1, "third proof fragment emits receipt");
     assert.deepEqual(replies[0], [13, 0x16, 0xe2, 0xff, 0xff, 0xff, 0xff]);
     assert.equal(sim.unitAuthenticated, true);
+  });
+});
+
+describe("Connect screen transport choice", () => {
+  it("offers Web Serial first for a wired connection on Windows, as connect auto does", () => {
+    const linux = {
+      isIOS: false, isBluefy: false, isWindows: false, isMacOS: false, isAndroid: false, isLinux: true,
+      supportsSerial: true, supportsBluetooth: true, supportsUsb: true,
+    };
+    const windows = { ...linux, isLinux: false, isWindows: true };
+    assert.equal(preferredTransport(windows, true), "ble");
+    assert.equal(preferredTransport(windows, false), "serial");
+    assert.equal(preferredTransport({ ...windows, supportsSerial: false }, false), "usb");
+    assert.equal(preferredTransport(linux, false), "usb");
+    assert.equal(preferredTransport({ ...linux, supportsUsb: false }, false), "serial");
+    assert.equal(preferredTransport({ ...linux, supportsUsb: false, supportsSerial: false }, false), null);
   });
 });
 

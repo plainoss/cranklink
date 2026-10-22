@@ -30,7 +30,6 @@ import {
   shellQuote,
 } from "../domain/firmwarePackage.ts";
 import {
-  detectPlatform,
   requestScreenWakeLock,
   releaseScreenWakeLock,
 } from "./platform.ts";
@@ -347,14 +346,7 @@ export class SessionController {
           this.terminal.simulator.setFault(mergedSim.fault);
         }
       } else {
-        let conn = await this.exec(`connect ${transport}`);
-        if (conn.code !== 0 && transport === "usb" && typeof navigator !== "undefined") {
-          const plat = detectPlatform();
-          if (plat.isWindows) {
-            this.appendLog("notice", "WebUSB unavailable or claimed by driver. Attempting WebSerial fallback...");
-            conn = await this.exec("connect serial");
-          }
-        }
+        const conn = await this.exec(`connect ${transport}`);
         if (conn.code !== 0) {
           throw new Error(conn.stderr || `Connection failed (${conn.code})`);
         }

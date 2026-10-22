@@ -3,7 +3,7 @@ import { Bluetooth, Cable, Check, FlaskConical, Minus, Smartphone, Usb } from "l
 import { Alert, Button, Card, Checkbox, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState, SimulatedModel, FaultInjectionType } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { checkBluetoothAvailability, detectPlatform, type PlatformInfo } from "../../core/platform.ts";
+import { checkBluetoothAvailability, detectPlatform, preferredTransport, type PlatformInfo } from "../../core/platform.ts";
 import { describeFailure } from "../../domain/errors.ts";
 import { OptionSelect } from "../ui/OptionSelect.tsx";
 
@@ -37,13 +37,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
 
   const isBusy = ["connecting", "probing", "reading"].includes(state.phase);
   const canUseBluetooth = platform.supportsBluetooth && (!platform.isIOS || platform.isBluefy) && !bluetoothBlocked;
-  const primaryTransport = canUseBluetooth
-    ? "ble"
-    : platform.supportsUsb
-      ? "usb"
-      : platform.supportsSerial
-        ? "serial"
-        : null;
+  const primaryTransport = preferredTransport(platform, canUseBluetooth);
   const hasBleOption = platform.supportsBluetooth && primaryTransport !== "ble";
   const hasOtherOptions =
     hasBleOption ||
@@ -54,12 +48,16 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
     controller.connectAndSync(transport).catch(() => {});
   };
 
+  // On Windows the SM-PCE02 normally appears as an FTDI COM port, and WebUSB
+  // needs WinUSB instead, so the labels name the adapter on the serial path.
+  const serialLabel = platform.isWindows ? "SM-PCE02 (COM port)" : "Direct serial port";
+  const usbLabel = platform.isWindows ? "USB adapter (SM-PCE02, needs WinUSB)" : "USB adapter (SM-PCE02)";
   const primaryLabel = primaryTransport === "ble"
     ? "Connect via Bluetooth"
     : primaryTransport === "usb"
       ? "Connect via USB"
       : primaryTransport === "serial"
-        ? "Connect via serial cable"
+        ? platform.isWindows ? "Connect via SM-PCE02 (COM port)" : "Connect via serial cable"
         : platform.isIOS && !platform.isBluefy
           ? "Open in Bluefy to connect"
           : bluetoothBlocked
@@ -67,6 +65,18 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
             : "Connection unavailable";
 
   const failure = state.failure ? describeFailure(state.failure, state.transport, state.schema) : null;
+  const usbOption = platform.supportsUsb && primaryTransport !== "usb" && (
+    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("usb")} data-action="connect-usb" data-testid="btn-connect-usb" className="justify-start">
+      <Usb size={16} aria-hidden="true" />
+      {usbLabel}
+    </Button>
+  );
+  const serialOption = platform.supportsSerial && primaryTransport !== "serial" && (
+    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("serial")} data-action="connect-serial" data-testid="btn-connect-serial" className="justify-start">
+      <Cable size={16} aria-hidden="true" />
+      {serialLabel}
+    </Button>
+  );
 
   return (
     <main className="min-h-dvh flex flex-col items-center justify-center px-4 py-8 sm:px-6 bg-background text-foreground">
@@ -185,18 +195,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
                       Bluetooth gateway
                     </Button>
                   )}
-                  {platform.supportsUsb && primaryTransport !== "usb" && (
-                    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("usb")} data-action="connect-usb" data-testid="btn-connect-usb" className="justify-start">
-                      <Usb size={16} aria-hidden="true" />
-                      USB adapter (SM-PCE02)
-                    </Button>
-                  )}
-                  {platform.supportsSerial && primaryTransport !== "serial" && (
-                    <Button variant="outline" fullWidth isDisabled={isBusy} onPress={() => connect("serial")} data-action="connect-serial" data-testid="btn-connect-serial" className="justify-start">
-                      <Cable size={16} aria-hidden="true" />
-                      Direct serial port
-                    </Button>
-                  )}
+                  {platform.isWindows ? <>{serialOption}{usbOption}</> : <>{usbOption}{serialOption}</>}
                 </Disclosure.Body>
               </Disclosure.Content>
             </Disclosure>
