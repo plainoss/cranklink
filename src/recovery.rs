@@ -71,6 +71,14 @@ impl Journal {
     }
 }
 
+/// Journal a failed restore; a journal error must never replace it.
+fn journal_uncertain(journal: &mut Journal, error: anyhow::Error) -> anyhow::Error {
+    match journal.record("uncertain", json!(format!("{error:#}"))) {
+        Ok(()) => error,
+        Err(j) => error.context(format!("journal entry 'uncertain' was not written: {j:#}")),
+    }
+}
+
 struct Received {
     frame: Frame,
     ingress: Instant,
@@ -730,10 +738,8 @@ fn restore(
     }) {
         Ok(receipt) => receipt,
         Err(error) => {
-            journal.record("uncertain", json!(format!("{error:#}")))?;
-            return Err(
-                error.context("stock restore outcome uncertain; do not automatically retry/reset")
-            );
+            return Err(journal_uncertain(journal, error)
+                .context("stock restore outcome uncertain; do not automatically retry/reset"));
         }
     };
     journal.record("finish-and-reset", json!(receipt))?;
@@ -946,6 +952,21 @@ mod tests {
         validate_live(&boot, Some(&SERIAL)).unwrap();
         assert!(steps.borrow().is_empty());
         drop(session);
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn a_failed_uncertain_journal_entry_keeps_the_restore_error() {
+        let (path, file) = temp_file();
+        drop(file);
+        let mut journal = Journal(OpenOptions::new().read(true).open(&path).unwrap());
+        let error = format!(
+            "{:#}",
+            journal_uncertain(&mut journal, anyhow::anyhow!("stock D write NAK"))
+        );
+        assert!(
+            error.contains("stock D write NAK") && error.contains("was not written"),
+            "{error}"
+        );
         fs::remove_file(path).unwrap();
     }
     #[test]

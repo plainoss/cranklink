@@ -1296,7 +1296,7 @@ fn execute_firmware_command(
                 let receipt = match s.flash_dcas(&fw.data, &boot, progress_reporter()) {
                     Ok(r) => r,
                     Err(e) => {
-                        jnl.record("uncertain", &format!("{e:#}"))?;
+                        let e = journal_uncertain(&mut jnl, e);
                         err_println!("\n================================================================================");
                         err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
@@ -1517,7 +1517,7 @@ fn execute_firmware_command(
                         return finish_operation(Err(e), restarted);
                     }
                     Err(e) => {
-                        jnl.record("uncertain", &format!("{e:#}"))?;
+                        let e = journal_uncertain(&mut jnl, e);
                         err_println!("\n================================================================================");
                         err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
                         err_println!("DO NOT POWER CYCLE THE MOTOR.");
@@ -2141,9 +2141,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         }))
     })();
 
-    if let Err(e) = &result {
-        jnl.record("uncertain", &format!("{e:#}"))?;
-    }
+    let result = result.map_err(|e| journal_uncertain(&mut jnl, e));
     let stopped = session.stop();
     let closed = session.close();
     let result = finish_operation(result, stopped.context("BLE PC-link cleanup not confirmed"));
@@ -3244,6 +3242,14 @@ impl Journal {
     }
 }
 
+/// Journal a failed destructive step; a journal error must never replace it.
+fn journal_uncertain(jnl: &mut Journal, error: anyhow::Error) -> anyhow::Error {
+    match jnl.record("uncertain", &format!("{error:#}")) {
+        Ok(()) => error,
+        Err(j) => error.context(format!("journal entry 'uncertain' was not written: {j:#}")),
+    }
+}
+
 #[cfg(test)]
 mod cli_tests {
     use super::*;
@@ -3577,6 +3583,33 @@ mod cli_tests {
             let cli = Cli::try_parse_from(shell_split(&line)).unwrap();
             assert!(matches!(cli.command, Command::Firmware { .. }), "{line}");
         }
+    }
+
+    #[test]
+    fn a_failed_uncertain_journal_entry_keeps_the_flash_error() {
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-uncertain-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let mut jnl = Journal::new(&path).unwrap();
+        let error = journal_uncertain(&mut jnl, anyhow::anyhow!("flash write NAK"));
+        assert_eq!(format!("{error:#}"), "flash write NAK");
+        drop(jnl);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(r#""stage":"uncertain""#));
+        // A journal that rejects the write must not hide the flash error.
+        let mut jnl = Journal(std::fs::OpenOptions::new().read(true).open(&path).unwrap());
+        let error = format!(
+            "{:#}",
+            journal_uncertain(&mut jnl, anyhow::anyhow!("flash write NAK"))
+        );
+        assert!(
+            error.contains("flash write NAK") && error.contains("was not written"),
+            "{error}"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
