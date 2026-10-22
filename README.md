@@ -110,6 +110,8 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 -
 
 See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
 
+BLE slave-session cleanup explicitly checks the logical bus master's PC-link stop before stopping the gateway. A Bluetooth disconnect or gateway acknowledgement alone does not establish that normal shifting has resumed; see the [Di2 BLE investigation](docs/di2-ble-investigation.md).
+
 ### Recover a motor stuck in bootloader mode
 
 Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only EP800 (`23/00`, DCASX board 1) is tested; other families need `--allow-unverified-model`. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.

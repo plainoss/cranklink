@@ -194,6 +194,18 @@ fn auth_packets(passkey: &str, nonce: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
 mod firmware;
 pub use firmware::MotorFirmware;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SlaveMasterLink {
+    #[default]
+    Inactive,
+    // Gateway start was dispatched, but neither a start receipt nor a valid
+    // master identity has established whether a remote session was opened.
+    Pending,
+    Active {
+        owner: u8,
+    },
+}
+
 pub struct BleSession {
     io: Box<dyn Gatt>,
     chars: BTreeMap<u16, CharacteristicInfo>,
@@ -201,6 +213,7 @@ pub struct BleSession {
     pc_slot: u8,
     target_slot: Option<u8>,
     master_stock: Option<[u8; 2]>,
+    slave_master_link: SlaveMasterLink,
     linked_slot: Option<u8>,
     gateway_mode: bool,
     authenticated: bool,
@@ -229,6 +242,7 @@ impl BleSession {
             pc_slot: 0,
             target_slot: None,
             master_stock: None,
+            slave_master_link: SlaveMasterLink::Inactive,
             linked_slot: None,
             gateway_mode: false,
             authenticated: false,
@@ -358,6 +372,16 @@ impl BleSession {
         let n = result?;
         if let Some(n) = &n {
             self.log("rx", n.characteristic, &n.value)?;
+            if !self.master_routing
+                && self.gateway_mode
+                && n.characteristic == FREE_RESPONSE
+                && (7..=20).contains(&n.value.len())
+                && n.value[..4] == [0, 0x32, 0x12, 1]
+                && n.value[4] < 32
+                && n.value[5..7] == [0xff, 0xff]
+            {
+                self.slave_master_link = SlaveMasterLink::Active { owner: n.value[4] };
+            }
             if n.characteristic == FREE_RESPONSE
                 && (4..=20).contains(&n.value.len())
                 && self.gateway_started_slots.contains(&n.value[0])
@@ -535,6 +559,9 @@ impl BleSession {
         self.pc_slot = mode[0] & 31;
         // Enters the gateway PC connection mode; always attempt to leave on stop.
         self.gateway_mode = true;
+        // Record the obligation before start/identity processing can fail.
+        // A malformed discovery reply must not erase an observed PC-link start.
+        self.slave_master_link = SlaveMasterLink::Pending;
         // Require the matching 2C receipt; this reply has no USB-style status byte.
         self.gateway(0x0c, &[1], 0x2c)?;
         // Query the bus master separately as logical slot zero. The slave bitmap can
@@ -545,6 +572,14 @@ impl BleSession {
         // traction BMS handshake or assist readiness.
         ensure!(master[0] == 1, "BLE master reports no connected battery");
         if master[1] != 0xff {
+            // 0C/01 opens the logical master's service session too. A gateway
+            // 2C/00 receipt alone does not confirm that this peer left PC-link.
+            // Track it before further identity reads can fail.
+            if self.slave_master_link == SlaveMasterLink::Pending {
+                self.slave_master_link = SlaveMasterLink::Active {
+                    owner: self.pc_slot,
+                };
+            }
             // GET_UNIT_INFO byte 2 is a compatibility flag, NOT the unit number.
             // Read the master stock identity to resolve its unit number.
             let stock = self.command(0, 1, 0x1c, &[0], 0x1e)?;
@@ -554,6 +589,8 @@ impl BleSession {
                 "BLE master stock series differs from gateway identity"
             );
             self.master_stock = Some([stock[0], stock[1]]);
+        } else if self.slave_master_link == SlaveMasterLink::Pending {
+            self.slave_master_link = SlaveMasterLink::Inactive;
         }
         // Read connected slots through the gateway's routed unit query,
         // not SM-PCE02's PCE 1B bitmap (which is empty on SC-EM800).
@@ -871,6 +908,11 @@ impl BleSession {
         Ok(())
     }
     fn stop_pc_link(&mut self) -> Result<()> {
+        if self.gateway_mode && !self.master_routing {
+            // Start receipts may trail the gateway acknowledgement or a failed
+            // discovery reply. Account for them before deciding what to stop.
+            self.drain()?;
+        }
         if let Some(slot) = self.linked_slot {
             if slot != 0 {
                 let p = self.command(slot, 0x32, 0x10, &[0, self.pc_slot, 0, 0], 0x12)?;
@@ -878,7 +920,22 @@ impl BleSession {
             }
             self.gateway_started_slots.remove(&slot);
             self.master_pc_start_receipts.remove(&slot);
-            // The master is stopped by the matching gateway 0C/00 below.
+        }
+        ensure!(
+            self.slave_master_link != SlaveMasterLink::Pending,
+            "BLE logical master PC-link state is unknown; stop was not confirmed"
+        );
+        if let SlaveMasterLink::Active { owner } = self.slave_master_link {
+            ensure!(
+                owner == self.pc_slot,
+                "BLE logical master PC-link owner mismatch; stop was not confirmed"
+            );
+            let receipt = self.command(0, 0x32, 0x10, &[0, self.pc_slot, 0, 0], 0x12)?;
+            ensure!(
+                receipt.len() >= 4 && receipt[..4] == [0, self.pc_slot, 0xff, 0xff],
+                "BLE logical master PC-link stop was not confirmed"
+            );
+            self.slave_master_link = SlaveMasterLink::Inactive;
         }
         self.linked_slot = None;
         Ok(())
@@ -889,6 +946,10 @@ impl BleSession {
             ensure!(
                 reply.first() == Some(&0),
                 "BLE gateway PC-link stop rejected"
+            );
+            ensure!(
+                self.slave_master_link == SlaveMasterLink::Inactive,
+                "BLE logical master start was observed during gateway stop; cleanup is unconfirmed"
             );
             self.gateway_mode = false;
             self.linked_slot = None;
@@ -1210,6 +1271,10 @@ mod tests {
         component_stock: BTreeMap<u8, [u8; 2]>,
         stock_sequence: VecDeque<[u8; 2]>,
         master_info: Option<Vec<u8>>,
+        slave_master_connected: bool,
+        slave_master_start_receipt: Option<Vec<u8>>,
+        late_slave_master_start: bool,
+        slave_master_stop_reply: Option<Vec<u8>>,
         master_stock_reply: Option<Vec<u8>>,
         motor_params: Option<Vec<u8>>,
         motor_version: Option<Vec<u8>>,
@@ -1348,6 +1413,24 @@ mod tests {
                                 );
                             }
                         }
+                        if data[2] == 1
+                            && !s.master_mode
+                            && s.master_info
+                                .as_ref()
+                                .is_some_and(|v| v.len() >= 3 && v[1] != 0xff)
+                        {
+                            s.slave_master_connected = true;
+                        }
+                        if data[2] == 1 && !s.master_mode {
+                            if let Some(receipt) = s.slave_master_start_receipt.clone() {
+                                s.slave_master_connected = true;
+                                notify(&mut s, FREE_RESPONSE, receipt);
+                            }
+                        }
+                        if data[2] == 0 && !s.master_mode && s.late_slave_master_start {
+                            s.slave_master_connected = true;
+                            notify(&mut s, FREE_RESPONSE, vec![0, 0x32, 0x12, 1, 3, 0xff, 0xff]);
+                        }
                         vec![0x2c, u8::from(data[2] == 0 && s.reject_gateway_pc_stop)]
                     }
                     0x0d => {
@@ -1380,9 +1463,10 @@ mod tests {
                 }
                 let expected_slot = if matches!((data[1], data[2]), (1 | 2, 0x14))
                     || (data[0] == 0
-                        && s.master_info
-                            .as_ref()
-                            .is_some_and(|info| info.len() >= 3 && info[1] != 0xff))
+                        && (s.slave_master_connected
+                            || s.master_info
+                                .as_ref()
+                                .is_some_and(|info| info.len() >= 3 && info[1] != 0xff)))
                 {
                     0
                 } else {
@@ -1449,6 +1533,18 @@ mod tests {
                 let mut response = vec![data[0], group, cmd + 2];
                 match (group, cmd) {
                     (0x32, 0x10) => {
+                        if data[0] == 0 && data[3] == 0 {
+                            let reply = s
+                                .slave_master_stop_reply
+                                .clone()
+                                .unwrap_or_else(|| vec![0, data[4], 0xff, 0xff]);
+                            if reply.starts_with(&[0, data[4], 0xff, 0xff]) {
+                                s.slave_master_connected = false;
+                            }
+                            response.extend(reply);
+                            notify(&mut s, FREE_RESPONSE, response);
+                            return Ok(());
+                        }
                         response.push(if data[3] == 0 && s.reject_pc_stop {
                             1
                         } else {
@@ -2498,12 +2594,69 @@ mod tests {
             .any(|(id, bytes)| *id == FREE_COMMAND
                 && bytes[0] == 0
                 && bytes[1] == 0x32
-                && matches!(bytes[2], 0x10 | 0x30)));
+                && (bytes[2] == 0x30 || (bytes[2] == 0x10 && bytes[3] == 1))));
+        assert!(state
+            .borrow()
+            .writes
+            .contains(&(FREE_COMMAND, vec![0, 0x32, 0x10, 0, 19, 0, 0])));
         assert!(state
             .borrow()
             .writes
             .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
         assert!(session.linked_slot.is_none());
+    }
+
+    #[test]
+    fn slave_inventory_stops_battery_master_before_gateway_even_without_selected_component() {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_info = Some(vec![1, 0x11, 1]);
+        state.borrow_mut().master_stock_reply = Some(vec![0x11, 0, 0xff]);
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        assert!(session.linked_slot.is_none());
+        assert!(state.borrow().slave_master_connected);
+        session.stop().unwrap();
+        assert!(!state.borrow().slave_master_connected);
+        let state = state.borrow();
+        let master_stop = state
+            .writes
+            .iter()
+            .position(|(id, bytes)| *id == FREE_COMMAND && bytes == &[0, 0x32, 0x10, 0, 3, 0, 0])
+            .unwrap();
+        let gateway_stop = state
+            .writes
+            .iter()
+            .position(|(id, bytes)| *id == PCE_COMMAND && bytes == &[0, 0x0c, 0])
+            .unwrap();
+        assert!(master_stop < gateway_stop);
+    }
+
+    #[test]
+    fn slave_master_stop_requires_matching_full_receipt_not_gateway_ack() {
+        for reply in [vec![0], vec![0, 19, 0xff, 0xff], vec![1, 3, 0xff, 0xff]] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(vec![1, 0x11, 1]);
+            state.borrow_mut().master_stock_reply = Some(vec![0x11, 0, 0xff]);
+            state.borrow_mut().slave_master_stop_reply = Some(reply);
+            session.authenticate().unwrap();
+            session.discover_units().unwrap();
+            assert!(session
+                .stop()
+                .unwrap_err()
+                .to_string()
+                .contains("logical master PC-link stop"));
+            assert!(matches!(
+                session.slave_master_link,
+                SlaveMasterLink::Active { .. }
+            ));
+            assert!(state.borrow().slave_master_connected);
+            assert!(!state
+                .borrow()
+                .writes
+                .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+            session.close().unwrap();
+            assert!(state.borrow().slave_master_connected);
+        }
     }
 
     #[test]
@@ -2534,8 +2687,109 @@ mod tests {
                 .writes
                 .iter()
                 .any(|(id, _)| *id == FREE_COMMAND));
-            session.stop().unwrap();
+            assert!(session
+                .stop()
+                .unwrap_err()
+                .to_string()
+                .contains("state is unknown"));
         }
+    }
+
+    #[test]
+    fn slave_master_start_receipt_survives_malformed_or_unpowered_identity() {
+        for reply in [vec![1, 0x11], vec![0, 0x11, 0]] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(reply);
+            state.borrow_mut().slave_master_start_receipt =
+                Some(vec![0, 0x32, 0x12, 1, 3, 0xff, 0xff]);
+            session.authenticate().unwrap();
+            assert!(session.discover_units().is_err());
+            assert!(!session.poisoned);
+            assert!(state.borrow().slave_master_connected);
+            assert_eq!(
+                session.slave_master_link,
+                SlaveMasterLink::Active { owner: 3 }
+            );
+            session.stop().unwrap();
+            assert!(!state.borrow().slave_master_connected);
+            let state = state.borrow();
+            let master = state
+                .writes
+                .iter()
+                .position(|(id, data)| *id == FREE_COMMAND && data == &[0, 0x32, 0x10, 0, 3, 0, 0])
+                .unwrap();
+            let gateway = state
+                .writes
+                .iter()
+                .position(|(id, data)| *id == PCE_COMMAND && data == &[0, 0x0c, 0])
+                .unwrap();
+            assert!(master < gateway);
+        }
+    }
+
+    #[test]
+    fn slave_master_unresolved_start_or_foreign_owner_never_claims_cleanup() {
+        for receipt in [None, Some(vec![0, 0x32, 0x12, 1, 19, 0xff, 0xff])] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(vec![1, 0x11]);
+            state.borrow_mut().slave_master_start_receipt = receipt;
+            session.authenticate().unwrap();
+            assert!(session.discover_units().is_err());
+            assert!(!session.poisoned);
+            let before = state.borrow().writes.len();
+            assert!(session.stop().is_err());
+            assert_eq!(state.borrow().writes.len(), before);
+        }
+    }
+
+    #[test]
+    fn slave_master_start_arriving_during_gateway_stop_is_not_cleanup_success() {
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        assert_eq!(session.slave_master_link, SlaveMasterLink::Inactive);
+        state.borrow_mut().late_slave_master_start = true;
+        assert!(session
+            .stop()
+            .unwrap_err()
+            .to_string()
+            .contains("cleanup is unconfirmed"));
+        assert!(state.borrow().slave_master_connected);
+        assert!(session.gateway_mode);
+    }
+
+    #[test]
+    fn slave_master_browser_pause_releases_and_resume_reacquires_service_link() {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_info = Some(vec![1, 0x11, 1]);
+        state.borrow_mut().master_stock_reply = Some(vec![0x11, 0, 0xff]);
+        state.borrow_mut().slave_master_start_receipt = Some(vec![0, 0x32, 0x12, 1, 3, 0xff, 0xff]);
+        session.authenticate().unwrap();
+        for index in 0..2 {
+            if index != 0 {
+                session.resume_browser_command(false).unwrap();
+            }
+            session.discover_units().unwrap();
+            assert!(state.borrow().slave_master_connected);
+            session.pause_browser_command().unwrap();
+            assert!(!state.borrow().slave_master_connected);
+            assert!(session.gateway_mode);
+            assert!(!state
+                .borrow()
+                .writes
+                .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+        }
+        session.stop().unwrap();
+        assert!(!session.gateway_mode);
+        let state = state.borrow();
+        assert_eq!(
+            state
+                .writes
+                .iter()
+                .filter(|(id, data)| *id == FREE_COMMAND && data == &[0, 0x32, 0x10, 0, 3, 0, 0])
+                .count(),
+            2
+        );
     }
 
     #[test]

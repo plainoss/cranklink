@@ -124,6 +124,8 @@ This native Unix transport works without the `ble` Cargo feature. It runs the ac
 
 Radio pairing, gateway PIN challenge delivery, notifications, motor logical-address relocation during role handoff and the slave-radio stop acknowledgment are modeled topology boundaries. The actual motor stop handler must confirm disconnection. Passing cleanup does not validate physical role handoff or RF. This socket service remains read-only. Use `--drop-replies`, or `--gatt-fault stale-free|duplicate-free`, to exercise response loss and notification handling. The separate persistent browser peer below enables narrowly scoped writes.
 
+Closing a GATT endpoint does not send firmware stop commands or reset the powered device. Retained-device tests preserve a stranded PC-link owner across disconnect/reconnect, then require an explicit protocol stop to clear it. The former coordinator cleanup on radio close masked this class of client failure. These stock tests cover SC-EM800/motor ownership; EW-WU111/BT-DN110 slave topology is not executable stock-firmware coverage. See the [Di2 BLE investigation](di2-ble-investigation.md).
+
 The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
 
 ## Persistent writes and retained browser sessions

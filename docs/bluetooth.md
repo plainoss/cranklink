@@ -28,4 +28,12 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically; `--ble-master` overrides the policy.
 
+## Disconnect and Di2 recovery
+
+Discovery itself can open a PC-link session on the logical bus master, including a BT-DN110 battery. Normal/slave cleanup sends that master an explicit `32/10` stop and requires its matching `32/12` receipt before the gateway's `0C/00` stop. This also applies to inventory sessions that never selected a component. A missing, rejected or mismatched master receipt is a cleanup failure, even if Bluetooth closes successfully.
+
+The pending start is tracked before gateway startup. A malformed discovery reply cannot erase an observed master start. If the start outcome or PC owner is unresolved, cleanup reports that uncertainty instead of claiming normal operation was restored. A protocol timeout still fences further commands, including stop; it requires a new known session or physical recovery rather than an automatic retry.
+
+Gateway acknowledgement and extinguished LEDs do not establish that the entire bike has returned to normal shifting. The observed EW-WU111/BT-DN110 failure and the limits of offline verification are recorded in the [Di2 BLE investigation](di2-ble-investigation.md). The explicit battery-master stop still needs validation on that hardware; simulator success does not establish it.
+
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware.
