@@ -1368,15 +1368,29 @@ fn effective_destination(
     })
 }
 
+/// Permitted speed-limit range (km/h x 100) per destination; `None` where the
+/// model has no verified range.
+fn speed_range(modern: bool, destination: u8) -> Option<(i64, i64)> {
+    match (modern, destination) {
+        (_, 1) => Some((1900, 3200)),
+        (_, 0 | 3) | (false, 4) => Some((1500, 2500)),
+        // JP=2 and US_CLASS3=5 use different ranges from the EP800 model table.
+        (true, 2) => Some((1400, 2400)),
+        (true, 5) => Some((1900, 4500)),
+        _ => None,
+    }
+}
+
+pub(crate) fn destination_speed_range(model: SettingsModel, destination: u8) -> Option<(i64, i64)> {
+    speed_range(model.modern(), destination)
+}
+
 fn validate_speed_destination(n: i64, destination: u8) -> Result<()> {
     // On tested EP800 firmware, speed GET 16/B4 selector 00 aliases effective
     // speed rather than returning an independent OEM ceiling. Validate permitted
     // maxima against the model and destination table, not that readback.
-    let (minimum, maximum) = match destination {
-        1 => (1900, 3200),
-        0 | 3 | 4 => (1500, 2500),
-        _ => anyhow::bail!("unsupported destination for speed settings: {destination}"),
-    };
+    let (minimum, maximum) = speed_range(false, destination)
+        .with_context(|| format!("unsupported destination for speed settings: {destination}"))?;
     ensure!(
         (minimum..=maximum).contains(&n),
         "destination {destination} permits {}..{} km/h",
@@ -1387,14 +1401,8 @@ fn validate_speed_destination(n: i64, destination: u8) -> Result<()> {
 }
 
 fn validate_modern_speed_destination(n: i64, destination: u8) -> Result<()> {
-    // JP=2 and US_CLASS3=5 use different ranges from the EP800 model table.
-    let (minimum, maximum) = match destination {
-        0 | 3 => (1500, 2500),
-        1 => (1900, 3200),
-        2 => (1400, 2400),
-        5 => (1900, 4500),
-        _ => anyhow::bail!("unsupported modern destination {destination}"),
-    };
+    let (minimum, maximum) = speed_range(true, destination)
+        .with_context(|| format!("unsupported modern destination {destination}"))?;
     ensure!(
         (minimum..=maximum).contains(&n),
         "destination {destination} permits {}..{} km/h",

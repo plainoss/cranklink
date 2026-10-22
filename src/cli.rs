@@ -3233,22 +3233,19 @@ fn print_probe_card(
     out_println!("  Renesas (M): {}", rx_str);
 }
 
-fn destination_label(val: i64) -> Option<&'static str> {
-    match val {
-        0 => Some("Japan / Region 0"),
-        1 => Some("Europe / Australia"),
-        2 => Some("Japan / 24 km/h"),
-        3 => Some("Europe / Restricted"),
-        4 => Some("Australia"),
-        5 => Some("US Class 3 (45 km/h)"),
-        _ => None,
-    }
+// Label a destination by the speed range the core enforces for it; the vendor
+// region names are unverified.
+fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<String> {
+    let (minimum, maximum) =
+        crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
+    Some(format!("{}-{} km/h", minimum / 100, maximum / 100))
 }
 
 fn format_setting_value(
     name: &str,
     val: &serde_json::Value,
     specs: &[crate::settings::SettingSpec],
+    model: crate::settings::SettingsModel,
 ) -> String {
     if val.is_null() {
         return "unset".to_string();
@@ -3257,7 +3254,7 @@ fn format_setting_value(
     if let Some(spec) = spec {
         if name.eq_ignore_ascii_case("destination") {
             if let Some(n) = val.as_i64() {
-                if let Some(lbl) = destination_label(n) {
+                if let Some(lbl) = destination_label(model, n) {
                     return format!("{n} ({lbl})");
                 }
             }
@@ -3405,7 +3402,7 @@ fn print_settings_result(
         SettingsCommand::Read { name, output } => {
             if let Some(target) = name {
                 let val = value.get("value").unwrap_or(value);
-                let formatted = format_setting_value(target, val, &specs);
+                let formatted = format_setting_value(target, val, &specs, model);
                 out_println!("{}: {}", target, formatted);
             } else {
                 out_println!("Drive Unit Settings ({}):\n", model.name());
@@ -3415,7 +3412,7 @@ fn print_settings_result(
                     for n in names {
                         if let Some(val_obj) = values_obj.get(n) {
                             let val = val_obj.get("value").unwrap_or(&serde_json::Value::Null);
-                            let formatted = format_setting_value(n, val, &specs);
+                            let formatted = format_setting_value(n, val, &specs, model);
                             out_println!("  {:<32} {}", format!("{n}:"), formatted);
                         }
                     }
@@ -3445,8 +3442,8 @@ fn print_settings_result(
                 let planned = value
                     .get("planned_value")
                     .unwrap_or(&serde_json::Value::Null);
-                let curr_fmt = format_setting_value(name, curr, &specs);
-                let planned_fmt = format_setting_value(name, planned, &specs);
+                let curr_fmt = format_setting_value(name, curr, &specs, model);
+                let planned_fmt = format_setting_value(name, planned, &specs, model);
                 out_println!("[DRY RUN - VALIDATION ONLY]");
                 out_println!("Setting: {}", name);
                 out_println!("  Current:  {}", curr_fmt);
@@ -3465,8 +3462,8 @@ fn print_settings_result(
                     .and_then(|b| b.as_str())
                     .or_else(|| value.get("backup").and_then(|b| b.as_str()))
                     .unwrap_or("");
-                let before_fmt = format_setting_value(setting, before, &specs);
-                let after_fmt = format_setting_value(setting, after, &specs);
+                let before_fmt = format_setting_value(setting, before, &specs, model);
+                let after_fmt = format_setting_value(setting, after, &specs, model);
                 out_println!("Setting updated: {}", setting);
                 out_println!("  Previous: {}", before_fmt);
                 out_println!("  New:      {}", after_fmt);
@@ -4946,45 +4943,80 @@ mod cli_tests {
 
     #[test]
     fn setting_value_formatting() {
-        let specs = crate::settings::schema_for_model(crate::settings::SettingsModel::Ep800Crg);
+        let model = crate::settings::SettingsModel::Ep800Crg;
+        let specs = crate::settings::schema_for_model(model);
         assert_eq!(
-            format_setting_value("destination", &serde_json::json!(1), &specs),
-            "1 (Europe / Australia)"
+            format_setting_value("destination", &serde_json::json!(1), &specs, model),
+            "1 (19-32 km/h)"
         );
         assert_eq!(
-            format_setting_value("destination", &serde_json::json!(0), &specs),
-            "0 (Japan / Region 0)"
+            format_setting_value("destination", &serde_json::json!(0), &specs, model),
+            "0 (15-25 km/h)"
+        );
+        // Destinations without a legacy speed range get no label.
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(2), &specs, model),
+            "2"
+        );
+        let modern = crate::settings::SettingsModel::Ep801;
+        let modern_specs = crate::settings::schema_for_model(modern);
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(5), &modern_specs, modern),
+            "5 (19-45 km/h)"
         );
         assert_eq!(
-            format_setting_value("profile1.boost.torque", &serde_json::json!(85), &specs),
+            format_setting_value("destination", &serde_json::json!(2), &modern_specs, modern),
+            "2 (14-24 km/h)"
+        );
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(4), &modern_specs, modern),
+            "4"
+        );
+        assert_eq!(
+            format_setting_value(
+                "profile1.boost.torque",
+                &serde_json::json!(85),
+                &specs,
+                model
+            ),
             "85 Nm"
         );
         assert_eq!(
-            format_setting_value("tire-circumference", &serde_json::json!(2040), &specs),
+            format_setting_value(
+                "tire-circumference",
+                &serde_json::json!(2040),
+                &specs,
+                model
+            ),
             "2040 mm"
         );
         assert_eq!(
-            format_setting_value("lamp", &serde_json::json!(1), &specs),
+            format_setting_value("lamp", &serde_json::json!(1), &specs, model),
             "1 (on)"
         );
         assert_eq!(
-            format_setting_value("lamp", &serde_json::json!(0), &specs),
+            format_setting_value("lamp", &serde_json::json!(0), &specs, model),
             "0 (off)"
         );
         assert_eq!(
-            format_setting_value("maintenance-alert", &serde_json::json!(1), &specs),
+            format_setting_value("maintenance-alert", &serde_json::json!(1), &specs, model),
             "1 (enabled)"
         );
         assert_eq!(
-            format_setting_value("maintenance-alert", &serde_json::json!(0), &specs),
+            format_setting_value("maintenance-alert", &serde_json::json!(0), &specs, model),
             "0 (disabled)"
         );
         assert_eq!(
-            format_setting_value("maintenance-date", &serde_json::Value::Null, &specs),
+            format_setting_value("maintenance-date", &serde_json::Value::Null, &specs, model),
             "unset"
         );
         assert_eq!(
-            format_setting_value("profile1.name", &serde_json::json!("Profile1"), &specs),
+            format_setting_value(
+                "profile1.name",
+                &serde_json::json!("Profile1"),
+                &specs,
+                model
+            ),
             "Profile1"
         );
     }
