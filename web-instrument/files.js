@@ -21,6 +21,8 @@ export class BrowserFiles {
       r.onerror = () => reject(r.error);
     });
     for (const entry of entries) {
+      // After a failed sync the newest journal bytes exist only in memory.
+      if (this.files.get(entry.path)?.dirty) continue;
       const bytes = new Uint8Array(entry.bytes);
       this.files.set(entry.path, {
         chunks: [bytes],
