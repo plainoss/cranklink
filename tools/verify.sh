@@ -10,8 +10,8 @@ if command -v cargo-fmt >/dev/null 2>&1 || cargo fmt --version >/dev/null 2>&1; 
   cargo fmt --check || { echo "Formatting failed. Run 'cargo fmt' to fix."; exit 1; }
 fi
 
-echo "==> [2/6] Running Rust type & borrow checking (BLE + Core)..."
-cargo check --locked --features ble --bin cranklink
+echo "==> [2/6] Type-checking the USB-only build (tests cover the default BLE build)..."
+cargo check --locked --no-default-features --lib --bin cranklink
 
 echo "==> [3/6] Checking the WebAssembly build (browser-only modules)..."
 if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
