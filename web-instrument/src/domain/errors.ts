@@ -9,8 +9,12 @@ const CLEANUP_UNCONFIRMED = /PC-link stop.*not.*confirmed|stop could not be conf
 const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetooth connection is closed|BLE session failed|disconnect and inspect/i;
 /** WebUSB and Web Serial ports report an unplugged SM-PCE02 this way (usb.js, serial.js, app.js). */
 const WIRED_CLOSED = /(?:USB|Serial) (?:device )?disconnected|(?:USB|Serial) port is closed/i;
+/** usb.js and serial.js close the port for good after an uncertain write or a receive error. */
+const WIRED_POISONED = /(?:USB|Serial) session (?:cannot reopen|changed during write)|(?:USB|Serial) write (?:timed out|incomplete|failed|returned)|(?:USB|Serial) receive |Serial close (?:timed out|interrupted)|FTDI UART line error|Truncated FTDI status header|Invalid FTDI USB packet size/i;
 /** The CLI's interrupted-flash warning; its full text carries the recovery command. */
 const FLASH_INTERRUPTED = /FLASH WRITE INTERRUPTED|DO NOT POWER CYCLE/i;
+/** The CLI's probe-then-reset steps after a bootloader entry or return failed. */
+const BOOTLOADER_GUIDANCE = /may remain in its DCAS bootloader/i;
 /** A flash progress line: the erase and write had started. */
 const FLASH_STARTED = /^Programming \d+\/\d+ bytes \(\d+%\)/m;
 
@@ -34,8 +38,8 @@ function rawError(error: string): string {
 /** Concise operator message for a raw error. */
 export function userFacingError(error: string, transport: TransportType | null = null): string {
   const link = transport === "sim" ? "The simulated Bluetooth link" : "The Bluetooth link";
-  // Never summarise away the do-not-power-cycle warning or the recovery command.
-  if (FLASH_INTERRUPTED.test(error)) return rawError(error);
+  // Never summarise away the do-not-power-cycle warning or a recovery command.
+  if (FLASH_INTERRUPTED.test(error) || BOOTLOADER_GUIDANCE.test(error)) return rawError(error);
   if (WIRED_CLOSED.test(error)) {
     return "The USB adapter disconnected. Plug it back in and reconnect to read the bike’s current settings.";
   }
@@ -44,6 +48,9 @@ export function userFacingError(error: string, transport: TransportType | null =
       return "The bike did not confirm it was released over USB. Check the adapter, then reconnect to read its current settings.";
     }
     return `${link} closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.`;
+  }
+  if (WIRED_POISONED.test(error)) {
+    return "The USB adapter link was closed after a transfer error. Reconnect to read the bike’s current settings before trying again.";
   }
   if (/BLE authentication failed|BLE passkey must|passkey.*(?:invalid|incorrect)/i.test(error)) {
     return "Bluetooth PIN was not accepted. Reconnect and enter the bike’s six-digit PIN again.";
@@ -86,7 +93,7 @@ function isFlashCritical(error: string, kind?: OperationFailure["kind"], transpo
  */
 export function isLinkLost(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
   if (isFlashCritical(error, kind, transport)) return false;
-  return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error);
+  return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error) || WIRED_POISONED.test(error);
 }
 
 export interface FailureDescription {

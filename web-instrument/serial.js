@@ -165,7 +165,14 @@ export class WebSerialPort {
     try {
       while (this.opened && generation === this.generation) {
         // Rust read timeouts never cancel this stream read or start a second.
-        const { value, done } = await resources.reader.read();
+        const { value, done } = await resources.reader
+          .read()
+          .catch((cause) => {
+            // A bare DOMException does not tell the page this port is closing.
+            throw new Error(
+              `Serial receive failed: ${cause?.message || String(cause)}`,
+            );
+          });
         if (!this.opened || generation !== this.generation) break;
         if (done) throw new Error("Serial device disconnected");
         if (value?.length) {

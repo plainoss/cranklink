@@ -12,6 +12,8 @@ import {
   shellQuote,
 } from "./src/domain/firmwarePackage.ts";
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
+import { WebUsbPort } from "./usb.js";
+import { WebSerialPort } from "./serial.js";
 import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
@@ -946,6 +948,73 @@ describe("Concise connection errors", () => {
       assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true);
     }
     assert.doesNotMatch(userFacingError("error: cleanup also failed: PC-link stop could not be confirmed", "usb"), /Bluetooth/);
+  });
+
+  it("treats a USB or serial port closed after an uncertain transfer as a lost link", () => {
+    // Every later open fails with "cannot reopen"; only a reconnect makes a new port.
+    for (const error of [
+      "error: PC-link Stop acknowledgement: USB write timed out after 500 ms; device outcome uncertain",
+      "error: USB write incomplete (3/8); device outcome uncertain",
+      "error: USB write failed: NetworkError: A transfer error has occurred.; device outcome uncertain",
+      "error: Serial write timed out after 500 ms; device outcome uncertain",
+      "error: Serial write returned an incomplete or unsupported receipt; device outcome uncertain",
+      "error: Serial session changed during write; device outcome uncertain",
+      "error: read settings: FTDI UART line error 0x8",
+      "error: read settings: USB receive queue exceeded 1 MiB",
+      "error: read settings: USB receive stall",
+      "error: Serial receive queue exceeded 1 MiB",
+      "error: read settings: USB receive failed: Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.",
+      "error: read settings: Serial receive failed: Framing error",
+      "error: USB session cannot reopen after an uncertain operation: USB write timed out after 500 ms; device outcome uncertain. Reconcile the motor and select a new USB session.",
+      "error: Serial session cannot reopen after an uncertain operation: Serial close timed out after 2000 ms; session outcome uncertain. Reconcile the motor and select a new serial session.",
+    ]) {
+      assert.match(userFacingError(error, "usb"), /Reconnect/, error);
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true, error);
+    }
+    // The core's own uncertain SET leaves the port usable.
+    const batch = "error: batch stopped at operation 1; 0 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device";
+    assert.equal(describeFailure({ kind: "save", error: batch, settings: ["lamp"] }, "usb", []).linkLost, false);
+    assert.equal(describeFailure({ kind: "save", error: "error: A USB write is already pending" }, "usb", []).linkLost, false);
+    const flash = describeFailure({ kind: "firmware", error: "DO NOT POWER CYCLE THE MOTOR.\nerror: DCAS block 12 write: serial write; device outcome may be uncertain: USB write timed out after 500 ms; device outcome uncertain" }, "usb", []);
+    assert.equal(flash.critical, true);
+    assert.equal(flash.linkLost, false);
+    assert.match(flash.message, /DO NOT POWER CYCLE/);
+  });
+
+  it("names the port when the browser rejects a USB or serial receive", async () => {
+    const usb: any = new WebUsbPort({
+      transferIn: async () => { throw new DOMException("Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.", "NetworkError"); },
+      close: async () => {},
+    });
+    Object.assign(usb, { opened: true, input: { endpointNumber: 1, packetSize: 64 } });
+    await usb.pump(usb.generation);
+    const serial: any = new WebSerialPort({ getInfo: () => ({ usbVendorId: 0x1e44, usbProductId: 0x7151 }), close: async () => {} });
+    const reader = { read: async () => { throw new DOMException("Framing error", "FramingError"); }, cancel: async () => {}, releaseLock() {} };
+    Object.assign(serial, { opened: true, resources: { reader, writer: null, pump: null } });
+    await serial.pump(serial.resources, serial.generation);
+    for (const port of [usb, serial]) {
+      assert.equal(port.poisoned, port.error);
+      const error = `error: read settings: ${port.error.message}`;
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true, error);
+    }
+  });
+
+  it("keeps the CLI's bootloader steps when a wired check loses the port", () => {
+    const guidance = [
+      "The application did not return after the DCAS dry run; nothing was erased or written.",
+      "The motor may remain in its DCAS bootloader. Check whether its application answers with:",
+      "  cranklink probe",
+      "Only if it does not, return it to its application with:",
+      "  cranklink --slot 13 firmware probe --target dcas --recovery --reset",
+    ].join("\n");
+    for (const cause of ["FTDI UART line error 0x10", "USB write timed out after 500 ms; device outcome uncertain", "USB device disconnected; device outcome may be uncertain"]) {
+      const error = `${guidance}\nerror: application did not return after DCAS dry run: bootloader reset not acknowledged: ${cause}`;
+      const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+      assert.match(failure.message, /may remain in its DCAS bootloader/, cause);
+      assert.match(failure.message, /cranklink probe\n[^]*--recovery --reset/, cause);
+      assert.equal(failure.linkLost, true, cause);
+      assert.equal(failure.critical, false, cause);
+    }
   });
 
   it("keeps the interrupted-flash warning and recovery command", () => {
