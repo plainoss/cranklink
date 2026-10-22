@@ -830,7 +830,9 @@ export class SessionController {
   }
 
   /**
-   * Restore one save's backups in a single pass. Each file creates its own
+   * Restore one save's backups in a single `settings batch`, so the core can
+   * order a region change against its speed and power limits (one file at a
+   * time, undoing a region raise is refused). Each restore creates its own
    * rollback backup first, then settings are read once to show the result.
    */
   public async restoreBackupFiles(filenames: string[]): Promise<void> {
@@ -858,14 +860,16 @@ export class SessionController {
       statusMessage: `Restoring ${filenames.length} backup file${filenames.length > 1 ? "s" : ""}…`,
     });
     try {
-      const stamp = fileStamp();
+      const backupPrefix = `pre_restore_${fileStamp()}`;
+      const planFile = `${backupPrefix}.plan.json`;
+      await this.terminal!.files.import(
+        planFile,
+        new TextEncoder().encode(JSON.stringify(filenames.map((file) => ({ op: "restore", file })), null, 2)),
+      );
       const flags = this.buildSessionFlags(transport, identity, true);
-      for (const [index, filename] of filenames.entries()) {
-        const rollbackFile = `pre_restore_${stamp}.${String(index + 1).padStart(3, "0")}.backup.json`;
-        const res = await this.exec(`${flags}settings restore '${filename}' --backup '${rollbackFile}'`);
-        if (res.code !== 0) {
-          throw new Error(res.stderr || `Restore failed (${res.code})`);
-        }
+      const res = await this.exec(`${flags}settings batch '${planFile}' --backup-prefix '${backupPrefix}'`);
+      if (res.code !== 0) {
+        throw new Error(res.stderr || `Restore failed (${res.code})`);
       }
       await this.readAllParameters(transport, identity);
       this.refreshSnapshots();

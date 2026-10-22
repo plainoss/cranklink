@@ -311,6 +311,27 @@ describe("Component staging and restore boundaries", () => {
     });
   }
 
+  it("restores one save's backups in their order through a single batch", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    const files = ["tx_1.001.backup.json", "tx_1.002.backup.json"];
+    for (const [file, setting, before] of [[files[0], "switch-a-function", 2], [files[1], "switch-b-function", 3]] as const) {
+      h.files.set(file, new TextEncoder().encode(JSON.stringify({
+        format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER, setting, before,
+      })));
+    }
+    const start = h.commands.length;
+    await h.controller.restoreBackupFiles(files);
+    // One file at a time, the core refuses to undo a region raise.
+    const writes = h.commands.slice(start).filter((line) => /settings (restore|batch)/.test(line));
+    assert.equal(writes.length, 1);
+    const plan = writes[0].match(/settings batch '?([^' ]+)'? --backup-prefix '?(pre_restore_\d+)'?$/);
+    assert.ok(plan, writes[0]);
+    assert.equal(plan[1], `${plan[2]}.plan.json`);
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), files.map((file) => ({ op: "restore", file })));
+    assert.equal(h.controller.getState().phase, "ready");
+  });
+
   it("reconnects the previously selected component and restores edits only after its identity matches", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");

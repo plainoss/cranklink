@@ -1071,13 +1071,6 @@ pub fn set_for_model(
     validate_current_value(model, &s, &before)?;
     let payload = updated_payload(&s, &original, n, unset)?;
     validate_combination(&s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
-    if s.name.starts_with("max-power.") {
-        let destination = effective_destination(session, slot, model)?;
-        ensure!(
-            destination != 3 || n <= 400,
-            "destination 3 limits maximum power to 400 W"
-        );
-    }
     if s.name.contains(".torque") || s.name == "torque-maximum" {
         let drivetrain = session.command(slot, 0x0b, 0x84, &[0], 0x86)?;
         ensure!(drivetrain.len() >= 2, "short drivetrain reply");
@@ -1126,12 +1119,16 @@ pub fn set_for_model(
         );
     }
 
-    if s.name == "speed-limit" {
+    if is_destination_limit(&s.name) {
         let destination = effective_destination(session, slot, model)?;
-        if model.modern() {
-            validate_modern_speed_destination(n, destination)?;
-        } else {
-            validate_speed_destination(n, destination)?;
+        validate_destination_limit(model, &s.name, n, destination)?;
+    }
+    if s.name == "destination" {
+        // The other direction of the same gate: a new region must not leave the
+        // current speed or power above its ceilings.
+        for (limit, current) in destination_limits(session, slot, model)? {
+            validate_destination_limit(model, &limit, current, n as u8)
+                .with_context(|| format!("change {limit} before destination {n}"))?;
         }
     }
     let after = s.decode(&payload)?;
@@ -1283,6 +1280,54 @@ fn validate_modern_speed_destination(n: i64, destination: u8) -> Result<()> {
         maximum / 100
     );
     Ok(())
+}
+
+/// Settings whose permitted values depend on the destination (region).
+fn is_destination_limit(name: &str) -> bool {
+    name == "speed-limit" || name.starts_with("max-power.")
+}
+
+fn validate_destination_limit(
+    model: SettingsModel,
+    name: &str,
+    n: i64,
+    destination: u8,
+) -> Result<()> {
+    if name == "speed-limit" {
+        if model.modern() {
+            validate_modern_speed_destination(n, destination)?;
+        } else {
+            validate_speed_destination(n, destination)?;
+        }
+    } else if name.starts_with("max-power.") {
+        ensure!(
+            destination != 3 || n <= 400,
+            "destination 3 limits maximum power to 400 W"
+        );
+    }
+    Ok(())
+}
+
+/// Current raw values of the model's destination-limited settings.
+fn destination_limits(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    model: SettingsModel,
+) -> Result<Vec<(String, i64)>> {
+    schema_for_model(model)
+        .into_iter()
+        .filter(|s| is_destination_limit(&s.name))
+        .map(|s| {
+            let raw = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+            validate_model_reply(&s, &raw)?;
+            let value = s
+                .decode(&raw)?
+                .as_f64()
+                .context("non-numeric limit reply")?;
+            let n = (value * s.scale).round() as i64;
+            Ok((s.name, n))
+        })
+        .collect()
 }
 
 fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
@@ -1971,6 +2016,110 @@ mod tests {
         assert!(validate_modern_speed_destination(2600, 0).is_err());
         assert!(validate_speed_destination(4500, 5).is_err());
         assert!(validate_speed_destination(1400, 2).is_err());
+    }
+    #[test]
+    fn destination_change_and_restore_refuse_speed_or_power_above_the_new_region() {
+        struct Motor {
+            destination: u8,
+            speed: u16,
+            boost: u16,
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x16, 0xac) => vec![params[0], self.destination, 0xff, 0xff],
+                    (0x16, 0xb4) => [&self.speed.to_le_bytes()[..], &[0xff, 0xff]].concat(),
+                    (0x17, 0x14) => {
+                        let watts: u16 = if params[0] == 3 { self.boost } else { 300 };
+                        [&[params[0]][..], &watts.to_le_bytes()].concat()
+                    }
+                    (0x16, 0xa8) => {
+                        self.destination = params[1];
+                        self.sets += 1;
+                        vec![]
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        let path = |case: usize| {
+            std::env::temp_dir().join(format!(
+                "cranklink-destination-limits-{}-{}-{case}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ))
+        };
+        for (case, (model, destination, speed, boost, target, refusal)) in [
+            (
+                SettingsModel::Ep800Crg,
+                1,
+                3200,
+                400,
+                "0",
+                Some("speed-limit"),
+            ),
+            (SettingsModel::Ep800Crg, 1, 2500, 400, "0", None),
+            (
+                SettingsModel::Ep800Crg,
+                1,
+                2500,
+                500,
+                "3",
+                Some("max-power.boost"),
+            ),
+            (SettingsModel::Ep800Crg, 1, 2500, 400, "3", None),
+            (SettingsModel::Ep801, 5, 4000, 0, "0", Some("speed-limit")),
+            (SettingsModel::Ep801, 5, 2500, 0, "0", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut motor = Motor {
+                destination,
+                speed,
+                boost,
+                sets: 0,
+            };
+            let backup = path(case);
+            let result = set_for_model(&mut motor, 13, "destination", target, &backup, model);
+            match refusal {
+                Some(limit) => {
+                    let error = result.unwrap_err().to_string();
+                    assert_eq!(error, format!("change {limit} before destination {target}"));
+                    assert_eq!((motor.sets, motor.destination), (0, destination));
+                    assert!(!backup.exists(), "refused before the backup");
+                }
+                None => {
+                    assert!(result.unwrap().changed);
+                    assert_eq!(motor.sets, 1);
+                    std::fs::remove_file(backup).unwrap();
+                }
+            }
+        }
+        // A destination backup taken at 25 km/h cannot return to EU after a raise.
+        let mut motor = Motor {
+            destination: 0,
+            speed: 2500,
+            boost: 400,
+            sets: 0,
+        };
+        let (original, rollback) = (path(10), path(11));
+        set(&mut motor, 13, "destination", "1", &original).unwrap();
+        motor.speed = 3200;
+        let error = restore(&mut motor, 13, &original, &rollback).unwrap_err();
+        assert_eq!(error.to_string(), "change speed-limit before destination 0");
+        assert_eq!((motor.sets, motor.destination), (1, 1));
+        assert!(!rollback.exists());
+        std::fs::remove_file(original).unwrap();
     }
     #[test]
     fn modern_change_and_serial_bound_restore_preserve_extended_profile_fields() {

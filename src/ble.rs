@@ -1537,6 +1537,8 @@ pub(crate) mod tests {
                     (0x16, 0xb0) => {
                         s.speed_limit = u16::from_le_bytes([data[3], data[4]]);
                     }
+                    // Maximum power, 400 W in every mode.
+                    (0x17, 0x14) => response.extend([data[3], 0x90, 0x01]),
                     _ => panic!("unexpected unit command {group:02x}/{cmd:02x}"),
                 }
                 notify(&mut s, FREE_RESPONSE, response);
