@@ -74,8 +74,15 @@ The prebuilt binaries are all built on Linux, and CI runs only the Linux one. Th
 **Connecting the adapter**
 
 - **macOS**: `--port usb` for direct SM-PCE02 access.
-- **Linux**: grant access to USB device `1e44:7151` or the serial port (`/dev/ttyUSB0`).
-- **Windows**: prefer the FTDI COM port (`--port COM3`); direct USB requires WinUSB.
+- **Linux**: `--port usb` needs access to USB device `1e44:7151`, for example with a udev rule in `/etc/udev/rules.d/70-sm-pce02.rules`:
+
+  ```text
+  SUBSYSTEM=="usb", ATTR{idVendor}=="1e44", ATTR{idProduct}=="7151", MODE="0660", TAG+="uaccess"
+  ```
+
+  Then run `sudo udevadm control --reload && sudo udevadm trigger`, or replug the adapter. `uaccess` grants access only to the user at the local seat; on a headless or SSH-only host, use `GROUP="plugdev"` (or another group you are in) instead. A serial path such as `/dev/ttyUSB0` exists only if a USB-serial driver is bound to the adapter; cranklink does not detach that driver, so `--port usb` cannot claim the adapter while it is bound.
+- **Windows**: prefer the FTDI COM port (`--port COM3`); direct USB (`--port usb`) requires WinUSB.
+- Bridge recovery (`--bridge-recovery`) and `firmware dump-bootloader` work only over direct USB (`--port usb`), not a serial or COM port.
 - Close other adapter applications first. If the adapter's supercapacitor needs charging, cranklink waits up to 90 s; keep USB connected.
 
 ### Connect and identify
