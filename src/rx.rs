@@ -714,7 +714,7 @@ fn transfer_retry(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     struct LegacyReplay {
         pending: VecDeque<Frame>,
@@ -933,7 +933,7 @@ mod tests {
     }
     /// `read_boot` at slot 13 through fast-bridge preparation, answered by a
     /// fast bootloader with the given capability, then the `reset_fast` return.
-    fn fast_probe_script(capability: u8) -> Vec<(Frame, Frame)> {
+    pub(crate) fn fast_probe_script(capability: u8) -> Vec<(Frame, Frame)> {
         use crate::device::tests::frame;
         let a8 = |p: &[u8]| {
             let mut b = [0u8; 16];

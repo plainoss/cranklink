@@ -1124,20 +1124,11 @@ fn execute_firmware_command(
                             return Err(e);
                         }
                     }
-                    let boot = match crate::rx::read_boot(&mut s, before.slot) {
-                        Ok(boot) => boot,
-                        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
-                            let restarted =
-                                return_after_rx_refusal(&mut s, &e, before.slot, recovery, None);
-                            return finish_operation(Err(e), restarted);
-                        }
-                        Err(e) => return Err(e),
-                    };
+                    let boot = read_rx_boot_unerased(&mut s, before.slot, recovery, None)?;
                     if !is_json {
                         out_println!("Renesas RX Bootloader Probe:");
                         out_println!("  Capability: {}", boot.capability_sequence);
                     }
-                    crate::rx::reset_fast(&mut s, before.slot)?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
                     ensure!(
@@ -1600,23 +1591,7 @@ fn execute_firmware_command(
                 let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
 
                 if !write {
-                    let rx = match crate::rx::read_boot(&mut s, ready.slot) {
-                        Ok(rx) => rx,
-                        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
-                            let e = journal_failure(&mut jnl, "dry-run-refused", e);
-                            let restarted = return_after_rx_refusal(
-                                &mut s,
-                                &e,
-                                before.slot,
-                                recovery,
-                                Some(&mut jnl),
-                            );
-                            return finish_operation(Err(e), restarted);
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    jnl.record("rx-boot", &rx)?;
-                    crate::rx::reset_fast(&mut s, before.slot)?;
+                    let rx = read_rx_boot_unerased(&mut s, ready.slot, recovery, Some(&mut jnl))?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
                     // Predict the write: it refuses a retry-capable bootloader without the flag.
@@ -3045,6 +3020,67 @@ fn verify_application_return(
     Ok(after)
 }
 
+/// `rx::read_boot` for a probe or dry run, neither of which erases, then the
+/// bridge reset; the caller restarts the application. A refusal has already
+/// reset the bridge, so the application is restarted once that reset is
+/// confirmed. Any other entry failure may leave RX in update mode with the
+/// bridge active, a state no reset is validated for, so it is only journaled
+/// and reported, as is a failed reset.
+fn read_rx_boot_unerased(
+    session: &mut Session,
+    slot: u8,
+    recovery: bool,
+    mut jnl: Option<&mut Journal>,
+) -> Result<crate::rx::Boot> {
+    let boot = match crate::rx::read_boot(session, slot) {
+        Ok(boot) => boot,
+        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+            let e = match jnl.as_deref_mut() {
+                Some(jnl) => journal_failure(jnl, "dry-run-refused", e),
+                None => e,
+            };
+            let restarted = return_after_rx_refusal(session, &e, slot, recovery, jnl);
+            return finish_operation(Err(e), restarted);
+        }
+        Err(e) => {
+            let e = match jnl {
+                Some(jnl) => journal_failure(jnl, "rx-boot-failed", e),
+                None => e,
+            };
+            warn_rx_bridge_unconfirmed(recovery);
+            return Err(e);
+        }
+    };
+    // A failed journal write must not skip the bridge reset.
+    let journaled = match jnl.as_deref_mut() {
+        Some(jnl) => jnl.record("rx-boot", &boot),
+        None => Ok(()),
+    };
+    let reset = crate::rx::reset_fast(session, slot).map(|_| ());
+    let reset = reset.map_err(|e| {
+        warn_rx_bridge_unconfirmed(recovery);
+        match jnl {
+            Some(jnl) => journal_failure(jnl, "rx-reset-failed", e),
+            None => e,
+        }
+    });
+    finish_operation(journaled, reset).map(|()| boot)
+}
+
+fn warn_rx_bridge_unconfirmed(recovery: bool) {
+    err_println!(
+        "Nothing was erased, but the RX boot bridge did not confirm its return to the application."
+    );
+    // The read-only probe needs both application versions, which a recovery
+    // RX application cannot report; only the recovery RX probe reaches it.
+    let check = if recovery {
+        "cranklink firmware probe --target rx --recovery"
+    } else {
+        "cranklink probe"
+    };
+    err_println!("Check the application with `{check}` before retrying.");
+}
+
 /// Return to the application after `rx::RefusedBeforeErase`, as the dry run
 /// does; nothing was erased, so the refusal is not an interrupted write.
 fn return_after_rx_refusal(
@@ -3058,10 +3094,7 @@ fn return_after_rx_refusal(
         .downcast_ref::<crate::rx::RefusedBeforeErase>()
         .is_some_and(|r| r.reset.is_ok());
     if !reset {
-        err_println!("Nothing was erased, but the RX boot bridge did not confirm its return to the application.");
-        err_println!(
-            "Check the application with `cranklink firmware probe --target rx` before retrying."
-        );
+        warn_rx_bridge_unconfirmed(recovery);
         return Ok(());
     }
     let after = start_rx_session(session, Some(slot), recovery)
@@ -4099,6 +4132,82 @@ mod cli_tests {
         assert!(
             error.contains("flash write NAK") && error.contains("was not written"),
             "{error}"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_failed_rx_boot_entry_is_journaled_without_a_blind_reset() {
+        use crate::device::tests::{frame, scripted_motor};
+        // RX acknowledges update mode, then the fast bridge's protocol switch
+        // is not confirmed: RX may be in update mode, with no usable reply.
+        let script = vec![
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (frame(0x48, &[13, 1, 0xc0, 13]), frame(0x48, &[0, 1, 0xc2])),
+            (
+                frame(0x48, &[13, 0x32, 0x20, 1]),
+                frame(0x48, &[0, 0x32, 0x22]),
+            ),
+            (frame(3, &[0x60]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-rx-boot-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let mut jnl = Journal::new(&path).unwrap();
+        let (mut session, steps) = scripted_motor(13, script.clone());
+        let error = read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("prepare DCAS fast RX boot bridge"),
+            "{error:#}"
+        );
+        // The script admits no reset or restart after the failure.
+        assert!(steps.borrow().is_empty());
+        drop(jnl);
+        let journal = std::fs::read_to_string(&path).unwrap();
+        assert!(journal.contains(r#""stage":"rx-boot-failed""#), "{journal}");
+        std::fs::remove_file(path).unwrap();
+        // A probe has no journal and sends nothing more either.
+        let (mut session, steps) = scripted_motor(13, script);
+        read_rx_boot_unerased(&mut session, 13, false, None).unwrap_err();
+        assert!(steps.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_unerased_rx_boot_read_resets_the_bridge_despite_the_journal() {
+        use crate::device::tests::{frame, scripted_motor};
+        use crate::rx::tests::fast_probe_script;
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-rx-reset-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        // A journal that rejects the rx-boot entry must not skip the reset.
+        Journal::new(&path).unwrap();
+        let mut jnl = Journal(std::fs::OpenOptions::new().read(true).open(&path).unwrap());
+        let (mut session, steps) = scripted_motor(13, fast_probe_script(0));
+        read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(steps.borrow().is_empty());
+        // The adapter then rejects its return to mode 5: the reset failed.
+        let mut script = fast_probe_script(0);
+        script.last_mut().unwrap().1 = frame(0x27, &[5, 1]);
+        std::fs::remove_file(&path).unwrap();
+        let mut jnl = Journal::new(&path).unwrap();
+        let (mut session, steps) = scripted_motor(13, script);
+        let error = read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("restore DCAS application after RX session"),
+            "{error:#}"
+        );
+        assert!(steps.borrow().is_empty());
+        drop(jnl);
+        let journal = std::fs::read_to_string(&path).unwrap();
+        assert!(journal.contains(r#""stage":"rx-boot""#), "{journal}");
+        assert!(
+            journal.contains(r#""stage":"rx-reset-failed""#),
+            "{journal}"
         );
         std::fs::remove_file(path).unwrap();
     }
