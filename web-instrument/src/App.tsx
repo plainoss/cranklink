@@ -19,6 +19,7 @@ import { useMediaQuery } from "./hooks.ts";
 import { friendlyMotorName } from "./domain/motorIdentity.ts";
 import { unwritableNotice } from "./domain/settingFormat.ts";
 import { ConnectView } from "./components/views/ConnectView.tsx";
+import { DisconnectedView } from "./components/views/DisconnectedView.tsx";
 import { OverviewView } from "./components/views/OverviewView.tsx";
 import { TuneView } from "./components/views/TuneView.tsx";
 import { FirmwareView } from "./components/views/FirmwareView.tsx";
@@ -161,6 +162,7 @@ export function App({ controller }: AppProps) {
   };
 
   const disconnect = () => {
+    setDrawerOpen(false);
     if (stagedCount > 0) setDisconnectConfirmOpen(true);
     else controller.disconnect().catch(() => {});
   };
@@ -237,7 +239,9 @@ export function App({ controller }: AppProps) {
   if (!connected) {
     return (
       <>
-        <ConnectView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} />
+        {state.bluetoothDisconnectNotice
+          ? <DisconnectedView onContinue={() => controller.dismissBluetoothDisconnectNotice()} />
+          : <ConnectView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} />}
         {approvalBanner}
         <OperationModal state={state} />
         <PasskeyDialog state={state} controller={controller} />
@@ -356,17 +360,6 @@ export function App({ controller }: AppProps) {
         <AlertTriangle size={16} className="text-warning shrink-0" aria-hidden="true" />
         Safety &amp; disclaimer
       </Button>
-      <Button
-        variant="ghost"
-        fullWidth
-        onPress={disconnect}
-        data-testid={isDesktop ? "btn-disconnect" : "btn-disconnect-mobile"}
-        data-action="disconnect"
-        className="justify-start"
-      >
-        <LogOut size={16} aria-hidden="true" />
-        Disconnect
-      </Button>
     </div>
   );
 
@@ -418,6 +411,16 @@ export function App({ controller }: AppProps) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <Button
+                onPress={disconnect}
+                isDisabled={!["ready", "error"].includes(state.phase)}
+                data-testid="btn-disconnect"
+                data-action="disconnect"
+                className="bg-accent text-accent-foreground font-semibold min-h-11"
+              >
+                <LogOut size={16} aria-hidden="true" />
+                Disconnect
+              </Button>
               {searchable && isDesktop && (
                 <SearchInput value={searchQuery} onChange={setSearchQuery} />
               )}
@@ -439,6 +442,9 @@ export function App({ controller }: AppProps) {
               )}
             </div>
           </div>
+          {state.transport === "ble" && (
+            <p className="px-4 sm:px-8 pb-2 text-xs text-muted">Disconnect when finished so the bike can return to riding mode.</p>
+          )}
           {!isDesktop && showSearchInput && (
             <div className="px-4 pb-3 flex items-center gap-2">
               <SearchInput

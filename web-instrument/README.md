@@ -2,6 +2,11 @@
 
 User-facing usage is in the [main README](../README.md#web-app).
 
+Disconnect is directly accessible in the top bar on mobile and desktop. The UI
+shows the pending cleanup operation, then keeps a Bluetooth completion view
+visible until the user returns to the connection screen. Link closure does not
+confirm the bike's physical return to riding mode; the view explains that wait.
+
 ## Build
 
 Requires Node.js 22.12 or later and Python 3. From `web-instrument/`:

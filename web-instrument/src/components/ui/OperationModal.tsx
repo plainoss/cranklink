@@ -2,6 +2,7 @@ import { Alert, Modal, Spinner } from "@heroui/react";
 import type { InstrumentState, SessionPhase, TransportType } from "../../types.ts";
 
 const TITLES: Partial<Record<SessionPhase, string>> = {
+  disconnecting: "Disconnecting…",
   probing: "Discovering components…",
   reading: "Reading settings…",
   committing: "Writing to the bike…",
@@ -20,6 +21,9 @@ function connectingTitle(transport: TransportType | null): string {
 
 /** What the operator must not do while this phase runs, per transport. */
 function guidance(phase: SessionPhase, transport: TransportType | null, check: boolean): { text: string; critical: boolean } {
+  if (phase === "disconnecting") {
+    return { text: "Keep this page open until the connection closes. The bike may then take a few seconds to return to riding mode.", critical: false };
+  }
   if (transport === "sim") {
     return { text: "Simulated bike components. No hardware is involved.", critical: false };
   }
@@ -39,7 +43,7 @@ function guidance(phase: SessionPhase, transport: TransportType | null, check: b
 }
 
 export function OperationModal({ state }: { state: InstrumentState }) {
-  const busy = ["connecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
+  const busy = ["connecting", "disconnecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
   // Steps aside for the passkey prompt so focus and the on-screen keyboard go to its field.
   const open = busy && !state.passkeyPromptOpen;
   const check = state.phase === "flashing" && state.firmware.operation === "check";

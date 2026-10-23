@@ -94,6 +94,7 @@ export class SessionController {
   constructor() {
     this.state = {
       phase: "disconnected",
+      bluetoothDisconnectNotice: false,
       statusMessage: "Select a physical adapter or start the simulator.",
       failure: null,
       linkLost: false,
@@ -352,6 +353,7 @@ export class SessionController {
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
   ): Promise<DeviceIdentity | null> {
+    if (this.disconnecting) throw new Error("Wait for disconnect to finish before connecting.");
     const task = this.doConnectAndSync(transport, simOpts).then((next) => this.resumeHeld(next));
     this.syncInProgress = task;
     try {
@@ -378,6 +380,7 @@ export class SessionController {
     this.adapterLoss = null;
     this.startOperation({
       phase: "connecting",
+      bluetoothDisconnectNotice: false,
       transport,
       linkLost: false,
       simulatorOptions: mergedSim,
@@ -732,8 +735,11 @@ export class SessionController {
   }
 
   public async disconnect(): Promise<void> {
+    if (this.disconnecting) return;
+    const wasBluetooth = this.state.transport === "ble";
     let cleanupError: string | null = null;
     this.disconnecting = true;
+    this.update({ phase: "disconnecting", statusMessage: "Closing the connection and ending the bike session…", toast: null });
     // Refuse the review now: approving it while the disconnect runs would
     // queue the write behind it.
     this.state.mcpApproval?.resolve(false);
@@ -755,6 +761,7 @@ export class SessionController {
       this.state.mcpApproval?.resolve(false);
       this.update({
         phase: "disconnected",
+        bluetoothDisconnectNotice: wasBluetooth && !cleanupError,
         transport: null,
         identity: null,
         units: [],
@@ -768,6 +775,10 @@ export class SessionController {
         statusMessage: cleanupError ? "Disconnected, but bike cleanup was not confirmed." : "Disconnected.",
       });
     }
+  }
+
+  public dismissBluetoothDisconnectNotice(): void {
+    this.update({ bluetoothDisconnectNotice: false });
   }
 
   /**

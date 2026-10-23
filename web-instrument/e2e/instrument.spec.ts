@@ -586,7 +586,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   expect(await unloadIsGuarded(), "Confirmed disconnect releases the unload guard").toBe(false);
 });
 
-test("Di2 Bluetooth retains ordinary service mode across reads and closes without stop or reset", async ({ page }) => {
+test("Di2 Bluetooth retains ordinary service mode across reads and closes without stop or reset", async ({ page }, testInfo) => {
   await selectSimulatedBluetoothDevice(page, false, true, false, true);
   await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
   await page.evaluate(async () => {
@@ -609,13 +609,41 @@ test("Di2 Bluetooth retains ordinary service mode across reads and closes withou
     };
   });
   expect(retained).toEqual({ connected: true, connections: 1, model: "RD-R9150", masterModes: 0, stops: 0, componentStarts: 1 });
-  await page.evaluate(() => (window as any).cranklinkInstrumentController.disconnect());
+  // Disconnect stays directly reachable on a phone, without opening the menu.
+  await page.setViewportSize({ width: 393, height: 851 });
+  const disconnect = page.getByTestId("btn-disconnect");
+  await expect(disconnect).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("phone-disconnect.png") });
+  await page.evaluate(() => {
+    const terminal = (window as any).estepsTerminal;
+    const run = terminal.run.bind(terminal);
+    const gate = new Promise<void>((resolve) => { (window as any).finishTestDisconnect = resolve; });
+    terminal.run = async (line: string) => {
+      if (line === "disconnect") await gate;
+      return run(line);
+    };
+  });
+  await disconnect.click();
+  await expect(page.getByTestId("operation-modal")).toContainText("Disconnecting");
+  await expect(page.getByTestId("operation-modal")).toBeInViewport();
+  await expect(page.getByTestId("btn-connect-ble")).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath("phone-disconnecting.png"), animations: "disabled" });
+  await page.evaluate(() => (window as any).finishTestDisconnect());
+  const recovery = page.getByTestId("bluetooth-disconnected-view");
+  await expect(recovery).toBeVisible();
+  await expect(recovery).toContainText("Wait for the bike to return to riding mode");
+  await expect(recovery).toContainText("cannot detect when the bike is ready");
+  await expect(page.getByTestId("operation-modal")).toBeHidden();
+  await expect(page.getByTestId("btn-connect-ble")).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath("phone-disconnected.png") });
   expect(await page.evaluate(() => ({
     connected: (window as any).testBluetoothDevice.gatt.connected,
     stopWrites: (window as any).testBluetoothDevice.writes.filter((w: any) =>
       (w.id === 0x2afa && ((w.bytes[1] === 0x0c && w.bytes[2] === 0) || w.bytes[1] === 0x10)) ||
       (w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 0)).length,
   }))).toEqual({ connected: false, stopWrites: 0 });
+  await page.getByTestId("btn-back-to-connect").click();
+  await expect(page.getByTestId("btn-connect-ble")).toBeVisible();
 });
 
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {

@@ -44,6 +44,37 @@ explicit master-routing cleanup remains separate. The web connection screen
 distinguishes a Di2 bike from a STEPS e-bike instead of forcing every gateway
 into the motor-oriented master workflow.
 
+## Pre-service routing detection research on 2026-10-23
+
+The recovered E-TUBE APK's actual `UnitRecognition.recognizeUnits` bytecode
+orders `changeToPceSlave`, `validateMasterUnit`, `checkMasterUnitNext`,
+`checkConnectedUnits`, then `startPcConnectMode`. `validateMasterUnit` obtains
+cached master metadata or calls `BleManager.getMasterUnitInfo`, which sends
+`00 0d 00`. Thus the vendor reads the bus-master series before `00 0c 01` starts
+service mode. The metadata's third byte is a compatibility flag, not a model
+unit number. Di2 components do not imply the absence of a STEPS motor.
+
+This supports choosing routing within the original authenticated GATT connection,
+before starting service. Disconnecting to change routing would lose the short
+post-power-on Bluetooth window on the tested STEPS bike. Known master families
+can select their supported route; unknown or ambiguous metadata needs a manual
+choice before service, rather than a guess based on the gateway name. Historical
+motors and third-party assist adapters must not fall through to shifting-only.
+
+An offline stock SC-EM800 4.6.0 dispatcher probe accepted revision, local stock,
+and master-metadata queries after restoring normal/slave mode, without a service
+start or E-TUBE bus packets. Its master series was zero because the simulator
+does not populate that normal-master cache. This proves handler execution,
+not full topology recognition or a cold-boot sequence. The WU111 hardware trace
+also contains unsolicited master metadata before service mode; explicit
+pre-service querying on SC-EM800 still needs hardware validation.
+
+Automatic detection is not implemented by this research. A query timeout currently
+poisons the generic gateway transaction path. Any optional detector must bound
+the probe, handle late replies, and define fallback before service without
+blanket clearing a failed session's poison state. The gateway-maintained identity
+must also agree with subsequent live discovery before privileged operations.
+
 ## Failed hardware validation on 2026-10-23
 
 The merged branch (`1f3d16f`, release binary SHA-256
