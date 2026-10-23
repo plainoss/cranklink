@@ -60,6 +60,7 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 - If the PC-link stop or Bluetooth disconnect fails after a command completed, its receipt (including the backup path) is still printed before the error, and the command exits with an error.
 - Destination, assist-profile, profile-display and maximum-power replies must echo the requested record selector; a reply for another record is refused before the backup, and the SET always names the requested record.
 - `restore` takes such a backup, checks the serial, and writes a new backup of the current value first.
+- Without `--backup`, both write to a new file in the current directory: `set` to `backup-<setting>-<serial>-<ms>.json` (dots in the setting name become underscores), `restore` to `backup-restore-<serial>-<ms>.json`. The receipt prints the path.
 - Component restores also require the same catalog model in the backup; shared fields changed since the backup are preserved. Existing motor backups remain compatible.
 - A `settings read --output` snapshot is not a restore input.
 - Readback does not prove persistence. Power-cycle the bike and read again.

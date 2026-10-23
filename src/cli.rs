@@ -329,7 +329,7 @@ enum SettingsCommand {
         /// New value
         #[arg(allow_negative_numbers = true)]
         value: String,
-        /// Pre-write backup path (auto-generated if omitted)
+        /// Pre-write backup path (default: a new file in the current directory)
         #[arg(long)]
         backup: Option<PathBuf>,
         /// Run the write's input and live checks without writing (no unit authentication)
@@ -340,7 +340,7 @@ enum SettingsCommand {
     Restore {
         /// Backup file to restore
         file: PathBuf,
-        /// Pre-restore backup path (auto-generated if omitted)
+        /// Pre-restore backup path (default: a new file in the current directory)
         #[arg(long)]
         backup: Option<PathBuf>,
         #[arg(skip)]
