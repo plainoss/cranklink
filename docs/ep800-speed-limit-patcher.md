@@ -6,8 +6,9 @@ Shimano `.dat` containers. Supply your own firmware; none is included.
 
 The default ceiling is **60 km/h**. Choose **15–99 km/h**, with up to two decimal
 places. Raising the ceiling does not change the motor's saved speed setting;
-that setting must be written separately. The tool does not flash a motor or
-modify M firmware.
+that setting must be written separately, and `cranklink settings set` itself
+only writes speeds its destination table allows (at most 32 km/h, 45 km/h for
+modern destination 5). The tool does not flash a motor or modify M firmware.
 
 ## Supported images
 
@@ -18,12 +19,19 @@ modify M firmware.
 | DU-E5100 | 4.1.0.0 |
 | DU-E5000 | 4.5.0.0 |
 
+cranklink cannot configure a DU-E5000 or flash it from its application: its
+`22/00` identity is outside the motor gate. A `--recovery` write with
+`--allow-unverified-model` still erases and writes the motor, but cannot be
+verified afterwards because the application is not admitted as a motor. Treat
+patched E5000 images as offline-only.
+
 The tool accepts only the exact unmodified stock images identified by its
 built-in hashes. A matching version label is not enough. To choose a different
 ceiling later, start again from the original stock file.
 
 EP600, EP500, EP801, E8000 and E6000 are not supported. Only EP800 D4.2.0.0 has
-been tested on a physical motor. The 99 km/h limit bounds the tested arithmetic
+been tested on a physical motor; for the other images the tool prints a warning
+and reports `"physically_tested": false` in `--json` output. The 99 km/h limit bounds the tested arithmetic
 range; it does not establish the motor's physical assistance behavior.
 
 ## Create an image
@@ -48,8 +56,12 @@ a [simulator profile](../tools/firmware-sim/profiles.json). Pass its path using
 not need a gateway.
 
 Omit `--verify` to patch without running the emulator. Use `.bin` as the output
-extension for a raw image, or `.dat` for an encrypted container. Add `--json` for
-a machine-readable report. Requested checks must pass before output is written.
+extension for a raw image, or `.dat` for an encrypted container. A raw image has
+no container checksum, so `cranklink firmware flash` writes one only with
+`--expect-sha256`. Add `--json` for a machine-readable report. Requested checks
+must pass before output is written.
+An existing output file is never replaced unless `--force` is given, and the
+output is written to a temporary file and renamed into place.
 `tools/patch_ep800_speed.py` accepts the same options as a compatibility entry
 point.
 
@@ -59,6 +71,11 @@ Inspect an output container with the regular CLI before considering a flash:
 cranklink firmware inspect DUEP800-D.4.2.0.patched.dat \
   --companion DUEP800-M.4.1.11.dat
 ```
+
+To bind a flash to this output, pass the `Source SHA-256` that `firmware inspect`
+prints as `--expect-sha256`; the `Companion SHA-256` below it is the M file's.
+The patcher's `Patched SHA256` hashes the decrypted application, so for `.dat`
+output it differs from the file's hash.
 
 ## What changes
 

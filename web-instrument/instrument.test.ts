@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -8,12 +9,17 @@ import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
+  shellQuote,
 } from "./src/domain/firmwarePackage.ts";
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
-import { formatSetting, formatValue } from "./src/domain/settingFormat.ts";
+import { WebUsbPort } from "./usb.js";
+import { WebSerialPort } from "./serial.js";
+import { formatSetting, formatValue, isRegulatedSetting, listText, unwritableValues } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
+import { preferredTransport } from "./src/core/platform.ts";
 import { DeviceSimulator } from "./simulator.js";
+import type { SettingsModel } from "./src/types.ts";
 
 describe("Domain Schema Enrichment & Ordering", () => {
   it("keeps E6000 geometry controls and presets within the detected schema", () => {
@@ -60,12 +66,25 @@ describe("Domain Schema Enrichment & Ordering", () => {
       assert.equal(formatValue(speedSpec, 25), "25 km/h");
     }
   });
+
+  it("offers modern torque levels only for OEM bounds with a vendor table", async () => {
+    const { modernTorqueLevels } = await import("./src/domain/schema.ts");
+    assert.deepEqual(modernTorqueLevels("ep801", "eco", 20, 85), [20, 27, 34, 42, 49, 56, 63, 70]);
+    assert.deepEqual(modernTorqueLevels("ep600", "boost", 20, 50), [27, 30, 33, 36, 40, 43, 46, 50]);
+    assert.deepEqual(modernTorqueLevels("ep801", "trail", 25, 80), []);
+    assert.equal(modernTorqueLevels("ep800-crg", "trail", 25, 80), undefined);
+  });
 });
 
 describe("Synchronized Dual-MCU Firmware Package Domain", () => {
   it("classifies DCAS (-D) and RX (-M) images and validates companion match", () => {
     assert.equal(classifyFirmwareRole("DUEP800-D.4.2.0.dat"), "dcas");
     assert.equal(classifyFirmwareRole("DUEP800-M.4.1.11.dat"), "rx");
+    // Metadata from the WASM core wins over the filename.
+    const meta = { series: 0x23, unit: 0, version: "4.2.0.0", source_sha256: "" };
+    assert.equal(classifyFirmwareRole("motor.bin", { ...meta, kind: "dcas-x" }), "dcas");
+    assert.equal(classifyFirmwareRole("motor.bin", { ...meta, kind: "dcas2i" }), "dcas");
+    assert.equal(classifyFirmwareRole("motor-D.bin", { ...meta, kind: "renesas" }), "rx");
 
     const dcasFile = {
       filename: "DUEP800-D.4.2.0.dat",
@@ -73,7 +92,7 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
       sha256: "35521a18a7859482d98fab2523cbb97dfc653def4db00091c6265f2573f46543",
       role: "dcas" as const,
       metadata: {
-        kind: "DcasX",
+        kind: "dcas-x" as const,
         series: 0x23,
         unit: 0,
         board: 1,
@@ -89,7 +108,7 @@ describe("Synchronized Dual-MCU Firmware Package Domain", () => {
       sha256: "94986ebf8c21587a2b54b197f19a51c4118918bdca0aff6296a7727f7dfacc44",
       role: "rx" as const,
       metadata: {
-        kind: "Renesas",
+        kind: "renesas" as const,
         series: 0x23,
         unit: 0,
         version: "4.1.11.0",
@@ -228,6 +247,340 @@ describe("SessionController Finite State Machine & Staging", () => {
   });
 });
 
+describe("Firmware image import", () => {
+  it("stores a different image under a taken name beside the stored one", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const stored = new Map<string, Uint8Array>();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...stored.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => stored.get(p)!,
+        import: async (p: string, b: Uint8Array) => {
+          if (stored.has(p)) throw new Error(`File already exists: ${p}`);
+          stored.set(p, b);
+        },
+        initialize: async () => {},
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        // Like the WASM inspect, report the version held in the stored bytes.
+        const name = /^firmware inspect '([^']+)'$/.exec(line)?.[1];
+        if (name) {
+          const meta = { kind: "dcas-x", series: 0x23, unit: 0, version: `4.6.${stored.get(name)![0]}`, source_sha256: "" };
+          (globalThis as any).window.estepsTerminalPrint(JSON.stringify(meta), "stdout");
+        }
+        return { code: 0 };
+      },
+    });
+    const name = "DUEP800-D.4.6.0.dat";
+    const load = async (bytes: number[]) => {
+      await controller.importFirmwarePackageFiles([new File([new Uint8Array(bytes)], name)]);
+      return controller.getState().firmware.dcasFile!;
+    };
+
+    assert.equal((await load([1, 1])).filename, name);
+    const replacement = await load([2, 2]);
+    assert.equal(replacement.sha256, createHash("sha256").update(new Uint8Array([2, 2])).digest("hex"));
+    assert.equal(replacement.filename, `DUEP800-D.4.6.0.${replacement.sha256.slice(0, 12)}.dat`);
+    assert.equal(commands.at(-1), `firmware inspect '${replacement.filename}'`);
+    assert.equal(replacement.metadata?.version, "4.6.2");
+    assert.equal(replacement.role, "dcas");
+    assert.deepEqual(stored.get(name), new Uint8Array([1, 1]));
+
+    // Re-importing either image reuses its stored copy.
+    assert.equal((await load([1, 1])).filename, name);
+    assert.equal((await load([2, 2])).filename, replacement.filename);
+    assert.equal(stored.size, 2);
+  });
+
+  it("reuses an image another tab stored after this tab loaded the store", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const durable = new Map<string, Uint8Array>();
+    const loaded = new Map<string, Uint8Array>();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...loaded.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => loaded.get(p)!,
+        // Like IndexedDB's add(), refuse a name any tab already stored.
+        import: async (p: string, b: Uint8Array) => {
+          if (durable.has(p)) throw new Error(`File already exists: ${p}`);
+          durable.set(p, b);
+          loaded.set(p, b);
+        },
+        initialize: async () => {
+          for (const [p, b] of durable) loaded.set(p, b);
+        },
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    const name = "DUEP800-D.4.6.0.dat";
+    durable.set(name, new Uint8Array([1, 1]));
+    await controller.importFirmwarePackageFiles([new File([new Uint8Array([1, 1])], name)]);
+    assert.equal(controller.getState().firmware.dcasFile?.filename, name);
+    assert.deepEqual(commands, [`firmware inspect '${name}'`]);
+  });
+
+  it("refuses an image whose hash-tagged name holds other bytes", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const name = "DUEP800-D.4.6.0.dat";
+    const tag = createHash("sha256").update(new Uint8Array([2, 2])).digest("hex").slice(0, 12);
+    const stored = new Map<string, Uint8Array>([
+      [name, new Uint8Array([1, 1])],
+      [`DUEP800-D.4.6.0.${tag}.dat`, new Uint8Array([3, 3])],
+    ]);
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: {
+        list: () => [...stored.keys()].map((p) => ({ path: p })),
+        bytes: (p: string) => stored.get(p)!,
+        import: async () => assert.fail("nothing may be stored"),
+        initialize: async () => {},
+      },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    await assert.rejects(
+      controller.importFirmwarePackageFiles([new File([new Uint8Array([2, 2])], name)]),
+      /already holds a different image/,
+    );
+    // The firmware view ignores the rejection, so the banner must say it.
+    assert.equal(controller.getState().failure?.kind, "firmware");
+    assert.deepEqual(commands, []);
+  });
+
+  it("quotes a file name that contains an apostrophe", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: null }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    // The terminal parser reads 'a'\''b' as the single argument a'b.
+    assert.equal(shellQuote("a'b"), "'a'\\''b'");
+    await controller.importFirmwarePackageFiles([new File([new Uint8Array([1])], "Bob's DUEP800-D.dat")]);
+    assert.deepEqual(commands, ["firmware inspect 'Bob'\\''s DUEP800-D.dat'"]);
+  });
+});
+
+describe("Firmware programming preconditions", () => {
+  it("explains a refused single-MCU program instead of failing silently", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const commands: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line: string) => {
+        commands.push(line);
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: { ...controller.getState().firmware, dcasFile: image("dcas", "DUEP800-D.4.2.0.dat") },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true, "dcas"), /companion pair first/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+
+    // A check that passed on another drive unit does not permit programming this one.
+    controller.dismissError();
+    (controller as any).update({
+      firmware: {
+        ...controller.getState().firmware, rxFile: image("rx", "DUEP800-M.4.1.11.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "0A0B0C0D0E0F",
+      },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true, "rx"), /non-erasing compatibility check on this drive unit/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+
+    // A closed link refuses every firmware operation, even after a passed check.
+    controller.dismissError();
+    (controller as any).update({ linkLost: true, firmware: { ...controller.getState().firmware, dryRunSerial: "010203040506" } });
+    await assert.rejects(controller.executeFirmwareSync(true), /Reconnect to an idle drive unit/);
+    assert.equal(controller.getState().failure?.kind, "firmware");
+    await assert.rejects(controller.executeFirmwareSync(false), /Reconnect to an idle drive unit/);
+    assert.deepEqual(commands, []);
+  });
+});
+
+describe("Non-erasing firmware check", () => {
+  function session(run: (line: string) => Promise<{ code: number }>) {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run,
+    });
+    const image = (role: "dcas" | "rx", filename: string, version: string) => ({
+      filename, sizeBytes: 1, sha256: "00".repeat(32), role,
+      metadata: { kind: role === "dcas" ? "dcas-x" as const : "renesas" as const, series: 0x23, unit: 0, version, source_sha256: "" },
+    });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506", dcasVersion: "4.2.0.0", rxVersion: "4.1.11.0" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat", "4.2.0.0"), rxFile: image("rx", "DUEP800-M.4.1.11.dat", "4.1.11.0"),
+        companionValid: true,
+      },
+    });
+    return controller;
+  }
+  const checked = { serial: "010203040506", installed: { dcas: "4.2.0.0", rx: "4.1.11.0" }, images: { dcas: "4.2.0.0", rx: "4.1.11.0" } };
+
+  it("runs as a check, not a write, and keeps its result", async () => {
+    const running: Array<string | null> = [];
+    const controller = session(async () => {
+      running.push(controller.getState().firmware.operation);
+      return { code: 0 };
+    });
+    await controller.executeFirmwareSync(false);
+    assert.deepEqual(running, ["check", "check"]);
+    const { firmware } = controller.getState();
+    assert.equal(firmware.operation, null);
+    assert.deepEqual(firmware.lastCheck, { passed: true, ...checked });
+
+    // Programming is a write and replaces the check's result.
+    running.length = 0;
+    await controller.executeFirmwareSync(true);
+    assert.deepEqual(running, ["write", "write", "write"]);
+    assert.equal(controller.getState().firmware.lastCheck, null);
+  });
+
+  it("keeps a failed check with its cause", async () => {
+    const controller = session(async () => {
+      (globalThis as any).estepsTerminalPrint("error: DCAS bootloader handshake failed\n", "stderr");
+      return { code: 1 };
+    });
+    await assert.rejects(controller.executeFirmwareSync(false), /handshake failed/);
+    const { firmware } = controller.getState();
+    assert.equal(firmware.operation, null);
+    assert.deepEqual(firmware.lastCheck, { passed: false, ...checked, error: "error: DCAS bootloader handshake failed" });
+    assert.equal(firmware.dryRunPassed, false);
+  });
+});
+
+describe("Firmware programming progress", () => {
+  it("shows the write progress the CLI reports on stderr", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const seen: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        (globalThis as any).estepsTerminalPrint("Programming 8192/65536 bytes (12%)\n", "stderr");
+        seen.push(controller.getState().statusMessage);
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await controller.executeFirmwareSync(true, "dcas");
+    assert.deepEqual(seen, ["Writing DCAS firmware: 12% (8192 of 65536 bytes)"]);
+  });
+
+  it("names the chip ble-pair is writing", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const seen: string[] = [];
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        for (const line of ["Programming 65536/65536 bytes (100%)", "Programming 8192/32768 bytes (25%)", "Programming 16384/32768 bytes (50%)"]) {
+          (globalThis as any).estepsTerminalPrint(`${line}\n`, "stderr");
+          seen.push(controller.getState().statusMessage);
+        }
+        return { code: 0 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "ble",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await controller.executeFirmwareSync(true);
+    assert.deepEqual(seen, [
+      "Writing DCAS firmware: 100% (65536 of 65536 bytes)",
+      "Writing RX firmware: 25% (8192 of 32768 bytes)",
+      "Writing RX firmware: 50% (16384 of 32768 bytes)",
+    ]);
+  });
+
+  it("treats a failed Bluetooth write as critical, not as a lost link", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    const stderr = "Programming 8192/65536 bytes (12%)\nerror: Bluetooth disconnected; reconnect before another command\n";
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async () => {
+        (globalThis as any).estepsTerminalPrint(stderr, "stderr");
+        return { code: 1 };
+      },
+    });
+    const image = (role: "dcas" | "rx", filename: string) => ({ filename, sizeBytes: 1, sha256: "00".repeat(32), role, metadata: null });
+    (controller as any).update({
+      phase: "ready", transport: "ble",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat"), rxFile: image("rx", "DUEP800-M.4.2.0.dat"),
+        companionValid: true, dryRunPassed: true, dryRunSerial: "010203040506",
+      },
+    });
+    await assert.rejects(controller.executeFirmwareSync(true), /Bluetooth disconnected/);
+    const state = controller.getState();
+    // A lost link would bring back Reconnect once the banner is dismissed.
+    assert.equal(state.linkLost, false);
+    assert.equal(describeFailure(state.failure!, state.transport, []).critical, true);
+  });
+});
+
 describe("BLE initial settings connection", () => {
   function terminalFor(snapshot: any, commands: string[]) {
     return {
@@ -309,6 +662,40 @@ describe("BLE initial settings connection", () => {
       assert.equal(identity.isCargo, cargo.endsWith("-CRG"));
       assert.ok(commands.includes(`settings schema --model '${slug}'`));
       assert.equal(controller.getState().schema.find((setting) => setting.name === "speed-limit")?.userMax, 45);
+    }
+  });
+
+  it("authenticates a modern motor's first read only over Bluetooth, as later reads do", async () => {
+    (globalThis as any).window = globalThis;
+    for (const [transport, prefix, auth] of [["usb", "", ""], ["serial", "", ""], ["ble", "--ble-master=master ", "--ble-unit-auth "]] as const) {
+      const controller = new SessionController();
+      const reads: string[] = [];
+      controller.attachTerminal({
+        setPasskeyPrompt: () => {},
+        status: () => ({ ready: true, busy: false, usbSelected: true, transport }),
+        files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+        run: async (line: string) => {
+          const print = (globalThis as any).estepsTerminalPrint;
+          if (line === `connect ${transport}`) return { code: 0 };
+          if (line === `${prefix}units`) {
+            print(JSON.stringify({ units: [{ slot: 13, model_series: 0x35, model_unit: 0, model: null, model_candidates: [] }] }), "stdout");
+            return { code: 0 };
+          }
+          if (line.startsWith("settings schema")) {
+            print(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep801.json"), "utf8"), "stdout");
+            return { code: 0 };
+          }
+          assert.match(line, /settings read$/);
+          reads.push(line);
+          print(JSON.stringify({
+            identity: { slot: 13, cargo: "01", serial: "010203040506", model_series: 0x35, model_unit: 0, dcas_version: "4.7.1.0", rx_version: "4.7.1.0" },
+            values: {}, unavailable: {},
+          }), "stdout");
+          return { code: 0 };
+        },
+      });
+      assert.equal((await controller.connectAndSync(transport))?.modelSlug, "ep801");
+      assert.deepEqual(reads, [`${prefix}--slot 13 ${auth}settings read`]);
     }
   });
 
@@ -420,6 +807,37 @@ describe("Speed and destination staging", () => {
     assert.match(controller.getState().failure!.error, /No supported destination/);
   });
 
+  it("does not promise to restore a current value cranklink cannot write", async () => {
+    (globalThis as any).window = globalThis;
+    // A speed outside 15-32 km/h, set by other tools, is refused when written back.
+    const controller = connected("ep800-crg", 1, 35);
+    const files = new Map<string, Uint8Array>();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
+      files: { list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {}, import: async (p, bytes) => { files.set(p, bytes); } },
+      run: async () => {
+        const operations = JSON.parse(new TextDecoder().decode([...files.values()].at(-1)));
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ completed: operations.length, results: operations.map((op: any) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        return { code: 0 };
+      },
+    });
+    const review = controller.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 35, after: 25 }]);
+    assert.deepEqual(controller.getState().mcpApproval?.unwritable, ["Assist Speed Limit (35 km/h)"]);
+    controller.respondMcpApproval(false);
+    assert.equal(await review, false);
+    controller.stageParameter("speed-limit", 25);
+    await controller.commitStagedBatch();
+    assert.equal(controller.getState().toast?.message,
+      "Saved 1 setting to the bike. A backup of the previous values was created, but cranklink cannot write back the previous Assist Speed Limit (35 km/h).");
+    controller.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 25, after: 30 }]);
+    assert.deepEqual(controller.getState().mcpApproval?.unwritable, []);
+    // 28 km/h is writable, but not under destination 0.
+    const regional = connected("ep800-crg", 0, 28);
+    regional.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 28, after: 25 }]);
+    assert.deepEqual(regional.getState().mcpApproval?.unwritable, ["Assist Speed Limit (28 km/h)"]);
+  });
+
   it("rejects another save while a transaction is committing", async () => {
     const controller = connected("ep800-crg", 0, 25);
     (controller as any).update({ phase: "committing" });
@@ -520,6 +938,22 @@ describe("Wire-Level GATT Simulator Register Completeness", () => {
   });
 });
 
+describe("Connect screen transport choice", () => {
+  it("offers Web Serial first for a wired connection on Windows, as connect auto does", () => {
+    const linux = {
+      isIOS: false, isBluefy: false, isWindows: false, isMacOS: false, isAndroid: false, isLinux: true,
+      supportsSerial: true, supportsBluetooth: true, supportsUsb: true,
+    };
+    const windows = { ...linux, isLinux: false, isWindows: true };
+    assert.equal(preferredTransport(windows, true), "ble");
+    assert.equal(preferredTransport(windows, false), "serial");
+    assert.equal(preferredTransport({ ...windows, supportsSerial: false }, false), "usb");
+    assert.equal(preferredTransport(linux, false), "usb");
+    assert.equal(preferredTransport({ ...linux, supportsUsb: false }, false), "serial");
+    assert.equal(preferredTransport({ ...linux, supportsUsb: false, supportsSerial: false }, false), null);
+  });
+});
+
 describe("Web Bluetooth Availability & Globally Disabled Error Handling", () => {
   const origNav = globalThis.navigator;
 
@@ -586,11 +1020,187 @@ describe("Web Bluetooth Availability & Globally Disabled Error Handling", () => 
 describe("Concise connection errors", () => {
   it("keeps known connection failures actionable without backend details", () => {
     assert.match(userFacingError("error: BLE authentication failed: rejected\n[exit 1]"), /PIN was not accepted/);
-    assert.match(userFacingError("error: drive-unit authentication is not verified for series 23 D4.1.9.0"), /isn’t supported/);
     const cleanup = userFacingError("error: cleanup also failed: BLE PC-link stop was not confirmed: BLE response timeout or notification overflow; reconnect before another command\n[exit 1]");
     assert.equal(cleanup, "The Bluetooth link closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.");
     assert.doesNotMatch(cleanup, /overflow|PC-link|exit/);
     assert.equal(userFacingError("error: Invalid value\n    at host_call (host.js:1)\n[exit 1]"), "Invalid value");
+  });
+
+  it("maps the core's motor support and authorization refusals", () => {
+    assert.match(userFacingError("error: settings/authentication is unsupported for this motor identity"), /aren’t supported for this motor identity/);
+    assert.match(userFacingError("error: protected writes require an unambiguous E6000-family model identity on this firmware"), /isn’t supported on this motor firmware/);
+    assert.equal(
+      describeFailure({ kind: "save", error: "error: settings/authentication is unsupported for this motor identity" }, "ble", []).outcome,
+      "No change was written. Your staged values are kept.",
+    );
+    for (const error of [
+      "error: modern drive-unit authentication challenge rejected, malformed or out of order; no retry",
+      "error: drive-unit authentication reply rejected, misrouted or malformed; no retry",
+      "error: modern authentication challenge rejected or malformed; no retry",
+    ]) {
+      assert.match(userFacingError(error), /rejected authorization/, error);
+      assert.equal(describeFailure({ kind: "save", error }, "ble", []).outcome, "No change was written. Your staged values are kept.");
+    }
+    // Refusals that mention the handshake are not the motor rejecting it.
+    assert.match(userFacingError("error: drive-unit authentication motor serial mismatch"), /serial doesn’t match/);
+    for (const error of [
+      "error: drive-unit authentication already attempted; no automatic retry",
+      "error: setting requires drive-unit authentication, but --no-auth was specified",
+      "error: EP800 OEM destination is unset (255); factory destination GET selector 0 is unsupported by the verified legacy firmware. Set an explicit destination using drive-unit authentication before changing speed or maximum power",
+    ]) {
+      assert.doesNotMatch(userFacingError(error), /rejected authorization/, error);
+    }
+  });
+
+  it("treats an unplugged USB or serial adapter as a lost link", () => {
+    for (const error of [
+      "error: USB device disconnected; device outcome may be uncertain",
+      "error: Serial device disconnected",
+      "error: Serial port is closed",
+      "USB disconnected; preserve the journal before recovery.",
+      "error: cleanup also failed: PC-link Stop acknowledgement: USB device disconnected; device outcome may be uncertain: read settings: USB device disconnected",
+    ]) {
+      assert.match(userFacingError(error, "usb"), /USB adapter disconnected/);
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true);
+    }
+    assert.doesNotMatch(userFacingError("error: cleanup also failed: PC-link stop could not be confirmed", "usb"), /Bluetooth/);
+  });
+
+  it("treats a USB or serial port closed after an uncertain transfer as a lost link", () => {
+    // Every later open fails with "cannot reopen"; only a reconnect makes a new port.
+    for (const error of [
+      "error: PC-link Stop acknowledgement: USB write timed out after 500 ms; device outcome uncertain",
+      "error: USB write incomplete (3/8); device outcome uncertain",
+      "error: USB write failed: NetworkError: A transfer error has occurred.; device outcome uncertain",
+      "error: Serial write timed out after 500 ms; device outcome uncertain",
+      "error: Serial write returned an incomplete or unsupported receipt; device outcome uncertain",
+      "error: Serial session changed during write; device outcome uncertain",
+      "error: read settings: FTDI UART line error 0x8",
+      "error: read settings: USB receive queue exceeded 1 MiB",
+      "error: read settings: USB receive stall",
+      "error: Serial receive queue exceeded 1 MiB",
+      "error: read settings: USB receive failed: Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.",
+      "error: read settings: Serial receive failed: Framing error",
+      "error: USB session cannot reopen after an uncertain operation: USB write timed out after 500 ms; device outcome uncertain. Reconcile the motor and select a new USB session.",
+      "error: Serial session cannot reopen after an uncertain operation: Serial close timed out after 2000 ms; session outcome uncertain. Reconcile the motor and select a new serial session.",
+    ]) {
+      assert.match(userFacingError(error, "usb"), /Reconnect/, error);
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true, error);
+    }
+    // The core's own uncertain SET leaves the port usable.
+    const batch = "error: batch stopped at operation 1; 0 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device";
+    assert.equal(describeFailure({ kind: "save", error: batch, settings: ["lamp"] }, "usb", []).linkLost, false);
+    assert.equal(describeFailure({ kind: "save", error: "error: A USB write is already pending" }, "usb", []).linkLost, false);
+    const flash = describeFailure({ kind: "firmware", error: "DO NOT POWER CYCLE THE MOTOR.\nerror: DCAS block 12 write: serial write; device outcome may be uncertain: USB write timed out after 500 ms; device outcome uncertain" }, "usb", []);
+    assert.equal(flash.critical, true);
+    assert.equal(flash.linkLost, false);
+    assert.match(flash.message, /DO NOT POWER CYCLE/);
+  });
+
+  it("names the port when the browser rejects a USB or serial receive", async () => {
+    const usb: any = new WebUsbPort({
+      transferIn: async () => { throw new DOMException("Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.", "NetworkError"); },
+      close: async () => {},
+    });
+    Object.assign(usb, { opened: true, input: { endpointNumber: 1, packetSize: 64 } });
+    await usb.pump(usb.generation);
+    const serial: any = new WebSerialPort({ getInfo: () => ({ usbVendorId: 0x1e44, usbProductId: 0x7151 }), close: async () => {} });
+    const reader = { read: async () => { throw new DOMException("Framing error", "FramingError"); }, cancel: async () => {}, releaseLock() {} };
+    Object.assign(serial, { opened: true, resources: { reader, writer: null, pump: null } });
+    await serial.pump(serial.resources, serial.generation);
+    for (const port of [usb, serial]) {
+      assert.equal(port.poisoned, port.error);
+      const error = `error: read settings: ${port.error.message}`;
+      assert.equal(describeFailure({ kind: "read", error }, "usb", []).linkLost, true, error);
+    }
+  });
+
+  it("keeps the CLI's bootloader steps when a wired check loses the port", () => {
+    const guidance = [
+      "The application did not return after the DCAS dry run; nothing was erased or written.",
+      "The motor may remain in its DCAS bootloader. Check whether its application answers with:",
+      "  cranklink probe",
+      "Only if it does not, return it to its application with:",
+      "  cranklink --slot 13 firmware probe --target dcas --recovery --reset",
+    ].join("\n");
+    for (const cause of ["FTDI UART line error 0x10", "USB write timed out after 500 ms; device outcome uncertain", "USB device disconnected; device outcome may be uncertain"]) {
+      const error = `${guidance}\nerror: application did not return after DCAS dry run: bootloader reset not acknowledged: ${cause}`;
+      const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+      assert.match(failure.message, /may remain in its DCAS bootloader/, cause);
+      assert.match(failure.message, /cranklink probe\n[^]*--recovery --reset/, cause);
+      assert.equal(failure.linkLost, true, cause);
+      assert.equal(failure.critical, false, cause);
+    }
+  });
+
+  it("keeps the interrupted-flash warning and recovery command", () => {
+    const error = [
+      "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.",
+      "DO NOT POWER CYCLE THE MOTOR.",
+      "To recover, re-run with: cranklink -p usb:0 firmware flash fw.dat --serial 1234 --recover",
+      "error: DCAS block 12 write: serial write; device outcome may be uncertain: USB device disconnected; device outcome may be uncertain",
+    ].join("\n");
+    const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+    assert.match(failure.message, /DO NOT POWER CYCLE/);
+    assert.match(failure.message, /re-run with: cranklink/);
+    assert.match(failure.outcome ?? "", /recovery mode/);
+    assert.equal(failure.linkLost, false);
+  });
+
+  it("shows an interrupted flash without its progress lines and offers no next step", () => {
+    const rule = "=".repeat(80);
+    const error = [
+      "Programming 8192/65536 bytes (12%)",
+      "Programming 16384/65536 bytes (25%)",
+      "",
+      rule,
+      "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.",
+      "DO NOT POWER CYCLE THE MOTOR.",
+      "Journal preserved at: fw_write_1.01-dcas.journal.jsonl",
+      "To recover, re-run with:",
+      "  cranklink -s 010203040506 firmware flash dcas D.dat --companion M.dat --recovery --write",
+      rule,
+      "",
+      "",
+      "error: DCAS block 12 write: USB device disconnected; device outcome may be uncertain",
+    ].join("\n");
+    const failure = describeFailure({ kind: "firmware", error }, "usb", []);
+    assert.equal(failure.message.split("\n")[0], "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
+    assert.doesNotMatch(failure.message, /Programming|===|\n\n\n/);
+    assert.match(failure.message, /--recovery --write\n\nerror: DCAS block 12 write/);
+    assert.equal(failure.critical, true);
+    assert.equal(failure.linkLost, false);
+
+    assert.match(failure.outcome ?? "", /Do not power-cycle it\. The web app cannot recover it: .*SM-PCE02.*cranklink CLI, using the command below/);
+
+    const verify = describeFailure({ kind: "firmware", error: "Programming 65536/65536 bytes (100%)\nerror: verify mismatch" }, "usb", []);
+    assert.equal(verify.message, "verify mismatch");
+    assert.equal(verify.critical, false);
+  });
+
+  it("treats a Bluetooth flash that failed after the write started as critical", () => {
+    // Without the CLI's warning (e.g. the worker died first), a started write still counts.
+    const error = "Programming 8192/65536 bytes (12%)\nProgramming 16384/65536 bytes (25%)\nerror: Bluetooth disconnected\n[exit 1]";
+    for (const transport of ["ble", "sim"] as const) {
+      const failure = describeFailure({ kind: "firmware", error }, transport, []);
+      assert.equal(failure.critical, true);
+      assert.equal(failure.linkLost, false);
+      assert.match(failure.outcome ?? "", /Do not power-cycle it\..*cranklink CLI\.$/);
+      assert.doesNotMatch(failure.outcome ?? "", /command below/);
+      assert.equal(failure.message, "Bluetooth disconnected");
+    }
+    // Before the write started, or outside a flash, a closed link stays a closed link.
+    const check = describeFailure({ kind: "firmware", error: "error: Bluetooth disconnected" }, "ble", []);
+    assert.equal(check.critical, false);
+    assert.equal(check.linkLost, true);
+    assert.equal(describeFailure({ kind: "read", error }, "ble", []).critical, false);
+  });
+
+  it("keeps a lost link lost when a later, unrelated operation is rejected", () => {
+    const controller = new SessionController();
+    (controller as any).update({ phase: "ready", linkLost: true });
+    assert.throws(() => controller.stageParameter("lamp", 1));
+    assert.equal(controller.getState().linkLost, true);
   });
 
   it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
@@ -651,6 +1261,100 @@ describe("Disconnect cleanup reporting", () => {
   });
 });
 
+describe("Adapter unplugged", () => {
+  function connected(transport: "usb" | "serial" | "ble", run: (line: string) => Promise<{ code: number }> = async () => ({ code: 0 })) {
+    (globalThis as any).window = globalThis;
+    let unplugged: ((error: string) => void) | null = null;
+    const controller = new SessionController();
+    controller.attachTerminal({
+      run,
+      setPasskeyPrompt: () => {},
+      setAdapterDisconnectHandler: (handler) => { unplugged = handler; },
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport }),
+      files: { list: () => [], bytes: () => new Uint8Array(), initialize: async () => {}, import: async () => {} },
+    });
+    (controller as any).update({ phase: "ready", transport, identity: { serial: "010203040506" }, stagedValues: { "tire-circumference": 2010 } });
+    return { controller, unplug: (error: string) => unplugged!(error) };
+  }
+
+  it("marks the link lost at once and keeps the staged edits", () => {
+    for (const [transport, error] of [["usb", "USB device disconnected"], ["serial", "Serial device disconnected"]] as const) {
+      const { controller, unplug } = connected(transport);
+      unplug(error);
+      const state = controller.getState();
+      assert.equal(state.linkLost, true);
+      assert.deepEqual(state.stagedValues, { "tire-circumference": 2010 });
+      const failure = describeFailure(state.failure!, state.transport, []);
+      assert.equal(failure.title, "USB adapter disconnected");
+      assert.match(failure.message, /USB adapter disconnected.*reconnect/i);
+      assert.equal(failure.linkLost, true);
+    }
+  });
+
+  it("shows an unplug during a command that succeeds once the command ends", async () => {
+    let unplug: (error: string) => void = () => {};
+    let duringCommand: { linkLost: boolean; failure: unknown } | null = null;
+    const session = connected("usb", async () => {
+      unplug("USB device disconnected");
+      duringCommand = { linkLost: session.controller.getState().linkLost, failure: session.controller.getState().failure };
+      return { code: 0 };
+    });
+    unplug = session.unplug;
+    await session.controller.runRawCommand("probe");
+    assert.deepEqual(duringCommand, { linkLost: false, failure: null });
+    let state = session.controller.getState();
+    assert.equal(state.linkLost, true);
+    assert.equal(state.failure?.kind, "adapter");
+    assert.deepEqual(state.stagedValues, { "tire-circumference": 2010 });
+    // A save that ends without a failure of its own.
+    const { controller, unplug: unplugDuringSave } = connected("serial");
+    (controller as any).update({ phase: "committing" });
+    unplugDuringSave("Serial device disconnected");
+    assert.equal(controller.getState().linkLost, false);
+    (controller as any).update({ phase: "ready" });
+    await Promise.resolve();
+    state = controller.getState();
+    assert.equal(state.linkLost, true);
+    assert.equal(state.failure?.kind, "adapter");
+  });
+
+  it("keeps the failure of the operation the unplug interrupted", async () => {
+    const { controller, unplug } = connected("usb");
+    (controller as any).update({ phase: "committing" });
+    unplug("USB device disconnected");
+    const error = "error: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting readback did not match";
+    (controller as any).fail("save", error, { phase: "ready", settings: ["destination", "speed-limit"] });
+    await Promise.resolve();
+    const state = controller.getState();
+    assert.equal(state.failure?.kind, "save");
+    assert.equal(state.failure?.error, error);
+    assert.equal(state.linkLost, true);
+  });
+
+  it("never replaces the recovery steps of an interrupted flash", async () => {
+    const { controller, unplug } = connected("usb");
+    const error = "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.";
+    (controller as any).update({ phase: "flashing" });
+    unplug("USB device disconnected");
+    (controller as any).fail("firmware", error, { phase: "ready" });
+    await Promise.resolve();
+    // Unplugged again later, while idle.
+    unplug("USB device disconnected");
+    await Promise.resolve();
+    const state = controller.getState();
+    assert.equal(state.failure?.error, error);
+    assert.equal(describeFailure(state.failure!, state.transport, []).critical, true);
+    assert.equal(state.linkLost, false);
+  });
+
+  it("ignores a wired unplug while a Bluetooth session is selected", () => {
+    const { controller, unplug } = connected("ble");
+    unplug("USB device disconnected");
+    assert.equal(controller.getState().linkLost, false);
+    assert.equal(controller.getState().failure, null);
+  });
+});
+
 describe("Failure outcomes", () => {
   const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
   const batchError = "error: cleanup also failed: BLE PC-link stop was not confirmed: BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device\n[exit 1]";
@@ -676,8 +1380,60 @@ describe("Setting value formatting", () => {
     assert.equal(formatSetting(schema, "speed-limit", 25), "25 km/h");
     assert.equal(formatSetting(schema, "display-speed-adjustment", 15), "1.5%");
     assert.equal(formatSetting(schema, "mounting-angle", 12), "12°");
-    assert.equal(formatSetting(schema, "destination", 1), "Region 1 / US Class 1 (32 km/h)");
+    assert.equal(formatSetting(schema, "destination", 1), "1 (19–32 km/h)");
     assert.equal(formatSetting(schema, "start-mode", 0), "Off");
     assert.equal(formatSetting(schema, "speed-limit", null), "—");
+  });
+
+  it("offers each model's destinations by the speed range the core enforces", () => {
+    // src/settings.rs speed_range: legacy 0, 3 and 4 permit 15-25 km/h; modern 2 is 14-24 and 5 is 19-45.
+    const legacy = { 0: "0 (15–25 km/h)", 1: "1 (19–32 km/h)", 3: "3 (15–25 km/h)", 4: "4 (15–25 km/h)" };
+    const modern = { 0: "0 (15–25 km/h)", 1: "1 (19–32 km/h)", 2: "2 (14–24 km/h)", 3: "3 (15–25 km/h)", 5: "5 (19–45 km/h)" };
+    for (const [model, labels] of [["ep800-crg", legacy], ["e5100", legacy], ["ep500", modern], ["ep600", modern], ["ep801", modern]] as const) {
+      const destination = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8")), model)
+        .find((spec) => spec.name === "destination")!;
+      assert.deepEqual(destination.choiceLabels, labels, model);
+      // Exactly the values the core accepts are offered, each with its range.
+      assert.deepEqual(destination.choices, Object.keys(labels).map(Number), model);
+    }
+  });
+
+  it("names current values a restore could not write back", () => {
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 35], ["speed-limit", 14], ["speed-limit", 25], ["destination", 2], ["destination", null]]),
+      ["Assist Speed Limit (35 km/h)", "Assist Speed Limit (14 km/h)", "Market Region (2)", "Market Region (—)"]);
+    // Unset is writable where the setting is nullable; text and unread values are not judged here.
+    assert.deepEqual(unwritableValues(schema, [["maintenance-date", null], ["profile1.name", "CARGO"], ["speed-limit", undefined], ["unknown", 5]]), []);
+    // The core also limits speed and power by the bike's destination.
+    const region = (destination: number, speed: number, power = 300) => ({
+      model: "ep800-crg",
+      live: { destination: { value: destination }, "speed-limit": { value: speed }, "max-power.eco": { value: power } },
+    });
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 28]], region(0, 28)), ["Assist Speed Limit (28 km/h)"]);
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 28]], region(1, 28)), []);
+    assert.deepEqual(unwritableValues(schema, [["max-power.eco", 500]], region(3, 25, 500)), ["Eco Maximum Electrical Power (500 W)"]);
+    assert.deepEqual(unwritableValues(schema, [["max-power.eco", 400]], region(3, 25, 400)), []);
+    // Destination 0 is refused while a speed left unchanged exceeds it.
+    const destination = unwritableValues(schema, [["destination", 0]], region(0, 28));
+    assert.equal(destination.length, 1);
+    assert.match(destination[0], /^Market Region \(/);
+    assert.deepEqual(unwritableValues(schema, [["destination", 0], ["speed-limit", 28]], region(0, 28)), ["Assist Speed Limit (28 km/h)"]);
+    assert.deepEqual(unwritableValues(schema, [["destination", 1]], region(1, 28)), []);
+    assert.deepEqual([listText(["A"]), listText(["A", "B"]), listText(["A", "B", "C"])], ["A", "A and B", "A, B and C"]);
+  });
+
+  it("asks for the regulated-change acknowledgment for every oem setting", () => {
+    for (const file of fs.readdirSync(path.join(import.meta.dirname, "schemas"))) {
+      const model = path.basename(file, ".json") as SettingsModel;
+      const specs = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", file), "utf8")), model);
+      for (const spec of specs.filter((spec) => spec.oem)) {
+        assert.equal(isRegulatedSetting(spec, spec.name), true, `${model} ${spec.name}`);
+      }
+    }
+    for (const name of ["tire-circumference", "walk-assist", "rear-teeth"]) {
+      assert.notEqual(schema.find((spec) => spec.name === name)?.section, "oem", name);
+    }
+    for (const name of ["lamp", "speed-limit"]) {
+      assert.equal(isRegulatedSetting(schema.find((spec) => spec.name === name), name), false, name);
+    }
   });
 });

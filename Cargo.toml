@@ -45,4 +45,7 @@ rpassword = { version = "7", optional = true }
 dbus = { version = "0.9", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
+# Exact: the wasm-bindgen CLI must match. Bump together with
+# .github/workflows/web.yml, web-instrument/scripts/build-cloudflare.sh
+# (version and SHA-256), web-instrument/README.md and docs/firmware-simulator.md.
+wasm-bindgen = "=0.2.129"

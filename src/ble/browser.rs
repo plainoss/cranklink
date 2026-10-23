@@ -6,8 +6,10 @@ pub(super) struct BrowserGatt {
 }
 impl BrowserGatt {
     pub fn open(credential: Option<String>) -> Result<Self> {
-        // connect + service + characteristic discovery each have a 10s bound.
-        let bytes = crate::wasm::rpc("ble.open", &[], 35000)?;
+        // Covers OPEN_WORST_CASE_MS in ble.js: 3 x 12 s connect attempts,
+        // 0.8 s + 1.6 s backoff and 2 x 10 s discovery (58.4 s). host.js
+        // adds its 5 s margin on top.
+        let bytes = crate::wasm::rpc("ble.open", &[], 60000)?;
         Ok(Self {
             chars: serde_json::from_slice(&bytes)?,
             credential,
@@ -61,7 +63,8 @@ impl Gatt for BrowserGatt {
             return Ok(key);
         }
         // Prompt on the host may require human input; the host has its own
-        // bounded dialog. This RPC is never sent to persistent file storage.
+        // bounded dialog. The host may keep the passkey for this gateway in
+        // tab session storage; it is never written to file storage.
         let bytes = self.request("ble.passkey", serde_json::json!({}), 120000)?;
         Ok(String::from_utf8(bytes)?)
     }

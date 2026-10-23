@@ -17,13 +17,14 @@ import {
 } from "./navigation.ts";
 import { useMediaQuery } from "./hooks.ts";
 import { friendlyMotorName } from "./domain/motorIdentity.ts";
+import { unwritableNotice } from "./domain/settingFormat.ts";
 import { ConnectView } from "./components/views/ConnectView.tsx";
 import { OverviewView } from "./components/views/OverviewView.tsx";
 import { TuneView } from "./components/views/TuneView.tsx";
 import { FirmwareView } from "./components/views/FirmwareView.tsx";
 import { BackupView } from "./components/views/BackupView.tsx";
 import { DiagnosticsView } from "./components/views/DiagnosticsView.tsx";
-import { ChangesRail, ReviewDialog } from "./components/ChangesReview.tsx";
+import { ChangesRail, RegulatedAcknowledgment, ReviewDialog } from "./components/ChangesReview.tsx";
 import { FailureBanner } from "./components/FailureBanner.tsx";
 import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
@@ -48,6 +49,9 @@ export function App({ controller }: AppProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [disconnectAfterSave, setDisconnectAfterSave] = useState(false);
+  // Keyed by request so a new agent review never inherits an earlier acknowledgment.
+  const [mcpAcknowledgedId, setMcpAcknowledgedId] = useState<string | null>(null);
   const [selectingSlot, setSelectingSlot] = useState<number | null>(null);
   const [refreshingUnits, setRefreshingUnits] = useState(false);
   const [targetError, setTargetError] = useState<string | null>(null);
@@ -161,16 +165,20 @@ export function App({ controller }: AppProps) {
     else controller.disconnect().catch(() => {});
   };
 
-  const saveAndDisconnect = async () => {
+  // Saving goes through the review, which lists every change and asks for the
+  // regulated-setting acknowledgment; it disconnects only after a successful save.
+  const saveAndDisconnect = () => {
     setDisconnectConfirmOpen(false);
-    try {
-      await controller.commitStagedBatch();
-      await controller.disconnect();
-    } catch {
-      // A failed save keeps the session and staged values; the banner explains why.
-    }
+    setDisconnectAfterSave(true);
+    setReviewOpen(true);
   };
+  const onReviewOpenChange = useCallback((open: boolean) => {
+    setReviewOpen(open);
+    if (!open) setDisconnectAfterSave(false);
+  }, []);
 
+  const mcpRegulated = state.mcpApproval?.diff.filter((change) => change.regulated) ?? [];
+  const mcpAcknowledged = state.mcpApproval !== null && mcpAcknowledgedId === state.mcpApproval.id;
   const approvalBanner = state.mcpApproval && (
     <Alert
       status="warning"
@@ -183,15 +191,43 @@ export function App({ controller }: AppProps) {
       </Alert.Indicator>
       <Alert.Content className="min-w-0">
         <Alert.Title>External agent request · {state.mcpApproval.tool}</Alert.Title>
-        <Alert.Description className="[overflow-wrap:anywhere] text-xs">
-          {state.mcpApproval.diff.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ")}
+        <Alert.Description className="[overflow-wrap:anywhere] text-xs font-medium" data-testid="mcp-approval-target">
+          Target: {state.mcpApproval.target.model} · slot {state.mcpApproval.target.slot} · serial {state.mcpApproval.target.serial}
         </Alert.Description>
+        <Alert.Description className="[overflow-wrap:anywhere] text-xs">
+          {state.mcpApproval.diff.map((change, index) => (
+            <span key={change.name}>
+              {index > 0 && "; "}
+              {change.regulated && <AlertTriangle size={12} className="inline mr-1 text-warning" aria-label="Regulated setting" />}
+              {`${change.label}: ${change.before} → ${change.after}`}
+            </span>
+          ))}
+        </Alert.Description>
+        {state.mcpApproval.unwritable.length > 0 && (
+          <Alert.Description className="[overflow-wrap:anywhere] text-xs font-medium" data-testid="mcp-approval-unwritable">
+            {unwritableNotice(state.mcpApproval.unwritable)}
+          </Alert.Description>
+        )}
+        {mcpRegulated.length > 0 && (
+          <div className="mt-2">
+            <RegulatedAcknowledgment
+              labels={mcpRegulated.map((change) => change.label)}
+              isSelected={mcpAcknowledged}
+              onChange={(selected) => setMcpAcknowledgedId(selected ? state.mcpApproval?.id ?? null : null)}
+              data-testid="mcp-ack-regulated"
+            />
+          </div>
+        )}
       </Alert.Content>
       <div className="flex shrink-0 gap-2 self-end sm:self-auto">
         <Button variant="tertiary" onPress={() => controller.respondMcpApproval(false)} data-testid="btn-mcp-reject">
           Reject
         </Button>
-        <Button onPress={() => controller.respondMcpApproval(true)} data-testid="btn-mcp-approve">
+        <Button
+          isDisabled={mcpRegulated.length > 0 && !mcpAcknowledged}
+          onPress={() => controller.respondMcpApproval(true)}
+          data-testid="btn-mcp-approve"
+        >
           Authorize write
         </Button>
       </div>
@@ -451,7 +487,13 @@ export function App({ controller }: AppProps) {
         </main>
       </div>
 
-      <ReviewDialog state={state} controller={controller} open={reviewOpen} onOpenChange={setReviewOpen} />
+      <ReviewDialog
+        state={state}
+        controller={controller}
+        open={reviewOpen}
+        onOpenChange={onReviewOpenChange}
+        disconnectAfterSave={disconnectAfterSave}
+      />
 
       <ConfirmDialog
         isOpen={disconnectConfirmOpen}
@@ -472,7 +514,7 @@ export function App({ controller }: AppProps) {
       >
         <p className="text-sm text-muted">
           {stagedCount} staged change{stagedCount === 1 ? " hasn’t" : "s haven’t"} been written to the bike yet. Disconnecting
-          without saving discards them. Saving writes them first, with a backup of the current values.
+          without saving discards them. Saving shows them for review, then writes them with a backup of the current values.
         </p>
       </ConfirmDialog>
 

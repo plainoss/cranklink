@@ -7,7 +7,9 @@
 //! receive-record size. An `FF` inside a frame remains payload data.
 //!
 //! Reads may split a frame or escape, or contain multiple frames. The decoder
-//! retains partial state and validates the FCS before exposing a frame.
+//! retains partial state and validates the FCS before exposing a frame. Data
+//! between delimiters that is entirely `FF` is fill, not a frame: after a lost
+//! delimiter the decoder treats the next `BB` as an opening one instead.
 use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Frame {
@@ -67,17 +69,19 @@ impl Decoder {
             if b == 0xbb {
                 if self.escaped {
                     out.push(Err("truncated escape".into()));
-                } else if !self.data.is_empty() {
-                    if self.data.len() < 2 {
-                        out.push(Err("short frame".into()));
-                    } else if self.data.iter().fold(0u8, |a, &x| a.wrapping_add(x)) != 0 {
-                        out.push(Err("invalid FCS".into()));
-                    } else {
-                        out.push(Ok(Frame {
-                            control: self.data[0],
-                            payload: self.data[1..self.data.len() - 1].to_vec(),
-                        }));
-                    }
+                } else if self.data.iter().all(|&x| x == 0xff) {
+                    // Empty, or fill collected after losing sync: this BB opens.
+                    self.data.clear();
+                    continue;
+                } else if self.data.len() < 2 {
+                    out.push(Err("short frame".into()));
+                } else if self.data.iter().fold(0u8, |a, &x| a.wrapping_add(x)) != 0 {
+                    out.push(Err("invalid FCS".into()));
+                } else {
+                    out.push(Ok(Frame {
+                        control: self.data[0],
+                        payload: self.data[1..self.data.len() - 1].to_vec(),
+                    }));
                 }
                 let closed = !self.data.is_empty() || self.escaped;
                 self.data.clear();
@@ -185,6 +189,34 @@ mod robustness {
                 payload: vec![0xff]
             })]
         );
+    }
+    fn padded_replies() -> Vec<u8> {
+        let mut b = Vec::new();
+        for payload in [[0x30, 1], [0x3a, 2], [0x3a, 3]] {
+            b.extend(encode(0x88, &payload));
+        }
+        b
+    }
+    fn decoded(frames: Vec<Result<Frame, String>>) -> Vec<Frame> {
+        frames.into_iter().filter_map(Result::ok).collect()
+    }
+    #[test]
+    fn resyncs_on_ff_fill_after_a_bad_escape() {
+        let mut d = Decoder::default();
+        let mut b = vec![0xbb, 0x48, 0xbd, 0x00, 0x01, 0xbb];
+        b.resize(128, 0xff);
+        b.extend(padded_replies());
+        let frames = d.feed(&b);
+        assert_eq!(frames[0], Err("invalid escape".into()));
+        assert_eq!(decoded(frames).len(), 3);
+    }
+    #[test]
+    fn resyncs_on_ff_fill_when_the_stream_starts_mid_frame() {
+        let mut b = encode(0x88, &[0x70, 0, 0, 0x78])[3..].to_vec();
+        b.extend(padded_replies());
+        let frames = Decoder::default().feed(&b);
+        assert!(frames.iter().all(Result::is_ok), "{frames:?}");
+        assert_eq!(decoded(frames).len(), 3);
     }
     #[test]
     fn malformed_escape_and_overflow_recover() {

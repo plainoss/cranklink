@@ -157,3 +157,18 @@ session, require both protocol cleanup receipts and manual confirmation that
 shifting and the junction button still work. Do not carry a slot address across
 connections, retry a failed query automatically, or infer normal operation from
 LEDs alone. No settings SET or firmware operation is part of this validation.
+
+## Main-branch integration before hardware testing
+
+Integration with `origin/main` at `8ec3a0a` required retaining the logical-master
+cleanup guard: upstream best-effort gateway shutdown after a rejected unit stop
+is allowed only when the master is already inactive. Pending ownership, foreign
+ownership and malformed master stop receipts must not trigger gateway shutdown.
+Existing regression tests cover these cases.
+
+The native transport now accepts already queued final acknowledgements after
+the peripheral disconnects and treats an already closed link as closed. An
+additional overflow check after awaited delivery prevents a queue that became
+incomplete during the wait from supplying a successful cleanup receipt. A
+hardware-free regression covers that race. Trace write failures now disable
+diagnostic tracing without discarding protocol replies or aborting cleanup.

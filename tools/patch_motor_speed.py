@@ -22,6 +22,7 @@ Analyzes flash layout offline and verifies selected application routines in Unic
 
 import argparse
 import hashlib
+import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import struct
@@ -49,6 +50,8 @@ STOCK_IMAGES = {
     "e5000-4.5.0": ("44806bd54aedff95a88bb73fafe0f0581297f2f67b2ea35545cea012899d90bb", 0x22, bytes.fromhex("450000")),
 }
 ORIGINAL_PREAMBLE = bytes.fromhex("00b501000800c0b2002805d0")
+# Profiles whose patched image has been flashed and run on a physical motor.
+PHYSICALLY_TESTED = frozenset({"ep800-4.2.0"})
 
 MOTOR_SERIES_NAMES = {
     0x23: "DU-EP800 / DU-EP800-CRG",
@@ -626,6 +629,7 @@ def main():
     parser.add_argument("--verify", action="store_true", help="Check selected application routines in the emulator; flashing is not emulated")
     parser.add_argument("--gateway", type=Path, help="Profiled, decoded SC-EM800 gateway binary; required for EP800 D4.2.0 --verify")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
+    parser.add_argument("--force", action="store_true", help="Replace an existing output file")
 
     args = parser.parse_args()
 
@@ -635,6 +639,8 @@ def main():
         sys.exit(f"Error: input file '{args.input}' does not exist")
     if args.input.resolve() == args.output.resolve() or (args.output.exists() and args.input.samefile(args.output)):
         raise ValueError("Input and output must be different files")
+    if args.output.exists() and not args.force:
+        parser.error(f"output '{args.output}' already exists; pass --force to replace it")
 
     raw_input = read_bounded(args.input)
     is_dat = is_container(raw_input)
@@ -653,21 +659,36 @@ def main():
     else:
         output_bytes = patched_plain
 
+    physically_tested = meta["profile_id"] in PHYSICALLY_TESTED
     result = {
         "input_file": str(args.input),
         "output_file": str(args.output),
         "format": "encrypted_dat" if out_is_dat else "raw_bin",
         "firmware_metadata": meta,
         "patch_info": patch_info,
+        "physically_tested": physically_tested,
     }
 
     if args.verify:
         verify_res = verify_in_emulator(patched_plain, raw_speed, args.gateway, patch_info)
         result["verification"] = verify_res
 
-    # A failed verification must not leave behind a newly generated artifact.
+    # A failed verification must not leave behind a newly generated artifact,
+    # and an interrupted write must not truncate an existing file.
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(output_bytes)
+    with tempfile.NamedTemporaryFile(dir=args.output.parent, prefix=f".{args.output.name}.", delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        with open(temporary, "wb") as handle:
+            handle.write(output_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, args.output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    if not physically_tested:
+        print(f"Warning: patched {meta['model']} v{meta['version']} images have not been run on a physical motor; "
+              "only EP800 D4.2.0.0 has.", file=sys.stderr)
 
     if args.json:
         import json

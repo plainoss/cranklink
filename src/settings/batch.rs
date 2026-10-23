@@ -80,6 +80,130 @@ fn suffixed(prefix: &Path, suffix: &str) -> PathBuf {
     path.into()
 }
 
+#[derive(Clone, Copy)]
+enum Step<'a> {
+    Read,
+    Region(u8),
+    Limit(&'a str, i64),
+    Other,
+}
+
+/// A destination write is refused while the current speed or power is outside
+/// the new region, and a limit write while it is outside the current one. For a
+/// region change listed first (as the web app does), run a later limit write
+/// of the same change first when it fits both regions, so lowering a region
+/// together with its speed, and undoing a raise, succeed. The region-dependent
+/// part of the resulting sequence is checked before any write.
+fn execution_order(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    operations: &[Operation],
+    restores: &[Option<ParsedRestore>],
+    model: SettingsModel,
+) -> Result<Vec<usize>> {
+    let plan_order = (0..operations.len()).collect();
+    let steps = operations
+        .iter()
+        .zip(restores)
+        .map(|(op, restore)| {
+            let (name, value) = match op {
+                Operation::Read { .. } => return Ok(Step::Read),
+                Operation::Set { name, value } => (name.as_str(), value.clone()),
+                Operation::Restore { .. } => {
+                    let parsed = restore.as_ref().expect("restore preflight verified");
+                    (parsed.setting.as_str(), parsed.planned_value())
+                }
+            };
+            let raw = || spec_for_model(name, model)?.raw_value(&value);
+            Ok(if name == "destination" {
+                Step::Region(raw()? as u8)
+            } else if is_destination_limit(name) {
+                Step::Limit(name, raw()?)
+            } else {
+                Step::Other
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if !steps.iter().any(|step| matches!(step, Step::Region(_))) {
+        return Ok(plan_order);
+    }
+    // An unset EP800 destination is unreadable; each write's own check decides.
+    let Ok(mut region) = effective_destination(session, slot, model) else {
+        return Ok(plan_order);
+    };
+    let mut limits: BTreeMap<String, i64> = destination_limits(session, slot, model)
+        .context("batch preflight failed; no batch writes sent")?
+        .into_iter()
+        .collect();
+    let mut order = Vec::with_capacity(steps.len());
+    let mut moved = vec![false; steps.len()];
+    for i in 0..steps.len() {
+        if moved[i] {
+            continue;
+        }
+        let mut run = vec![];
+        let mut kept: Vec<(&str, i64)> = vec![];
+        if let Step::Region(next) = steps[i] {
+            // Never move a write past a read, another region change, or an
+            // earlier write of the same setting that stays in place.
+            for (j, step) in steps.iter().enumerate().skip(i + 1) {
+                match *step {
+                    Step::Read | Step::Region(_) => break,
+                    Step::Limit(name, n)
+                        if !kept.iter().any(|&(k, _)| k == name)
+                            && validate_destination_limit(model, name, n, region).is_ok()
+                            && validate_destination_limit(model, name, n, next).is_ok() =>
+                    {
+                        run.push(j);
+                        moved[j] = true;
+                    }
+                    Step::Limit(name, n) => kept.push((name, n)),
+                    Step::Other => {}
+                }
+            }
+        }
+        run.push(i);
+        for k in run {
+            let checked = match steps[k] {
+                Step::Region(next) => {
+                    let from = std::mem::replace(&mut region, next);
+                    limits.iter().try_for_each(|(name, &n)| {
+                        validate_destination_limit(model, name, n, next).with_context(|| {
+                            // Neither order works when the planned value does
+                            // not fit the current destination either.
+                            let stuck = kept
+                                .iter()
+                                .find(|&&(k, _)| k == name.as_str())
+                                .and_then(|&(_, p)| {
+                                    validate_destination_limit(model, name, p, from).err()
+                                });
+                            match stuck {
+                                Some(e) => format!(
+                                    "change {name} before destination {next}; the planned {name} is outside destination {from} too ({e}), so first save one both destinations permit"
+                                ),
+                                None => format!("change {name} before destination {next}"),
+                            }
+                        })
+                    })
+                }
+                Step::Limit(name, n) => {
+                    limits.insert(name.into(), n);
+                    validate_destination_limit(model, name, n, region)
+                }
+                Step::Read | Step::Other => Ok(()),
+            };
+            checked.with_context(|| {
+                format!(
+                    "batch operation {} preflight failed; no batch writes sent",
+                    k + 1
+                )
+            })?;
+            order.push(k);
+        }
+    }
+    Ok(order)
+}
+
 fn record(file: &mut crate::storage::File, mut value: Value) -> Result<()> {
     value["time_ms"] = json!(crate::platform::now_ms());
     serde_json::to_writer(&mut *file, &value)?;
@@ -94,6 +218,19 @@ pub fn run(
     prefix: &Path,
     model: SettingsModel,
 ) -> Result<Value> {
+    run_bound(session, slot, operations, prefix, model, None)
+}
+
+/// [`run`] on the unit the session verified: the batch's serial must equal
+/// `expected_serial`, and each set re-checks it before its backup and SET.
+pub fn run_bound(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    operations: &[Operation],
+    prefix: &Path,
+    model: SettingsModel,
+    expected_serial: Option<&str>,
+) -> Result<Value> {
     ensure!(
         !operations.is_empty() && operations.len() <= 128,
         "batch requires 1..=128 operations"
@@ -105,13 +242,7 @@ pub fn run(
     // Check every static name/value and restore input before the first write.
     // Model-dependent combinations (e.g. speed after region) use live reads at
     // each step, so later operations see changes made earlier in this session.
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
         let valid = (|| -> Result<Option<ParsedRestore>> {
@@ -143,6 +274,7 @@ pub fn run(
         })?;
         resolved_restores.push(parsed);
     }
+    let order = execution_order(session, slot, operations, &resolved_restores, model)?;
     let journal_path = suffixed(prefix, ".journal.jsonl");
     let mut journal = OpenOptions::new()
         .write(true)
@@ -151,10 +283,13 @@ pub fn run(
         .context("batch journal must be a new file (choose a new backup prefix)")?;
     record(
         &mut journal,
-        json!({"stage":"started","serial":serial,"slot":slot,"model":model.name(),"operations":operations}),
+        json!({"stage":"started","serial":serial,"slot":slot,"model":model.name(),"operations":operations,
+            "order":order.iter().map(|index| index + 1).collect::<Vec<_>>()}),
     )?;
+    crate::storage::sync_parent(&journal_path).context("persist batch journal")?;
     let mut completed = Vec::new();
-    for (index, op) in operations.iter().enumerate() {
+    for index in order {
+        let op = &operations[index];
         let backup = suffixed(prefix, &format!(".{:03}.backup.json", index + 1));
         record(
             &mut journal,
@@ -176,8 +311,16 @@ pub fn run(
                     value["capabilities"] = capabilities_for_model(model);
                     Ok(value)
                 }
-                Operation::Set { name, value } => Ok(serde_json::to_value(set_for_model(
-                    session, slot, name, value, &backup, model,
+                // Each write re-reads the serial for its backup; a unit that
+                // took over the slot mid-batch gets no backup and no SET.
+                Operation::Set { name, value } => Ok(serde_json::to_value(set_for_model_bound(
+                    session,
+                    slot,
+                    name,
+                    value,
+                    &backup,
+                    model,
+                    Some(&serial),
                 )?)?),
                 Operation::Restore { .. } => {
                     let parsed = resolved_restores[index]
@@ -202,7 +345,7 @@ pub fn run(
                         backup.display()
                     )
                 })?;
-                completed.push(value);
+                completed.push((index, value));
             }
             Err(error) => {
                 let failure = json!({"stage":"failed","operation":index + 1,"completed":completed.len(),"error":format!("{error:#}"),"backup":backup});
@@ -219,7 +362,10 @@ pub fn run(
         &mut journal,
         json!({"stage":"operations-completed","completed":completed.len(),"cleanup":"performed by caller after batch"}),
     )?;
+    // Results keep plan order even when a region change ran a limit write first.
+    completed.sort_by_key(|(index, _)| *index);
+    let results: Vec<Value> = completed.into_iter().map(|(_, value)| value).collect();
     Ok(
-        json!({"serial":serial,"slot":slot,"completed":completed.len(),"results":completed,"journal":journal_path}),
+        json!({"serial":serial,"slot":slot,"completed":results.len(),"results":results,"journal":journal_path}),
     )
 }

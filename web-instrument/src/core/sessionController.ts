@@ -20,16 +20,17 @@ import type {
   OperationKind,
 } from "../types.ts";
 import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
-import { formatValue, formatSetting, settingLabel } from "../domain/settingFormat.ts";
-import { isLinkLost } from "../domain/errors.ts";
-import { detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
+import { formatValue, formatSetting, isRegulatedSetting, listText, settingLabel, unwritableValues } from "../domain/settingFormat.ts";
+import { isFlashCritical, isLinkLost } from "../domain/errors.ts";
+import { CATALOG_NAME, detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
+  formatVersion,
+  shellQuote,
 } from "../domain/firmwarePackage.ts";
 import {
-  detectPlatform,
   requestScreenWakeLock,
   releaseScreenWakeLock,
 } from "./platform.ts";
@@ -50,8 +51,20 @@ export interface TerminalHost {
   };
   /** Registers how the host asks the operator for the Bluetooth passkey. */
   setPasskeyPrompt: (prompt: (signal: AbortSignal) => Promise<string | null>) => void;
+  /** Registers how the host reports an unplug of the selected USB or serial adapter. */
+  setAdapterDisconnectHandler?: (handler: (error: string) => void) => void;
   simulator?: any;
   configureSimulator?: (opts: any) => void;
+}
+
+/** The same physical component: serial, schema, slot and stock identity all match. */
+function sameComponent(a: DeviceIdentity | null, b: DeviceIdentity | null): boolean {
+  return !!a && !!b && a.serial === b.serial && a.modelSlug === b.modelSlug && a.slot === b.slot
+    && a.modelSeries === b.modelSeries && a.modelUnit === b.modelUnit;
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 export class SessionController {
@@ -65,6 +78,18 @@ export class SessionController {
   private pendingPasskey: ((value: string | null) => void) | null = null;
   private syncInProgress: Promise<DeviceIdentity | null> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
+  /** An unplug of the selected adapter during an operation, and the failure shown when it came. */
+  private adapterLoss: { error: string; failure: OperationFailure | null } | null = null;
+  /** True while disconnect() runs; agent reviews are refused until it settles. */
+  private disconnecting = false;
+  /** The chip the latest flash progress line belongs to. */
+  private flashStep: { echo: string; done: number; chip: string } | null = null;
+  /**
+   * The component a reconnect reopens and its staged edits. A failed attempt
+   * keeps them for the next connect, which restores them only when the same
+   * component answers.
+   */
+  private held: { identity: DeviceIdentity; staged: Array<[string, number | string]>; afterFailure?: boolean } | null = null;
 
   constructor() {
     this.state = {
@@ -93,6 +118,8 @@ export class SessionController {
         dryRunPassed: false,
         dryRunSerial: null,
         lastFlashReceipt: null,
+        operation: null,
+        lastCheck: null,
       },
       snapshots: [],
       logs: [],
@@ -121,6 +148,8 @@ export class SessionController {
     for (const listener of this.listeners) {
       listener(this.state);
     }
+    // After the operation's current step, which may still change the state.
+    if (this.adapterLoss) queueMicrotask(() => this.showAdapterLoss());
   }
 
   /**
@@ -137,10 +166,18 @@ export class SessionController {
     const failure: OperationFailure = settings ? { kind, error, settings } : { kind, error };
     this.update({
       failure,
-      linkLost: isLinkLost(error),
+      // Sticky: an unrelated rejection (e.g. staging while offline) must not
+      // mark a dead link healthy. Connecting or a successful read clears it.
+      linkLost: this.state.linkLost || isLinkLost(error, kind, this.state.transport),
       statusMessage: status ? status(error) : error,
       ...rest,
     });
+  }
+
+  /** Record why an operation was refused before it started, so the banner explains it. */
+  private refuse(kind: OperationKind, message: string): never {
+    this.fail(kind, message);
+    throw new Error(message);
   }
 
   private startOperation(patch: Partial<InstrumentState>): void {
@@ -162,6 +199,7 @@ export class SessionController {
   public attachTerminal(term: TerminalHost): void {
     this.terminal = term;
     term.setPasskeyPrompt((signal) => this.requestPasskey(signal));
+    term.setAdapterDisconnectHandler?.((error) => this.adapterDisconnected(error));
     if (typeof window !== "undefined") {
       const prevPrint = (window as any).estepsTerminalPrint;
       (window as any).estepsTerminalPrint = (text: string, stream: "stdout" | "stderr" | "notice" = "stdout") => {
@@ -175,6 +213,34 @@ export class SessionController {
       };
     }
     this.refreshSnapshots();
+  }
+
+  /**
+   * The selected USB or serial adapter was unplugged: mark the link lost as
+   * soon as no operation runs, not at the next operation. Staged edits are
+   * kept for the reconnect.
+   */
+  public adapterDisconnected(error: string): void {
+    const { transport, failure } = this.state;
+    if (transport !== "usb" && transport !== "serial") return;
+    this.adapterLoss = { error, failure };
+    this.showAdapterLoss();
+  }
+
+  /**
+   * Show a recorded unplug once the session is idle. An operation that failed
+   * meanwhile keeps its own failure, which says what reached the bike, and an
+   * interrupted flash keeps its recovery steps: a reconnect cannot find a
+   * motor in its bootloader.
+   */
+  private showAdapterLoss(): void {
+    const loss = this.adapterLoss;
+    if (!loss || this.activeCapture || this.syncInProgress || this.disconnecting || this.state.phase !== "ready") return;
+    this.adapterLoss = null;
+    const { failure, linkLost, transport } = this.state;
+    if (linkLost || (failure && isFlashCritical(failure.error, failure.kind, transport))) return;
+    if (failure && failure !== loss.failure) this.update({ linkLost: true });
+    else this.fail("adapter", loss.error);
   }
 
   /** Ask the operator for the Bluetooth passkey; resolves null when cancelled or aborted. */
@@ -212,11 +278,26 @@ export class SessionController {
     const nextLogs = [...this.state.logs.slice(-299), entry];
     // Progress notices update the connection status; standing disclaimers do not.
     const isProgress = stream === "notice" && !/^Experimental /.test(trimmed);
+    // A flash reports progress on stderr; without it a minutes-long write looks hung.
+    const flashed = stream === "stderr" && this.state.phase === "flashing"
+      ? [...trimmed.matchAll(/^Programming (\d+)\/(\d+) bytes \((\d+)%\)$/gm)].at(-1)
+      : undefined;
+    let chip = "";
+    if (flashed) {
+      const echo = this.activeCapture?.echo ?? "";
+      const done = Number(flashed[1]);
+      const step = this.flashStep?.echo === echo ? this.flashStep : null;
+      // ble-pair writes DCAS, then RX, whose byte count starts again.
+      chip = / firmware flash rx /.test(echo) || step?.chip === "RX" || (!!step && done < step.done) ? "RX" : "DCAS";
+      this.flashStep = { echo, done, chip };
+    }
     this.update({
       logs: nextLogs,
       ...(isProgress && ["connecting", "probing"].includes(this.state.phase)
         ? { statusMessage: trimmed }
-        : {}),
+        : flashed
+          ? { statusMessage: `Writing ${chip} firmware: ${flashed[3]}% (${flashed[1]} of ${flashed[2]} bytes)` }
+          : {}),
     });
   }
 
@@ -264,7 +345,7 @@ export class SessionController {
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
   ): Promise<DeviceIdentity | null> {
-    const task = this.doConnectAndSync(transport, simOpts);
+    const task = this.doConnectAndSync(transport, simOpts).then((next) => this.resumeHeld(next));
     this.syncInProgress = task;
     try {
       return await task;
@@ -272,6 +353,7 @@ export class SessionController {
       if (this.syncInProgress === task) {
         this.syncInProgress = null;
       }
+      this.showAdapterLoss();
     }
   }
 
@@ -284,6 +366,9 @@ export class SessionController {
       ...simOpts,
     };
 
+    this.state.mcpApproval?.resolve(false);
+    // An unplug of the previous port says nothing about this connection.
+    this.adapterLoss = null;
     this.startOperation({
       phase: "connecting",
       transport,
@@ -308,14 +393,7 @@ export class SessionController {
           this.terminal.simulator.setFault(mergedSim.fault);
         }
       } else {
-        let conn = await this.exec(`connect ${transport}`);
-        if (conn.code !== 0 && transport === "usb" && typeof navigator !== "undefined") {
-          const plat = detectPlatform();
-          if (plat.isWindows) {
-            this.appendLog("notice", "WebUSB unavailable or claimed by driver. Attempting WebSerial fallback...");
-            conn = await this.exec("connect serial");
-          }
-        }
+        const conn = await this.exec(`connect ${transport}`);
         if (conn.code !== 0) {
           throw new Error(conn.stderr || `Connection failed (${conn.code})`);
         }
@@ -337,35 +415,94 @@ export class SessionController {
       return await this.doSelectComponent(preferred).catch(() => null);
     } catch (err: any) {
       this.fail("connect", err, { phase: "error", status: (error) => `Handshake failed: ${error}` });
+      // A cancelled chooser or a failed connection loses nothing: the next
+      // connect to the same component restores the held edits.
+      const held = this.held;
+      if (held && held.staged.length > 0) {
+        held.afterFailure = true;
+        const { model, serial } = held.identity;
+        this.update({ failure: { ...this.state.failure!, stagedHeld: { model, serial } } });
+      } else {
+        this.held = null;
+      }
       throw err;
     }
   }
 
   /**
    * Reopen the session after the link closed, keeping staged edits when the
-   * same drive unit answers.
+   * same component answers, now or at a later connect.
    */
   public async reconnect(): Promise<void> {
     const { transport, identity, stagedValues, simulatorOptions } = this.state;
     if (!transport) throw new Error("No previous connection to reopen.");
+    // disconnect() clears the staged edits. Without an identity, an earlier
+    // failed attempt already holds them.
+    if (identity) this.held = { identity, staged: Object.entries(stagedValues) };
     await this.disconnect().catch(() => {});
-    let next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
-    const samePrevious = (candidate: DeviceIdentity | null) => !!identity && !!candidate
+    await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+  }
+
+  /** After a connect, select the held component and restore its edits, all or nothing. */
+  private async resumeHeld(next: DeviceIdentity | null): Promise<DeviceIdentity | null> {
+    const held = this.held;
+    this.held = null;
+    if (!held) return next;
+    const { identity, staged, afterFailure } = held;
+    // A failed read of the previous component is the cause worth showing; say the edits went with it.
+    const discarded = () => {
+      const failure = this.state.failure;
+      if (failure && staged.length > 0) this.update({ failure: { ...failure, stagedDiscarded: true } });
+    };
+    const samePrevious = (candidate: DeviceIdentity | null) => !!candidate
       && candidate.serial === identity.serial && candidate.modelSlug === identity.modelSlug
       && candidate.modelSeries === identity.modelSeries && candidate.modelUnit === identity.modelUnit;
-    if (identity && !samePrevious(next)) {
+    if (!samePrevious(next)) {
+      const chosen = next;
       const candidates = this.state.units.filter((unit) => unit.model_series === identity.modelSeries && unit.model_unit === identity.modelUnit
         && (identity.isMotor || unit.model === identity.model || unit.model_candidates.includes(identity.model)))
         .sort((a, b) => Number(b.slot === identity.slot) - Number(a.slot === identity.slot));
       for (const previous of candidates) {
         if (previous.slot === next?.slot) continue;
-        next = await this.selectComponent(previous.slot);
+        // One unreadable candidate must not end the search for the previous serial.
+        try {
+          next = await this.selectComponent(previous.slot);
+        } catch {
+          continue;
+        }
         if (samePrevious(next)) break;
       }
+      // A connect after a failed attempt may reach another bike. Without the
+      // previous component, the one this connect chose stays selected.
+      if (afterFailure && chosen && next !== chosen && !samePrevious(next)) {
+        try {
+          next = await this.selectComponent(chosen.slot);
+        } catch {
+          // Its read failure is shown with the discarded edits.
+        }
+      }
     }
-    if (samePrevious(next) && Object.keys(stagedValues).length > 0) {
-      for (const [name, value] of Object.entries(stagedValues)) this.stageParameter(name, value);
+    if (staged.length === 0) return next;
+    if (!samePrevious(next)) {
+      if (this.state.failure) discarded();
+      else this.fail("stage", `${identity.model} (serial ${identity.serial}) did not answer this connection, so your unsaved changes were discarded.`);
+      return next;
     }
+    // All or nothing: half of a related pair, such as swapped buttons, is worse than neither.
+    const dropped: string[] = [];
+    for (const [name, value] of staged) {
+      try {
+        this.stageParameter(name, value);
+      } catch {
+        dropped.push(settingLabel(this.state.schema, name));
+      }
+    }
+    if (dropped.length > 0) {
+      // Before fail(): discarding clears a "stage" failure.
+      this.discardAllStaged();
+      this.fail("stage", `Your unsaved changes were discarded after reconnecting: ${dropped.join(", ")} could not be staged again.`);
+    }
+    return next;
   }
 
 
@@ -376,7 +513,7 @@ export class SessionController {
     if (!Array.isArray(parsed?.units)) throw new Error("Component discovery returned no valid inventory.");
     const slots = new Set<number>();
     const units: ComponentUnit[] = parsed.units.map((unit: any) => {
-      const validName = (name: unknown) => typeof name === "string" && /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/.test(name);
+      const validName = (name: unknown) => typeof name === "string" && CATALOG_NAME.test(name);
       if (!Number.isInteger(unit.slot) || unit.slot < 0 || unit.slot > 31 || slots.has(unit.slot)
           || !Number.isInteger(unit.model_series) || unit.model_series < 0 || unit.model_series > 255
           || !Number.isInteger(unit.model_unit) || unit.model_unit < 0 || unit.model_unit > 255
@@ -416,18 +553,26 @@ export class SessionController {
     const unit = this.state.units.find((entry) => entry.slot === slot);
     if (!unit || (!unit.model && !unit.model_candidates.length)) throw new Error("Select a catalogued component from the current inventory.");
     const task = this.doSelectComponent(unit);
+    // A connect that restores held edits selects through here and still runs.
+    const outer = this.syncInProgress;
     this.syncInProgress = task;
     try { return await task; }
-    finally { if (this.syncInProgress === task) this.syncInProgress = null; }
+    finally {
+      if (this.syncInProgress === task) this.syncInProgress = outer;
+      this.showAdapterLoss();
+    }
   }
 
   private async doSelectComponent(unit: ComponentUnit): Promise<DeviceIdentity> {
     const transport = this.state.transport!;
     this.startOperation({ phase: "reading", statusMessage: `Reading ${unit.model || `component at slot ${unit.slot}`}…` });
     try {
-      const target = `--slot ${unit.slot} ${unit.model ? `--component '${unit.model}' ` : ""}`;
-      const modern = isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
-      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${modern ? "--ble-unit-auth " : ""}settings read`);
+      const target = `--slot ${unit.slot} ${unit.model ? `--component ${shellQuote(unit.model)} ` : ""}`;
+      // As in buildSessionFlags: only Bluetooth reads of a modern motor authenticate;
+      // wired reads never needed it, and a failed handshake would hide the motor.
+      const unitAuth = (transport === "ble" || transport === "sim")
+        && isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
+      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${unitAuth ? "--ble-unit-auth " : ""}settings read`);
       if (result.code !== 0) throw new Error(result.stderr || "Component settings read failed.");
       const snapshot = this.extractLastJsonObject(result.stdout);
       const identity = this.parseIdentity(snapshot?.identity);
@@ -440,7 +585,7 @@ export class SessionController {
       // Validate before replacing the old target's identity and values.
       if (!snapshot?.values || typeof snapshot.values !== "object" || Array.isArray(snapshot.values)) throw new Error("Component response lacks a valid settings snapshot.");
       this.speedDestinationBeforeAuto = null;
-      this.update({ identity, schema, stagedValues: {}, firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, lastFlashReceipt: null } });
+      this.update({ identity, schema, stagedValues: {}, firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, lastFlashReceipt: null, lastCheck: null } });
       this.applyParameterSnapshot(snapshot, identity);
       this.refreshSnapshots();
       return identity;
@@ -477,7 +622,7 @@ export class SessionController {
         // Offline schema queries use the same Rust model gate as live reads.
       }
     }
-    const schemaRes = await this.exec(`settings schema --model '${modelSlug}'`);
+    const schemaRes = await this.exec(`settings schema --model ${shellQuote(modelSlug)}`);
     if (schemaRes.code === 0) {
       const arr = JSON.parse(schemaRes.stdout);
       return enrichSchema(arr, modelSlug);
@@ -503,9 +648,16 @@ export class SessionController {
       });
     }
 
+    let superseded = false;
     try {
       const prefixFlags = this.buildSessionFlags(transport, identity, false);
       const readRes = await this.exec(`${prefixFlags}settings read`);
+      // Another component was selected while this read was queued: its values
+      // must not replace the new target's, and its state belongs to that operation.
+      if (!sameComponent(this.state.identity, identity)) {
+        superseded = true;
+        throw new Error("The selected component changed during the read; its values were discarded.");
+      }
       if (readRes.code !== 0) {
         throw new Error(readRes.stderr || `Settings read failed (${readRes.code})`);
       }
@@ -515,7 +667,9 @@ export class SessionController {
       this.update({ linkLost: false });
       return values;
     } catch (err: any) {
-      this.fail("read", err, { phase: wasReady ? "ready" : "error", status: (error) => `Read error: ${error}` });
+      if (!superseded) {
+        this.fail("read", err, { phase: wasReady ? "ready" : "error", status: (error) => `Read error: ${error}` });
+      }
       throw err;
     }
   }
@@ -554,7 +708,7 @@ export class SessionController {
     requiresUnitAuth: boolean = false,
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
-    const component = identity.isMotor ? "" : `--component '${identity.model}' `;
+    const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
     const target = `--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
@@ -564,6 +718,10 @@ export class SessionController {
 
   public async disconnect(): Promise<void> {
     let cleanupError: string | null = null;
+    this.disconnecting = true;
+    // Refuse the review now: approving it while the disconnect runs would
+    // queue the write behind it.
+    this.state.mcpApproval?.resolve(false);
     try {
       if (this.terminal) {
         const result = await this.exec("disconnect");
@@ -575,7 +733,11 @@ export class SessionController {
       cleanupError = err?.message || String(err);
       throw err;
     } finally {
+      this.disconnecting = false;
       this.speedDestinationBeforeAuto = null;
+      this.adapterLoss = null;
+      // A review shown for this session must not authorize a write in the next one.
+      this.state.mcpApproval?.resolve(false);
       this.update({
         phase: "disconnected",
         transport: null,
@@ -674,18 +836,17 @@ export class SessionController {
       await this.syncInProgress.catch(() => {});
     }
     if (this.state.phase === "committing") {
+      // Not refuse(): the running save owns the status line and the banner.
       throw new Error("A save is already running. Wait for it to finish.");
     }
     const { transport, identity, stagedValues } = this.state;
-    if (!transport || !identity) {
-      throw new Error("No active component session.");
-    }
-    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before saving.");
+    if (!transport || !identity) this.refuse("save", "No active component session.");
+    if (this.state.phase !== "ready" || this.state.linkLost) this.refuse("save", "Reconnect to an idle component before saving.");
     const entries = Object.entries(stagedValues);
     if (entries.length === 0) return null;
     for (const [name] of entries) {
       const spec = this.state.schema.find((setting) => setting.name === name);
-      if (!spec || spec.read_only || this.state.unavailableValues[name]) throw new Error(`Setting ${name} is unavailable or read-only on this component.`);
+      if (!spec || spec.read_only || this.state.unavailableValues[name]) this.refuse("save", `Setting ${name} is unavailable or read-only on this component.`);
     }
 
     // Destination is written before speed-limit so ceiling checks use the updated destination.
@@ -695,6 +856,9 @@ export class SessionController {
       return 0;
     });
     const plural = entries.length > 1 ? "s" : "";
+    // Their backups cannot be written back, so the confirmation must not imply they can.
+    const unwritable = unwritableValues(this.state.schema, entries.map(([name]) => [name, this.state.liveValues[name]?.value]),
+      { model: identity.modelSlug, live: this.state.liveValues });
 
     this.startOperation({
       phase: "committing",
@@ -719,7 +883,7 @@ export class SessionController {
 
       const flags = this.buildSessionFlags(transport, identity, true);
       const batchRes = await this.exec(
-        `${flags}settings batch '${planFile}' --backup-prefix '${backupPrefix}'`,
+        `${flags}settings batch ${shellQuote(planFile)} --backup-prefix ${shellQuote(backupPrefix)}`,
       );
 
       if (batchRes.code !== 0) {
@@ -727,11 +891,13 @@ export class SessionController {
       }
 
       const resultJson = this.extractLastJsonObject(batchRes.stdout);
+      // Rust reads back a nullable setting written as "unset" as null.
+      const readbackMatches = (after: unknown, value: string) => after === null ? value === "unset" : String(after) === value;
 
       if (resultJson?.completed !== operations.length || !Array.isArray(resultJson?.results)
           || resultJson.results.length !== operations.length
           || !resultJson.results.every((receipt: any, index: number) => receipt?.setting === operations[index].name && receipt.after !== undefined
-            && String(receipt.after) === operations[index].value)) {
+            && readbackMatches(receipt.after, operations[index].value))) {
         throw new Error("Save did not return a complete set of verified setting receipts. Read the component before deciding what to retry.");
       }
       // Update liveValues only from complete, verified readbacks.
@@ -756,7 +922,8 @@ export class SessionController {
         linkLost: false,
         statusMessage: `Committed ${entries.length} change${plural} (${backupPrefix}).`,
       });
-      this.notify(`Saved ${entries.length} setting${plural} to the bike. A backup of the previous values was created.`, "backup");
+      this.notify(`Saved ${entries.length} setting${plural} to the bike. A backup of the previous values was created${
+        unwritable.length ? `, but cranklink cannot write back the previous ${listText(unwritable)}` : ""}.`, "backup");
 
       return resultJson;
     } catch (err: any) {
@@ -785,7 +952,7 @@ export class SessionController {
     try {
       const filename = `snapshot_${identity.modelSlug}_${identity.serial}_${fileStamp()}.json`;
       const flags = this.buildSessionFlags(transport, identity, false);
-      const res = await this.exec(`${flags}settings read --output '${filename}'`);
+      const res = await this.exec(`${flags}settings read --output ${shellQuote(filename)}`);
       if (res.code !== 0) {
         throw new Error(res.stderr || `Snapshot failed (${res.code})`);
       }
@@ -803,7 +970,9 @@ export class SessionController {
   }
 
   /**
-   * Restore one save's backups in a single pass. Each file creates its own
+   * Restore one save's backups in a single `settings batch`, so the core can
+   * order a region change against its speed and power limits (one file at a
+   * time, undoing a region raise is refused). Each restore creates its own
    * rollback backup first, then settings are read once to show the result.
    */
   public async restoreBackupFiles(filenames: string[]): Promise<void> {
@@ -811,34 +980,48 @@ export class SessionController {
       await this.syncInProgress.catch(() => {});
     }
     const { transport, identity } = this.state;
-    if (!transport || !identity) {
-      throw new Error("Connect to the target component before restoring a backup.");
-    }
+    if (!transport || !identity) this.refuse("restore", "Connect to the target component before restoring a backup.");
     if (filenames.length === 0) return;
-    if (this.state.phase !== "ready" || this.state.linkLost) throw new Error("Reconnect to an idle component before restoring.");
-    if (Object.keys(this.state.stagedValues).length) throw new Error("Save or discard staged changes before restoring a backup.");
+    if (this.state.phase !== "ready" || this.state.linkLost) this.refuse("restore", "Reconnect to an idle component before restoring.");
+    if (Object.keys(this.state.stagedValues).length) this.refuse("restore", "Save or discard staged changes before restoring a backup.");
+    const settings = new Map<string, unknown>();
     for (const filename of filenames) {
-      const backup = JSON.parse(new TextDecoder().decode(this.terminal!.files.bytes(filename)));
-      if (!["cranklink-setting-backup-v1", "esteps-setting-backup-v1"].includes(backup.format)
+      let bytes: Uint8Array;
+      try {
+        bytes = this.terminal!.files.bytes(filename);
+      } catch (error) {
+        this.refuse("restore", `Backup ${filename} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      let backup: any;
+      try {
+        backup = JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        this.refuse("restore", `Backup ${filename} is not valid JSON.`);
+      }
+      if (!["cranklink-setting-backup-v1", "esteps-setting-backup-v1"].includes(backup?.format)
           || String(backup.serial).toUpperCase() !== identity.serial
           || (!identity.isMotor && backup.settings_model !== identity.modelSlug)
           || (backup.settings_model !== undefined && backup.settings_model !== identity.modelSlug)) {
-        throw new Error("Backup model or serial does not match the selected component.");
+        this.refuse("restore", "Backup model or serial does not match the selected component.");
       }
+      settings.set(filename, backup.setting);
     }
+    filenames = planOrder(filenames, settings);
     this.startOperation({
       phase: "committing",
       statusMessage: `Restoring ${filenames.length} backup file${filenames.length > 1 ? "s" : ""}…`,
     });
     try {
-      const stamp = fileStamp();
+      const backupPrefix = `pre_restore_${fileStamp()}`;
+      const planFile = `${backupPrefix}.plan.json`;
+      await this.terminal!.files.import(
+        planFile,
+        new TextEncoder().encode(JSON.stringify(filenames.map((file) => ({ op: "restore", file })), null, 2)),
+      );
       const flags = this.buildSessionFlags(transport, identity, true);
-      for (const [index, filename] of filenames.entries()) {
-        const rollbackFile = `pre_restore_${stamp}.${String(index + 1).padStart(3, "0")}.backup.json`;
-        const res = await this.exec(`${flags}settings restore '${filename}' --backup '${rollbackFile}'`);
-        if (res.code !== 0) {
-          throw new Error(res.stderr || `Restore failed (${res.code})`);
-        }
+      const res = await this.exec(`${flags}settings batch ${shellQuote(planFile)} --backup-prefix ${shellQuote(backupPrefix)}`);
+      if (res.code !== 0) {
+        throw new Error(res.stderr || `Restore failed (${res.code})`);
       }
       await this.readAllParameters(transport, identity);
       this.refreshSnapshots();
@@ -936,6 +1119,8 @@ export class SessionController {
 
     let dcasFile = this.state.firmware.dcasFile;
     let rxFile = this.state.firmware.rxFile;
+    // Another tab may have stored one of these names since the last command.
+    await this.terminal.files.initialize();
 
     for (const file of Array.from(files)) {
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -944,15 +1129,24 @@ export class SessionController {
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
 
-      try {
-        await this.terminal.files.import(file.name, bytes);
-      } catch (err: any) {
-        if (!String(err?.message).includes("already exists")) {
-          throw err;
-        }
+      // The store never replaces a file, so a different image under a stored
+      // name gets a hash-tagged name; inspect must read the bytes just hashed.
+      const store = this.terminal.files;
+      const holds = (path: string) => store.list().some((f) => f.path === path);
+      let filename = file.name;
+      if (holds(filename) && !sameBytes(store.bytes(filename), bytes)) {
+        const dot = filename.lastIndexOf(".");
+        const tag = sha256.slice(0, 12);
+        filename = dot > 0 ? `${filename.slice(0, dot)}.${tag}${filename.slice(dot)}` : `${filename}.${tag}`;
+      }
+      if (!holds(filename)) await store.import(filename, bytes);
+      else if (!sameBytes(store.bytes(filename), bytes)) {
+        const error = `${filename} already holds a different image.`;
+        this.fail("firmware", error);
+        throw new Error(error);
       }
 
-      const inspectRes = await this.exec(`firmware inspect '${file.name}'`);
+      const inspectRes = await this.exec(`firmware inspect ${shellQuote(filename)}`);
       let metadata = null;
       let inspectErr: string | undefined;
       if (inspectRes.code === 0) {
@@ -963,7 +1157,7 @@ export class SessionController {
 
       const role = classifyFirmwareRole(file.name, metadata);
       const inspected: InspectedFirmwareFile = {
-        filename: file.name,
+        filename,
         sizeBytes: bytes.length,
         sha256,
         role,
@@ -986,7 +1180,7 @@ export class SessionController {
     let companionEval = evaluateCompanionPair(dcasFile, rxFile);
     if (dcasFile && rxFile && !dcasFile.error && !rxFile.error) {
       const pairCheck = await this.exec(
-        `firmware inspect '${dcasFile.filename}' --companion '${rxFile.filename}'`,
+        `firmware inspect ${shellQuote(dcasFile.filename)} --companion ${shellQuote(rxFile.filename)}`,
       );
       if (pairCheck.code !== 0) {
         companionEval = {
@@ -1006,6 +1200,7 @@ export class SessionController {
         companionMessage: companionEval.message,
         dryRunPassed: false,
         dryRunSerial: null,
+        lastCheck: null,
       },
     });
   }
@@ -1014,16 +1209,21 @@ export class SessionController {
     write: boolean,
     overrideSingleTarget?: "dcas" | "rx" | null,
   ): Promise<void> {
-    const { transport, identity, firmware } = this.state;
-    if (!transport || !identity) {
-      throw new Error("Connect to a drive unit before running firmware operations.");
+    if (this.state.phase === "flashing") {
+      // Not refuse(): the running operation owns the status line and the banner.
+      throw new Error("A firmware operation is already running. Wait for it to finish.");
     }
-    if (!identity.isMotor) throw new Error("Firmware operations are available only for supported drive units.");
+    const { transport, identity, firmware } = this.state;
+    if (!transport || !identity) this.refuse("firmware", "Connect to a drive unit before running firmware operations.");
+    if (this.state.phase !== "ready" || this.state.linkLost) {
+      this.refuse("firmware", "Reconnect to an idle drive unit before running firmware operations.");
+    }
+    if (!identity.isMotor) this.refuse("firmware", "Firmware operations are available only for supported drive units.");
     if (!firmware.dcasFile || !firmware.rxFile || !firmware.companionValid) {
-      throw new Error("Load a validated DCAS (-D) + RX (-M) firmware companion pair first.");
+      this.refuse("firmware", "Load a validated DCAS (-D) + RX (-M) firmware companion pair first.");
     }
     if (write && (!firmware.dryRunPassed || firmware.dryRunSerial !== identity.serial)) {
-      throw new Error("Complete a non-erasing compatibility check on this drive unit before programming.");
+      this.refuse("firmware", "Complete a non-erasing compatibility check on this drive unit before programming.");
     }
 
     const prefix = `fw_${write ? "write" : "check"}_${Date.now()}`;
@@ -1037,9 +1237,17 @@ export class SessionController {
       overrideSingleTarget,
     });
 
+    // The check enters the bootloaders like a write, so it keeps the flashing
+    // phase and its guards; the dialog and the result name it as a check.
+    const checked = {
+      serial: identity.serial,
+      installed: { dcas: identity.dcasVersion, rx: identity.rxVersion },
+      images: { dcas: formatVersion(firmware.dcasFile.metadata?.version), rx: formatVersion(firmware.rxFile.metadata?.version) },
+    };
     this.startOperation({
       phase: "flashing",
       statusMessage: plan.description,
+      firmware: { ...firmware, operation: write ? "write" : "check", lastCheck: null },
     });
 
     try {
@@ -1063,6 +1271,8 @@ export class SessionController {
           dryRunPassed: !write ? true : false,
           dryRunSerial: !write ? identity.serial : null,
           lastFlashReceipt: lastOutput,
+          operation: null,
+          lastCheck: write ? null : { passed: true, ...checked },
         },
       });
     } catch (err: any) {
@@ -1070,14 +1280,17 @@ export class SessionController {
       this.fail("firmware", err, {
         phase: "ready",
         status: (error) => `Firmware operation stopped: ${error}`,
-        firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null },
+        firmware: {
+          ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, operation: null,
+          lastCheck: write ? null : { passed: false, ...checked, error: err instanceof Error ? err.message : String(err) },
+        },
       });
       throw err;
     }
   }
 
   public downloadVirtualFile(filename: string): void {
-    this.exec(`download '${filename}'`).catch(() => {});
+    this.exec(`download ${shellQuote(filename)}`).catch(() => {});
   }
 
   public async runRawCommand(cmd: string): Promise<void> {
@@ -1092,6 +1305,11 @@ export class SessionController {
     diff: Array<{ name: string; before: any; after: any }>,
   ): Promise<boolean> {
     return new Promise((resolve, reject) => {
+      const identity = this.state.identity;
+      if (!identity || this.disconnecting) {
+        reject(new Error("Select a connected component first."));
+        return;
+      }
       const enrichedDiff = diff.map((d) => {
         const spec = this.state.schema.find((s) => s.name === d.name);
         return {
@@ -1099,6 +1317,7 @@ export class SessionController {
           label: settingLabel(this.state.schema, d.name),
           before: formatValue(spec, d.before),
           after: formatValue(spec, d.after),
+          regulated: isRegulatedSetting(spec, d.name),
         };
       });
       this.update({
@@ -1107,6 +1326,8 @@ export class SessionController {
           tool,
           params,
           diff: enrichedDiff,
+          target: { model: identity.model, slot: identity.slot, serial: identity.serial },
+          unwritable: unwritableValues(this.state.schema, diff.map((d) => [d.name, d.before]), { model: identity.modelSlug, live: this.state.liveValues }),
           resolve: (ok: boolean) => {
             this.update({ mcpApproval: null });
             resolve(ok);
@@ -1163,4 +1384,17 @@ function parseFileStamp(path: string): Date | null {
 /** Files from one operation share the prefix before their per-setting index. */
 function snapshotGroup(path: string): string {
   return path.replace(/(?:\.\d{3})?\.(?:backup\.json|journal\.jsonl|plan\.json)$/, "");
+}
+
+/**
+ * A save's backups in its plan order with the destination first, which the
+ * core expects to order a region change. This session's file list holds them
+ * in write order, and lowering a region writes the speed first; a CLI batch
+ * may also plan the speed first. Restored in either order, the old speed is
+ * refused against the region it was lowered to.
+ */
+function planOrder(filenames: string[], settings: Map<string, unknown>): string[] {
+  const index = (path: string) => Number(path.match(/\.(\d{3})\.backup\.json$/)?.[1] ?? 0);
+  const region = (path: string) => (settings.get(path) === "destination" ? 0 : 1);
+  return [...filenames].sort((a, b) => region(a) - region(b) || index(a) - index(b));
 }

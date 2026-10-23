@@ -35,7 +35,7 @@ async function openInstrument(page: Page) {
 }
 
 test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
-  test("zero-click connect, inline staging, atomic batch commit, and snapshot rollback @smoke", async ({
+  test("zero-click connect, inline staging, ordered batch commit, and snapshot rollback @smoke", async ({
     page,
   }) => {
     await openInstrument(page);
@@ -71,6 +71,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("btn-review-save").click();
     const review = page.getByTestId("review-dialog");
     await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
+    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
+    await review.getByTestId("ack-regulated").click();
     await review.getByTestId("btn-commit-batch").click();
 
     // Transaction rail clears, live value updates, and a confirmation names the backup
@@ -105,6 +107,131 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+  });
+
+  test("a dismissed link-lost failure keeps a reconnect path and blocks saving", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    // The link-loss detection itself is covered by the Bluetooth tests.
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.update({
+      linkLost: true,
+      failure: { kind: "save", error: "Bluetooth disconnected" },
+    }));
+    await page.getByRole("button", { name: "Dismiss error" }).click();
+    await expect(page.getByTestId("error-banner")).toHaveCount(0);
+
+    await page.getByTestId("btn-review-save").click();
+    await expect(page.getByTestId("review-link-lost")).toBeVisible();
+    // Tire circumference is regulated; with it acknowledged, only the lost link blocks saving.
+    await page.getByTestId("ack-regulated").click();
+    await expect(page.getByTestId("btn-commit-batch")).toBeDisabled();
+    await page.getByRole("button", { name: "Keep editing" }).click();
+
+    await page.getByTestId("btn-link-reconnect").click();
+    await expect(page.getByTestId("link-lost-banner")).toHaveCount(0);
+    await expect(page.getByTestId("link-status")).toHaveText("Simulator");
+    await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+  });
+
+  test("a possibly interrupted flash offers only the CLI recovery steps", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    const show = (error: string) => page.evaluate((error) =>
+      (window as any).cranklinkInstrumentController.update({ failure: { kind: "firmware", error } }), error);
+    const outcome = page.getByTestId("error-outcome");
+
+    // Before any write, a closed link offers Reconnect and another failure a read.
+    await show("error: Bluetooth disconnected");
+    await expect(page.getByTestId("btn-error-reconnect")).toBeVisible();
+    await show("error: verify mismatch");
+    await expect(page.getByTestId("btn-error-read")).toBeVisible();
+
+    const rule = "=".repeat(80);
+    for (const error of [
+      // A Bluetooth write that started, even without the CLI's warning.
+      "Programming 8192/65536 bytes (12%)\nerror: Bluetooth disconnected\n[exit 1]",
+      `Programming 8192/65536 bytes (12%)\n${rule}\nCRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.\n`
+        + "DO NOT POWER CYCLE THE MOTOR.\nTo recover, re-run with:\n  cranklink --port webusb -s 010203040506 firmware flash dcas D.dat "
+        + `--companion M.dat --recovery --write\n${rule}\nerror: USB device disconnected`,
+    ]) {
+      await show(error);
+      await expect(outcome).toContainText("Do not power-cycle it");
+      await expect(outcome).toContainText("cranklink CLI");
+      await expect(page.getByTestId("error-recovery-steps")).toHaveAttribute("href", /#recover-a-motor-stuck-in-bootloader-mode$/);
+      await expect(page.getByTestId("btn-error-reconnect")).toHaveCount(0);
+      await expect(page.getByTestId("btn-error-read")).toHaveCount(0);
+    }
+  });
+
+  test("restore waits until staged edits are saved or discarded", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    await page.getByTestId("btn-review-save").click();
+    await page.getByTestId("ack-regulated").click();
+    await page.getByTestId("btn-commit-batch").click();
+    await expect(page.getByTestId("transaction-rail")).toBeHidden();
+
+    await page.getByTestId("stepper-plus-tire-circumference").click();
+    await page.getByTestId("nav-section-journal").click();
+    const restore = page.locator('[data-action="restore-snapshot"]').first();
+    await expect(restore).toBeDisabled();
+    await expect(page.getByTestId("restore-staged-hint")).toBeVisible();
+    await page.getByTestId("btn-discard-staged").click();
+    await expect(restore).toBeEnabled();
+    await expect(page.getByTestId("restore-staged-hint")).toHaveCount(0);
+  });
+
+  test("region and speed controls show what the core enforces", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // EP800 destinations are 0, 1, 3 and 4, labelled by their speed range.
+    await page.getByTestId("param-row-destination").getByRole("button", { name: /Market Region/ }).click();
+    await expect(page.getByRole("option")).toHaveText(["0 (15–25 km/h)", "1 (19–32 km/h)", "3 (15–25 km/h)", "4 (15–25 km/h)"]);
+    await page.keyboard.press("Escape");
+
+    // Another tool left the speed above the 15-32 km/h cranklink writes.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const { liveValues } = controller.getState();
+      controller.update({ liveValues: { ...liveValues, "speed-limit": { value: 35, raw: "" } } });
+    });
+    const speed = page.getByTestId("param-row-speed-limit");
+    await expect(speed).toContainText("Live: 35 km/h");
+    await expect(speed.getByTestId("slider-outside-speed-limit")).toHaveText(
+      "The current value, 35 km/h, is outside the range cranklink can write (15 km/h to 32 km/h), so the slider stops at 32 km/h.");
+  });
+
+  test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // Another tool left the speed above the 15-32 km/h cranklink writes.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const { liveValues } = controller.getState();
+      controller.update({ liveValues: { ...liveValues, destination: { value: 1, raw: "" }, "speed-limit": { value: 35, raw: "" } } });
+    });
+    const warning = "cranklink cannot write back the current Assist Speed Limit (35 km/h), so Backup & Restore cannot undo that change.";
+
+    const rpc = page.evaluate(() => (window as any).webMcpServer.handleRequest("tools/call", {
+      name: "cranklink_set_setting",
+      arguments: { name: "speed-limit", value: 30 },
+    }).catch((error: Error) => error.message));
+    await expect(page.getByTestId("mcp-approval-unwritable")).toHaveText(warning);
+    await page.getByTestId("btn-mcp-reject").click();
+    expect(await rpc).toBe("Transaction rejected by operator.");
+
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.stageParameter("speed-limit", 30));
+    await page.getByTestId("btn-review-save").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-unwritable")).toHaveText(warning);
+    await expect(review).not.toContainText("so you can restore it");
   });
 
   test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
@@ -151,7 +278,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
     await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
 
-    // Verify single-MCU recovery override is collapsed by default
+    // Verify the single-MCU override is collapsed by default
     const overrideDetails = page.getByTestId("single-mcu-override");
     await expect(overrideDetails.getByRole("button", { name: /program one microcontroller/i })).toHaveAttribute("aria-expanded", "false");
 
@@ -164,6 +291,83 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(modal).toContainText("Limited compatibility checks");
     await page.getByTestId("btn-dismiss-warning").click();
     await expect(modal).toBeHidden();
+
+    // One loaded image enables neither single-MCU program; neither can reach a bootloader.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const dcasFile = { filename: "DUEP800-D.4.2.0.dat", sizeBytes: 1, sha256: "00".repeat(32), role: "dcas", metadata: null };
+      controller.update({ firmware: { ...controller.getState().firmware, dcasFile } });
+    });
+    await overrideDetails.getByRole("button", { name: /program one microcontroller/i }).click();
+    await expect(overrideDetails).toContainText("Bootloader recovery is not available in the browser");
+    await expect(overrideDetails.getByRole("button", { name: "Force program DCAS only" })).toBeDisabled();
+    await expect(overrideDetails.getByRole("button", { name: "Force program RX only" })).toBeDisabled();
+
+    // A checked pair enables programming both, but over Bluetooth the CLI
+    // refuses one MCU alone, and a closed link refuses every write.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const state = controller.getState();
+      const rxFile = { filename: "DUEP800-M.4.1.11.dat", sizeBytes: 1, sha256: "00".repeat(32), role: "rx", metadata: null };
+      controller.update({
+        firmware: { ...state.firmware, rxFile, companionValid: true, dryRunPassed: true, dryRunSerial: state.identity.serial },
+      });
+    });
+    await expect(page.getByTestId("btn-fw-flash-pair")).toBeEnabled();
+    await expect(overrideDetails).toContainText("needs a wired SM-PCE02 connection");
+    await expect(overrideDetails.getByRole("button", { name: "Force program DCAS only" })).toBeDisabled();
+    await expect(overrideDetails.getByRole("button", { name: "Force program RX only" })).toBeDisabled();
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.update({ linkLost: true }));
+    await expect(page.getByTestId("btn-fw-flash-pair")).toBeDisabled();
+    await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
+  });
+
+  test("the non-erasing check reads as a check and leaves its result on the page", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("nav-section-firmware").click();
+    // No firmware is bundled, so the firmware commands are held open here; the
+    // session is shown as Bluetooth because simulated sessions give no guidance.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const image = (role: string, filename: string, version: string) => ({
+        filename, sizeBytes: 1, sha256: "00".repeat(32), role,
+        metadata: { kind: role === "dcas" ? "dcas-x" : "renesas", series: 0x23, unit: 0, version, source_sha256: "" },
+      });
+      controller.update({
+        transport: "ble",
+        firmware: {
+          ...controller.getState().firmware, companionValid: true,
+          dcasFile: image("dcas", "DUEP800-D.4.2.0.dat", "4.2.0.0"), rxFile: image("rx", "DUEP800-M.4.1.11.dat", "4.1.11.0"),
+        },
+      });
+      const terminal = controller.terminal;
+      const run = terminal.run;
+      terminal.run = (line: string) => line.includes("firmware flash")
+        ? new Promise((resolve) => { (window as any).finishFirmware = () => resolve({ code: 0 }); })
+        : run(line);
+    });
+
+    const modal = page.getByTestId("operation-modal");
+    await page.getByTestId("btn-fw-dry-run-pair").click();
+    await expect(modal).toContainText("Checking firmware compatibility…");
+    await expect(modal).toContainText("Nothing is written, but the motor enters its bootloader for this check.");
+    await expect(modal).not.toContainText("Firmware is being written");
+    await page.evaluate(() => (window as any).finishFirmware());
+    await expect(modal).toBeHidden();
+    const result = page.getByTestId("fw-check-result");
+    await expect(result).toContainText("Non-erasing check passed");
+    await expect(result).toContainText("Drive unit 010203040506 (DCAS 4.2.0.0, RX 4.1.11.0) with images DCAS 4.2.0.0 and RX 4.1.11.0.");
+
+    // Programming keeps the write dialog.
+    await page.getByTestId("btn-fw-flash-pair").click();
+    await page.getByTestId("btn-confirm-program").click();
+    await expect(modal).toContainText("Updating firmware…");
+    await expect(modal).toContainText("Firmware is being written.");
+    await page.evaluate(() => (window as any).finishFirmware());
+    await expect(modal).toBeHidden();
+    await expect(result).toHaveCount(0);
   });
 
   test("WebMCP external agent authorization flow", async ({ page }) => {
@@ -190,7 +394,8 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(approvalBanner).toBeVisible();
     await expect(approvalBanner).toContainText("Tire Circumference: 2280 mm → 2150 mm");
 
-    // Operator clicks Authorize Write
+    // Operator acknowledges the regulated change and clicks Authorize Write
+    await page.getByTestId("mcp-ack-regulated").click();
     await page.getByTestId("btn-mcp-approve").click();
 
     const rpcResult: any = await rpcPromise;
@@ -200,15 +405,58 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("nav-group-geometry").click();
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2150 mm");
   });
+
+  test("a regulated change needs its acknowledgment on every save path", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+
+    // An agent's region change waits for the review's acknowledgment. Region 0
+    // keeps the simulator's 25 km/h and has no power cap, so the core accepts it.
+    const rpcPromise = page.evaluate(() => (window as any).webMcpServer.handleRequest("tools/call", {
+      name: "cranklink_set_setting",
+      arguments: { name: "destination", value: 0 },
+    }));
+    const approvalBanner = page.getByTestId("mcp-approval-banner");
+    await expect(approvalBanner.getByLabel("Regulated setting")).toBeVisible();
+    await expect(page.getByTestId("btn-mcp-approve")).toBeDisabled();
+    await page.getByTestId("mcp-ack-regulated").click();
+    await page.getByTestId("btn-mcp-approve").click();
+    expect(((await rpcPromise) as any).completed).toBe(1);
+
+    // Save & disconnect opens the review rather than writing straight away.
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.stageParameter("destination", 1));
+    await page.getByTestId("btn-disconnect").click();
+    await page.getByTestId("btn-save-disconnect").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-item-destination")).toBeVisible();
+    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
+    await review.getByTestId("ack-regulated").click();
+    await review.getByTestId("btn-commit-batch").click();
+    await expect(page.getByTestId("btn-connect-sim")).toBeVisible();
+  });
 });
 
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
 async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false) {
+  // Headless Chromium on Linux (CI) has no Web Bluetooth, and the connect view
+  // decides on first render whether to offer it. Stand in before the app loads;
+  // the simulator's chooser replaces this below.
+  await page.addInitScript(() => {
+    if (!("bluetooth" in navigator)) {
+      Object.defineProperty(navigator, "bluetooth", {
+        configurable: true,
+        value: { requestDevice: async () => { throw new Error("No simulated Bluetooth device yet"); } },
+      });
+    }
+  });
   if (cachePasskey) {
-    await page.addInitScript(() => {
+    // The cached PIN applies only to the gateway it was entered for.
+    await page.addInitScript((device) => {
       sessionStorage.setItem("esteps_ble_passkey", "000000");
-    });
+      sessionStorage.setItem("esteps_ble_passkey_device", device);
+    }, `simulated-etube-${rejectAuthentication ? "ep801" : "ep800-crg"}`);
   }
   await openInstrument(page);
   const setup = await page.evaluate(async ({ reject, defer }) => {
@@ -370,4 +618,141 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   const authLogs = await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs);
   expect(authLogs.some((entry: { stream: string }) => entry.stream === "stderr")).toBe(true);
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
+});
+
+// The old port is already closed and unlocked when a switch fails, so it must
+// not stay selected for the next command.
+test("a failed switch to Bluetooth leaves no transport selected", async ({ page }) => {
+  await openInstrument(page);
+  const state = await page.evaluate(async () => {
+    const terminal = (window as any).estepsTerminal;
+    await terminal.run("connect sim");
+    const before = terminal.status().transport;
+    const simulatorModule = "/simulator.js";
+    const { DeviceSimulator } = await import(simulatorModule);
+    const device = new DeviceSimulator({ model: "ep800-crg" });
+    let listenerRemoved = false;
+    const remove = device.removeEventListener.bind(device);
+    device.removeEventListener = (type: string, listener: EventListener) => {
+      if (type === "gattserverdisconnected") listenerRemoved = true;
+      remove(type, listener);
+    };
+    Object.defineProperty(navigator, "bluetooth", {
+      configurable: true,
+      value: { requestDevice: async () => device },
+    });
+    // Another tab holds the Bluetooth session.
+    await new Promise<void>((held) => {
+      navigator.locks.request("cranklink-ble-session", () => {
+        held();
+        return new Promise(() => {});
+      });
+    });
+    const error = await terminal.run("connect ble").then(() => null, (e: Error) => e.message);
+    return { before, error, listenerRemoved, ...terminal.status() };
+  });
+  expect(state.before).toBe("sim");
+  expect(state.error).toContain("Another tab has an active Bluetooth session");
+  expect(state.listenerRemoved).toBe(true);
+  expect(state.transport).toBeNull();
+  expect(state.usbSelected).toBe(false);
+});
+
+// The simulator flag makes host_sleep skip the Rust pacing sleeps, so it must
+// never outlive the simulator on a real adapter.
+test("adopting a granted USB adapter after the simulator ends simulated timing", async ({ page }) => {
+  await openInstrument(page);
+  const state = await page.evaluate(async () => {
+    const terminal = (window as any).estepsTerminal;
+    await terminal.run("connect sim");
+    const simulated = Boolean((window as any).estepsDeviceSimulator);
+    Object.defineProperty(navigator, "usb", {
+      configurable: true,
+      value: { getDevices: async () => [{ vendorId: 0x1e44, productId: 0x7151, configurations: [] }] },
+    });
+    await terminal.selectGranted("usb");
+    return {
+      simulated,
+      simulator: Boolean((window as any).estepsDeviceSimulator),
+      transport: terminal.status().transport,
+    };
+  });
+  expect(state).toEqual({ simulated: true, simulator: false, transport: "usb" });
+});
+
+/**
+ * Moves the simulated drive unit's session onto a granted USB adapter, then
+ * unplugs another SM-PCE02. `window.unplugUsb()` unplugs the selected one;
+ * app.js listens on the browser's own navigator.usb. Reopening it finds no
+ * adapter, as when the chooser is cancelled after a replug.
+ */
+async function moveSessionToUsb(page: Page): Promise<boolean> {
+  await openInstrument(page);
+  await page.getByTestId("btn-connect-sim").click();
+  await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+  await page.getByTestId("stepper-plus-tire-circumference").click();
+  return page.evaluate(async () => {
+    const usb = (navigator as any).usb as EventTarget | undefined;
+    if (!usb) return false;
+    const adapter = { vendorId: 0x1e44, productId: 0x7151, configurations: [] };
+    Object.defineProperty(navigator, "usb", {
+      configurable: true,
+      value: {
+        getDevices: async () => [adapter],
+        requestDevice: async () => { throw new DOMException("No device selected.", "NotFoundError"); },
+      },
+    });
+    await (window as any).estepsTerminal.selectGranted("usb");
+    (window as any).cranklinkInstrumentController.update({ transport: "usb" });
+    const unplug = (device: object) => usb.dispatchEvent(Object.defineProperty(new Event("disconnect"), "device", { value: device }));
+    (window as any).unplugUsb = () => unplug(adapter);
+    unplug({ vendorId: 0x1e44, productId: 0x7151, configurations: [] });
+    return true;
+  });
+}
+
+// Without this the sidebar stayed Connected until the next operation failed.
+test("unplugging the selected USB adapter between commands offers Reconnect at once", async ({ page }) => {
+  test.skip(!(await moveSessionToUsb(page)), "This browser exposes no WebUSB");
+  await expect(page.getByTestId("link-status")).toHaveText("Connected");
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+
+  await page.evaluate(() => (window as any).unplugUsb());
+  const banner = page.getByTestId("error-banner");
+  await expect(banner).toContainText("USB adapter disconnected");
+  await expect(banner.getByTestId("btn-error-reconnect")).toBeVisible();
+  await expect(page.getByTestId("link-status")).toHaveText("Link closed");
+  await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+});
+
+// After a replug the browser may show its chooser again; cancelling it lost the edits.
+test("a cancelled Reconnect keeps staged edits until the same drive unit connects", async ({ page }) => {
+  test.skip(!(await moveSessionToUsb(page)), "This browser exposes no WebUSB");
+  await page.evaluate(() => (window as any).unplugUsb());
+  await page.getByTestId("btn-error-reconnect").click();
+  await expect(page.getByTestId("error-banner")).toContainText("Couldn’t connect");
+  await expect(page.getByTestId("error-outcome")).toHaveText("Your unsaved changes are kept: connect to DU-EP800-CRG "
+    + "(serial 010203040506) again to restore them. Connecting to another component discards them.");
+  await page.getByTestId("btn-connect-sim").click();
+  await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
+  await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+});
+
+// Windows exposes the SM-PCE02 as an FTDI COM port; WebUSB needs WinUSB there.
+test("Windows offers the SM-PCE02 COM port before WebUSB", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "platform", { configurable: true, get: () => "Win32" });
+    Object.defineProperty(Navigator.prototype, "userAgentData", { configurable: true, get: () => undefined });
+    Object.defineProperty(Navigator.prototype, "bluetooth", {
+      configurable: true,
+      get: () => ({ getAvailability: async () => true, requestDevice: async () => { throw new Error("not used"); } }),
+    });
+  });
+  await openInstrument(page);
+  await expect(page.getByTestId("btn-connect-ble")).toHaveText("Connect via Bluetooth");
+  await page.getByTestId("btn-more-menu").click();
+  await expect(page.locator(".menu-dropdown").getByRole("button")).toHaveText([
+    "SM-PCE02 (COM port)",
+    "USB adapter (SM-PCE02, needs WinUSB)",
+  ]);
 });

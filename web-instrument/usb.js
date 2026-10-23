@@ -159,10 +159,14 @@ export class WebUsbPort {
     try {
       while (this.opened && generation === this.generation) {
         // Exactly one transferIn is outstanding, even when a Rust read times out.
-        const r = await this.device.transferIn(
-          this.input.endpointNumber,
-          this.input.packetSize * 64,
-        );
+        const r = await this.device
+          .transferIn(this.input.endpointNumber, this.input.packetSize * 64)
+          .catch((cause) => {
+            // A bare DOMException does not tell the page this port is closing.
+            throw new Error(
+              `USB receive failed: ${cause?.message || String(cause)}`,
+            );
+          });
         if (!this.opened || generation !== this.generation) break;
         if (r.status !== "ok") throw new Error(`USB receive ${r.status}`);
         const data = stripFtdiStatus(

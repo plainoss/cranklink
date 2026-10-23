@@ -253,6 +253,7 @@ pub fn capabilities_for_model(model: SettingsModel) -> Value {
 /// prefix into the SET template, changes the chosen field, and reconstructs
 /// reserved bytes from the template. `preserve` overrides that prefix length
 /// for a model; it is not the total reply length, which can include filler.
+/// The first `selector_len` query bytes select the record and must be echoed.
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingSpec {
     pub name: String,
@@ -293,6 +294,8 @@ pub struct SettingSpec {
     preserve: Option<usize>,
     #[serde(skip)]
     name_reserved_byte: bool,
+    #[serde(skip)]
+    selector_len: usize,
 }
 impl SettingSpec {
     // Explicit wire layout columns make the auditable command table readable.
@@ -331,10 +334,15 @@ impl SettingSpec {
             scale: 1.0,
             preserve: None,
             name_reserved_byte: true,
+            selector_len: 0,
         }
     }
     fn choices(mut self, v: &[i64]) -> Self {
         self.choices = v.to_vec();
+        self
+    }
+    fn selectors(mut self, len: usize) -> Self {
+        self.selector_len = len;
         self
     }
     fn oem(mut self) -> Self {
@@ -356,9 +364,12 @@ impl SettingSpec {
             )));
         }
         if self.width == 0 {
-            return Ok(json!(
-                String::from_utf8(p.to_vec())?.trim_end_matches(char::from(0))
-            ));
+            // Names are zero-filled, and unwritten (erased) bytes read FF.
+            let end = p
+                .iter()
+                .rposition(|&b| b != 0 && b != 0xff)
+                .map_or(0, |i| i + 1);
+            return Ok(json!(String::from_utf8(p[..end].to_vec())?));
         }
         ensure!(
             p.len() >= self.offset + self.width,
@@ -499,6 +510,7 @@ pub fn schema() -> Vec<SettingSpec> {
             1,
         )
         .choices(&[0, 1, 3, 4])
+        .selectors(1)
         .oem(),
         SettingSpec::new(
             "assist-pattern",
@@ -661,7 +673,8 @@ pub fn schema() -> Vec<SettingSpec> {
                     &[p, m, 0, 0, 0, 0, 0],
                     offset,
                     1,
-                );
+                )
+                .selectors(2);
                 s.oem = p < 2;
                 v.push(s);
             }
@@ -677,7 +690,8 @@ pub fn schema() -> Vec<SettingSpec> {
             &[p, 0, 0, 0],
             1,
             1,
-        );
+        )
+        .selectors(1);
         display.oem = p < 2;
         v.push(display);
     }
@@ -836,6 +850,7 @@ pub fn schema() -> Vec<SettingSpec> {
                 1,
                 2,
             )
+            .selectors(1)
             .oem(),
         );
     }
@@ -1058,26 +1073,25 @@ pub fn set(
         SettingsModel::Ep800Crg,
     )
 }
-/// Back up, issue the model-specific SET, and verify the current value by GET.
-/// The implemented setting path sends no additional generic EEPROM commit.
-/// A successful readback confirms the live value; persistence across power
-/// cycles needs a separate GET after the component restarts.
-pub fn set_for_model(
+
+/// A numeric SET whose live checks passed; nothing has been written yet.
+struct NumericPlan {
+    unset: bool,
+    original: Vec<u8>,
+    payload: Vec<u8>,
+    before: Value,
+    after: Value,
+}
+
+/// Read the current record and run every live model check of a numeric SET.
+/// It sends only GETs, so `settings set --dry-run` runs the same checks.
+fn plan_numeric(
     session: &mut dyn UnitCommands,
     slot: u8,
-    name: &str,
+    s: &SettingSpec,
     value: &str,
-    backup_path: &Path,
     model: SettingsModel,
-) -> Result<ChangeReceipt> {
-    let s = spec_for_model(name, model)?;
-    validate_input(&s, value)?;
-    if s.value_type == "date" {
-        return set_date(session, slot, &s, value, backup_path);
-    }
-    if s.width == 0 {
-        return set_name(session, slot, &s, value, backup_path);
-    }
+) -> Result<NumericPlan> {
     let unset = value == "unset";
     ensure!(!unset || s.nullable, "this setting does not support unset");
     let n = if unset {
@@ -1086,18 +1100,11 @@ pub fn set_for_model(
         s.raw_value(value)?
     };
     let original = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
-    validate_model_reply(&s, &original)?;
+    validate_model_reply(s, &original)?;
     let before = s.decode(&original)?;
-    validate_current_value(model, &s, &before)?;
-    let payload = updated_payload(&s, &original, n, unset)?;
-    validate_combination(&s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
-    if s.name.starts_with("max-power.") {
-        let destination = effective_destination(session, slot, model)?;
-        ensure!(
-            destination != 3 || n <= 400,
-            "destination 3 limits maximum power to 400 W"
-        );
-    }
+    validate_current_value(model, s, &before)?;
+    let payload = updated_payload(s, &original, n, unset)?;
+    validate_combination(s, &payload).context("invalid setting combination; to initialize an unset calendar use maintenance-date YYYY-MM-DD")?;
     if s.name.contains(".torque") || s.name == "torque-maximum" {
         let drivetrain = session.command(slot, 0x0b, 0x84, &[0], 0x86)?;
         ensure!(drivetrain.len() >= 2, "short drivetrain reply");
@@ -1146,15 +1153,73 @@ pub fn set_for_model(
         );
     }
 
-    if s.name == "speed-limit" {
+    if is_destination_limit(&s.name) {
         let destination = effective_destination(session, slot, model)?;
-        if model.modern() {
-            validate_modern_speed_destination(n, destination)?;
-        } else {
-            validate_speed_destination(n, destination)?;
+        validate_destination_limit(model, &s.name, n, destination)?;
+    }
+    if s.name == "destination" {
+        // The other direction of the same gate: a new region must not leave the
+        // current speed or power above its ceilings.
+        for (limit, current) in destination_limits(session, slot, model)? {
+            validate_destination_limit(model, &limit, current, n as u8)
+                .with_context(|| format!("change {limit} before destination {n}"))?;
         }
     }
     let after = s.decode(&payload)?;
+    Ok(NumericPlan {
+        unset,
+        original,
+        payload,
+        before,
+        after,
+    })
+}
+
+/// Readbacks after a hub adjustment SET while its actuator moves.
+const HUB_COMPLETION_POLLS: usize = 30;
+
+/// Back up, issue the model-specific SET, and verify the current value by GET.
+/// The implemented setting path sends no additional generic EEPROM commit.
+/// A successful readback confirms the live value; persistence across power
+/// cycles needs a separate GET after the component restarts.
+pub fn set_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    backup_path: &Path,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
+    set_for_model_bound(session, slot, name, value, backup_path, model, None)
+}
+
+/// [`set_for_model`] on the unit the session verified: the serial read for
+/// the backup must equal `expected_serial`, or nothing is backed up or sent.
+pub fn set_for_model_bound(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    backup_path: &Path,
+    model: SettingsModel,
+    expected_serial: Option<&str>,
+) -> Result<ChangeReceipt> {
+    let s = spec_for_model(name, model)?;
+    validate_input(&s, value)?;
+    if s.value_type == "date" {
+        return set_date(session, slot, &s, value, backup_path, expected_serial);
+    }
+    if s.width == 0 {
+        return set_name(session, slot, &s, value, backup_path, expected_serial);
+    }
+    let NumericPlan {
+        unset,
+        original,
+        payload,
+        before,
+        after,
+    } = plan_numeric(session, slot, &s, value, model)?;
+    let serial = checked_serial(session, slot, expected_serial)?;
     // create_new prevents accidentally overwriting the only known original configuration.
     let mut backup = OpenOptions::new()
         .write(true)
@@ -1163,10 +1228,11 @@ pub fn set_for_model(
         .context("create settings backup (choose a new filename)")?;
     serde_json::to_writer_pretty(
         &mut backup,
-        &json!({"format":"cranklink-setting-backup-v1","serial":hex::encode(crate::device::serial_bytes(&session.command(slot,1,0x3c,&[0],0x3e)?)?),"slot":slot,"settings_model":model.slug(),"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
+        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"settings_model":model.slug(),"setting":name,"before":before,"original_parameters":hex::encode(&original),"planned_parameters":hex::encode(&payload),"group":s.group,"command":s.set,"query":s.query}),
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
+    crate::storage::sync_parent(backup_path).context("persist settings backup directory")?;
     let changed = before != after;
     // A previous adjustment may still be moving toward another target even
     // when GET reports the requested current value. Always apply this target
@@ -1178,6 +1244,7 @@ pub fn set_for_model(
                 "setting write failed; outcome may be uncertain, inspect backup and read device",
             )?;
         let started = crate::platform::Instant::now();
+        let mut polls = 0;
         let got = loop {
             let got = session
                 .command(slot, s.group, s.get, &s.query, s.get + 2)
@@ -1188,7 +1255,10 @@ pub fn set_for_model(
             if s.name != "hub-adjustment" || s.decode(&got)? == after {
                 break got;
             }
-            ensure!(started.elapsed() < std::time::Duration::from_secs(3),
+            // About three seconds of 100 ms polls; the count also bounds the
+            // loop when the transport answers instantly.
+            polls += 1;
+            ensure!(polls < HUB_COMPLETION_POLLS && started.elapsed() < std::time::Duration::from_secs(3),
                 "hub adjustment readback mismatch: actuator completion unconfirmed; outcome may be uncertain; original preserved in {}", backup_path.display());
             crate::platform::sleep(std::time::Duration::from_millis(100));
         };
@@ -1203,16 +1273,25 @@ pub fn set_for_model(
                 "shared setting bits changed unexpectedly"
             );
         }
+        // Unsetting any calendar component clears the whole date; like decode()
+        // and restore_date, only year, month and day (bytes 0..3) are meaningful.
+        let calendar_unset = unset && s.group == 0x48 && s.set == 0x50;
+        if calendar_unset {
+            ensure!(
+                got.get(..3)
+                    .is_some_and(|date| date.iter().all(|&b| b == 0xff)),
+                "maintenance calendar did not clear; original preserved in {}",
+                backup_path.display()
+            );
+        }
         for i in 0..s.offset {
             ensure!(
-                got.get(i) == original.get(i),
+                calendar_unset || got.get(i) == original.get(i),
                 "shared setting prefix changed unexpectedly"
             );
         }
         for i in s.offset + s.width..meaningful_len(&s).min(original.len()) {
-            if (s.name.starts_with("speed-limit") && i >= 2)
-                || (unset && s.group == 0x48 && s.set == 0x50)
-            {
+            if (s.name.starts_with("speed-limit") && i >= 2) || calendar_unset {
                 continue;
             }
             ensure!(
@@ -1228,6 +1307,63 @@ pub fn set_for_model(
         backup: backup_path.display().to_string(),
         changed,
     })
+}
+
+/// Read the serial a backup records, right before its SET. With `expected`,
+/// refuse a unit that took over the slot since the session verified it.
+fn checked_serial(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    expected: Option<&str>,
+) -> Result<String> {
+    let serial = hex::encode(crate::device::serial_bytes(&session.command(
+        slot,
+        1,
+        0x3c,
+        &[0],
+        0x3e,
+    )?)?);
+    if let Some(expected) = expected {
+        ensure!(
+            serial.eq_ignore_ascii_case(expected),
+            "slot {slot} now reports serial {serial}, not the verified {expected}; refusing write"
+        );
+    }
+    Ok(serial)
+}
+
+/// Check a `set_for_model` without taking a backup or sending a SET: the same
+/// input checks and, for numeric settings, the same live GETs and model
+/// checks. Unit authentication is not exercised.
+pub fn dry_run_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    name: &str,
+    value: &str,
+    model: SettingsModel,
+) -> Result<Value> {
+    let s = spec_for_model(name, model)?;
+    validate_input(&s, value)?;
+    let mut report = json!({
+        "dry_run": true,
+        "valid": true,
+        "setting": name,
+        "planned_value": value,
+        "oem": s.oem,
+        "unit": s.unit,
+    });
+    if s.value_type == "date" || s.width == 0 {
+        // Date and name writes have no live checks beyond the current read.
+        let current = read_for_model(session, slot, name, model)?;
+        validate_current_value(model, &s, &current.value)?;
+        report["current_value"] = current.value;
+    } else {
+        let plan = plan_numeric(session, slot, &s, value, model)?;
+        report["changed"] = json!(plan.before != plan.after);
+        report["planned_parameters"] = json!(hex::encode(&plan.payload));
+        report["current_value"] = plan.before;
+    }
+    Ok(report)
 }
 
 // Read OEM destination first. FF means unset, not EU. Modern models fall back
@@ -1256,15 +1392,29 @@ fn effective_destination(
     })
 }
 
+/// Permitted speed-limit range (km/h x 100) per destination; `None` where the
+/// model has no verified range.
+fn speed_range(modern: bool, destination: u8) -> Option<(i64, i64)> {
+    match (modern, destination) {
+        (_, 1) => Some((1900, 3200)),
+        (_, 0 | 3) | (false, 4) => Some((1500, 2500)),
+        // JP=2 and US_CLASS3=5 use different ranges from the EP800 model table.
+        (true, 2) => Some((1400, 2400)),
+        (true, 5) => Some((1900, 4500)),
+        _ => None,
+    }
+}
+
+pub(crate) fn destination_speed_range(model: SettingsModel, destination: u8) -> Option<(i64, i64)> {
+    speed_range(model.modern(), destination)
+}
+
 fn validate_speed_destination(n: i64, destination: u8) -> Result<()> {
     // On tested EP800 firmware, speed GET 16/B4 selector 00 aliases effective
     // speed rather than returning an independent OEM ceiling. Validate permitted
     // maxima against the model and destination table, not that readback.
-    let (minimum, maximum) = match destination {
-        1 => (1900, 3200),
-        0 | 3 | 4 => (1500, 2500),
-        _ => anyhow::bail!("unsupported destination for speed settings: {destination}"),
-    };
+    let (minimum, maximum) = speed_range(false, destination)
+        .with_context(|| format!("unsupported destination for speed settings: {destination}"))?;
     ensure!(
         (minimum..=maximum).contains(&n),
         "destination {destination} permits {}..{} km/h",
@@ -1275,14 +1425,8 @@ fn validate_speed_destination(n: i64, destination: u8) -> Result<()> {
 }
 
 fn validate_modern_speed_destination(n: i64, destination: u8) -> Result<()> {
-    // JP=2 and US_CLASS3=5 use different ranges from the EP800 model table.
-    let (minimum, maximum) = match destination {
-        0 | 3 => (1500, 2500),
-        1 => (1900, 3200),
-        2 => (1400, 2400),
-        5 => (1900, 4500),
-        _ => anyhow::bail!("unsupported modern destination {destination}"),
-    };
+    let (minimum, maximum) = speed_range(true, destination)
+        .with_context(|| format!("unsupported modern destination {destination}"))?;
     ensure!(
         (minimum..=maximum).contains(&n),
         "destination {destination} permits {}..{} km/h",
@@ -1290,6 +1434,54 @@ fn validate_modern_speed_destination(n: i64, destination: u8) -> Result<()> {
         maximum / 100
     );
     Ok(())
+}
+
+/// Settings whose permitted values depend on the destination (region).
+fn is_destination_limit(name: &str) -> bool {
+    name == "speed-limit" || name.starts_with("max-power.")
+}
+
+fn validate_destination_limit(
+    model: SettingsModel,
+    name: &str,
+    n: i64,
+    destination: u8,
+) -> Result<()> {
+    if name == "speed-limit" {
+        if model.modern() {
+            validate_modern_speed_destination(n, destination)?;
+        } else {
+            validate_speed_destination(n, destination)?;
+        }
+    } else if name.starts_with("max-power.") {
+        ensure!(
+            destination != 3 || n <= 400,
+            "destination 3 limits maximum power to 400 W"
+        );
+    }
+    Ok(())
+}
+
+/// Current raw values of the model's destination-limited settings.
+fn destination_limits(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    model: SettingsModel,
+) -> Result<Vec<(String, i64)>> {
+    schema_for_model(model)
+        .into_iter()
+        .filter(|s| is_destination_limit(&s.name))
+        .map(|s| {
+            let raw = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+            validate_model_reply(&s, &raw)?;
+            let value = s
+                .decode(&raw)?
+                .as_f64()
+                .context("non-numeric limit reply")?;
+            let n = (value * s.scale).round() as i64;
+            Ok((s.name, n))
+        })
+        .collect()
 }
 
 fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
@@ -1301,6 +1493,14 @@ fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
             "invalid modern basic-mode profile selector/length; fine-tune profiles are unsupported"
         );
     }
+    // A misrouted or late reply would otherwise pass its selector into the SET.
+    let selector = &spec.query[..spec.selector_len];
+    ensure!(
+        raw.get(..selector.len()) == Some(selector),
+        "reply selector {} does not match request {}",
+        hex::encode(&raw[..selector.len().min(raw.len())]),
+        hex::encode(selector)
+    );
     Ok(())
 }
 
@@ -1312,9 +1512,11 @@ fn modern_torque_levels(minimum: u8, maximum: u8) -> Result<[i64; 10]> {
     Ok(match (minimum, maximum) {
         (20, 85) => [20, 27, 34, 42, 49, 56, 63, 70, 78, 85],
         (20, 50) => [20, 24, 27, 30, 33, 36, 40, 43, 46, 50],
-        _ => std::array::from_fn(|i| {
-            ((i as f64 * maximum as f64 + (9 - i) as f64 * minimum as f64) / 9.0).round() as i64
-        }),
+        // Interpolating reproduces neither table above, so other bounds would
+        // get guessed levels; refuse until their vendor table is captured.
+        _ => anyhow::bail!(
+            "torque levels for OEM bounds {minimum}..{maximum} Nm are not verified; torque writes are disabled for this motor"
+        ),
     })
 }
 fn validate_modern_torque(n: i64, mode: u8, minimum: u8, maximum: u8) -> Result<()> {
@@ -1367,6 +1569,7 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
     );
     let mut payload = s.template.clone();
     payload[..meaningful].copy_from_slice(&original[..meaningful]);
+    payload[..s.selector_len].copy_from_slice(&s.query[..s.selector_len]);
     if s.name.starts_with("speed-limit") {
         payload[2] = s.query[0];
         payload[3] = 255;
@@ -1546,16 +1749,24 @@ pub fn restore_parsed_for_model(
     )?)?);
     let setting = parsed.validate_for_model(model, &serial)?;
     if setting.group == 0x48 && setting.set == 0x50 {
-        return restore_date(session, slot, &setting, &parsed.raw_backup, new_backup_path);
+        return restore_date(
+            session,
+            slot,
+            &setting,
+            &parsed.raw_backup,
+            new_backup_path,
+            Some(&serial),
+        );
     }
     let value = parsed.planned_value();
-    set_for_model(
+    set_for_model_bound(
         session,
         slot,
         &parsed.setting,
         &value,
         new_backup_path,
         model,
+        Some(&serial),
     )
 }
 
@@ -1587,6 +1798,7 @@ fn set_date(
     s: &SettingSpec,
     value: &str,
     path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let p = parse_date(value)?;
     // This private path only accepts a validated calendar or the vendor's all-FF unset tuple.
@@ -1596,6 +1808,7 @@ fn set_date(
         s,
         &json!({"original_parameters":hex::encode(p)}),
         path,
+        expected_serial,
     )
 }
 
@@ -1606,6 +1819,7 @@ fn restore_date(
     s: &SettingSpec,
     backup: &Value,
     path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let original = hex::decode(
         backup["original_parameters"]
@@ -1623,13 +1837,7 @@ fn restore_date(
     ensure!(current.len() >= 4, "short current date");
     let before = s.decode(&current)?;
     let after = s.decode(original)?;
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -1641,6 +1849,7 @@ fn restore_date(
     )?;
     file.write_all(b"\n")?;
     file.sync_all()?;
+    crate::storage::sync_parent(path).context("persist settings backup directory")?;
     let changed = current[..3] != original[..3];
     if changed {
         session
@@ -1706,17 +1915,12 @@ fn set_name(
     s: &SettingSpec,
     value: &str,
     backup_path: &Path,
+    expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let original = read_raw(session, slot, s)?;
     let before = s.decode(&original)?;
     let after = json!(value);
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = checked_serial(session, slot, expected_serial)?;
     let mut backup = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1728,6 +1932,7 @@ fn set_name(
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;
+    crate::storage::sync_parent(backup_path).context("persist settings backup directory")?;
     let changed = before != after;
     if changed {
         let mut bytes = [0u8; 10];
@@ -1891,10 +2096,10 @@ mod tests {
         assert!(validate_modern_torque(27, 3, 20, 85).is_err());
         assert!(validate_modern_torque(34, 3, 20, 85).is_ok());
         assert!(modern_torque_levels(20, 100).is_err());
-        assert_eq!(
-            modern_torque_levels(25, 80).unwrap(),
-            [25, 31, 37, 43, 49, 56, 62, 68, 74, 80]
-        );
+        // Unverified bounds get no guessed levels, even for a plausible value.
+        assert!(modern_torque_levels(25, 80).is_err());
+        assert!(validate_modern_torque(31, 2, 25, 80).is_err());
+        assert!(validate_modern_torque(80, 2, 25, 80).is_err());
     }
     #[test]
     fn modern_profile_edit_preserves_carry_cutoff_and_reconstructs_reserved_byte() {
@@ -1988,6 +2193,67 @@ mod tests {
         }
     }
     #[test]
+    fn erased_profile_name_bytes_read_as_padding_and_can_be_overwritten() {
+        struct Motor {
+            name: [u8; 10],
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                let start = (params[0] & 1) as usize * 5;
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x17, 0x24) => [&params[..1], &self.name[start..start + 5]].concat(),
+                    (0x17, 0x20) => {
+                        self.name[start..start + 5].copy_from_slice(&params[1..6]);
+                        self.sets += 1;
+                        vec![]
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        let name = spec("profile1.name").unwrap();
+        assert_eq!(
+            name.decode(b"Trail\xff\xff\xff\xff\xff").unwrap(),
+            json!("Trail")
+        );
+        assert_eq!(
+            name.decode(b"Trail\0\xff\xff\xff\xff").unwrap(),
+            json!("Trail")
+        );
+        assert_eq!(name.decode(&[0xff; 10]).unwrap(), json!(""));
+        assert!(name.decode(b"Tr\xffil\0\0\0\0\0").is_err());
+
+        let mut motor = Motor {
+            name: *b"Trail\xff\xff\xff\xff\xff",
+            sets: 0,
+        };
+        assert_eq!(
+            read(&mut motor, 13, "profile1.name").unwrap().value,
+            json!("Trail")
+        );
+        let backup = std::env::temp_dir().join(format!(
+            "cranklink-erased-name-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let receipt = set(&mut motor, 13, "profile1.name", "New", &backup).unwrap();
+        assert_eq!(receipt.before, json!("Trail"));
+        let saved: Value = serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
+        assert_eq!(saved["before"], json!("Trail"));
+        assert_eq!(motor.sets, 2);
+        assert_eq!(motor.name, *b"New\0\0\0\0\0\0\0");
+        std::fs::remove_file(backup).unwrap();
+    }
+    #[test]
     fn modern_destination_speed_ranges_do_not_change_ep800_limits() {
         assert!(validate_modern_speed_destination(1400, 2).is_ok());
         assert!(validate_modern_speed_destination(2500, 2).is_err());
@@ -1996,6 +2262,110 @@ mod tests {
         assert!(validate_modern_speed_destination(2600, 0).is_err());
         assert!(validate_speed_destination(4500, 5).is_err());
         assert!(validate_speed_destination(1400, 2).is_err());
+    }
+    #[test]
+    fn destination_change_and_restore_refuse_speed_or_power_above_the_new_region() {
+        struct Motor {
+            destination: u8,
+            speed: u16,
+            boost: u16,
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x16, 0xac) => vec![params[0], self.destination, 0xff, 0xff],
+                    (0x16, 0xb4) => [&self.speed.to_le_bytes()[..], &[0xff, 0xff]].concat(),
+                    (0x17, 0x14) => {
+                        let watts: u16 = if params[0] == 3 { self.boost } else { 300 };
+                        [&[params[0]][..], &watts.to_le_bytes()].concat()
+                    }
+                    (0x16, 0xa8) => {
+                        self.destination = params[1];
+                        self.sets += 1;
+                        vec![]
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        let path = |case: usize| {
+            std::env::temp_dir().join(format!(
+                "cranklink-destination-limits-{}-{}-{case}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ))
+        };
+        for (case, (model, destination, speed, boost, target, refusal)) in [
+            (
+                SettingsModel::Ep800Crg,
+                1,
+                3200,
+                400,
+                "0",
+                Some("speed-limit"),
+            ),
+            (SettingsModel::Ep800Crg, 1, 2500, 400, "0", None),
+            (
+                SettingsModel::Ep800Crg,
+                1,
+                2500,
+                500,
+                "3",
+                Some("max-power.boost"),
+            ),
+            (SettingsModel::Ep800Crg, 1, 2500, 400, "3", None),
+            (SettingsModel::Ep801, 5, 4000, 0, "0", Some("speed-limit")),
+            (SettingsModel::Ep801, 5, 2500, 0, "0", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut motor = Motor {
+                destination,
+                speed,
+                boost,
+                sets: 0,
+            };
+            let backup = path(case);
+            let result = set_for_model(&mut motor, 13, "destination", target, &backup, model);
+            match refusal {
+                Some(limit) => {
+                    let error = result.unwrap_err().to_string();
+                    assert_eq!(error, format!("change {limit} before destination {target}"));
+                    assert_eq!((motor.sets, motor.destination), (0, destination));
+                    assert!(!backup.exists(), "refused before the backup");
+                }
+                None => {
+                    assert!(result.unwrap().changed);
+                    assert_eq!(motor.sets, 1);
+                    std::fs::remove_file(backup).unwrap();
+                }
+            }
+        }
+        // A destination backup taken at 25 km/h cannot return to EU after a raise.
+        let mut motor = Motor {
+            destination: 0,
+            speed: 2500,
+            boost: 400,
+            sets: 0,
+        };
+        let (original, rollback) = (path(10), path(11));
+        set(&mut motor, 13, "destination", "1", &original).unwrap();
+        motor.speed = 3200;
+        let error = restore(&mut motor, 13, &original, &rollback).unwrap_err();
+        assert_eq!(error.to_string(), "change speed-limit before destination 0");
+        assert_eq!((motor.sets, motor.destination), (1, 1));
+        assert!(!rollback.exists());
+        std::fs::remove_file(original).unwrap();
     }
     #[test]
     fn modern_change_and_serial_bound_restore_preserve_extended_profile_fields() {
@@ -2131,6 +2501,64 @@ mod tests {
         assert_eq!(spec("profile2.boost.start").unwrap().query, [3, 3]);
     }
     #[test]
+    fn replies_for_another_selector_are_refused_before_backup_or_write() {
+        struct Misrouted {
+            get: (u8, u8),
+            reply: Vec<u8>,
+        }
+        impl UnitCommands for Misrouted {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!((group, command), self.get, "only the setting's GET is sent");
+                Ok(self.reply.clone())
+            }
+        }
+        for (case, (name, get, reply, value)) in [
+            ("destination", (0x16, 0xac), vec![0, 1, 0xff, 0xff], "0"),
+            (
+                "profile2.eco.character",
+                (0x16, 0xfc),
+                vec![2, 1, 27, 1, 4, 0xff, 0xff],
+                "2",
+            ),
+            (
+                "profile1.display",
+                (0x17, 0x2c),
+                vec![3, 0, 0xff, 0xff],
+                "1",
+            ),
+            ("max-power.boost", (0x17, 0x14), vec![2, 0x90, 0x01], "300"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut motor = Misrouted { get, reply };
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-misrouted-{}-{}-{case}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let error = set(&mut motor, 13, name, value, &backup).unwrap_err();
+            assert!(
+                error.to_string().starts_with("reply selector"),
+                "{name}: {error}"
+            );
+            assert!(!backup.exists(), "{name}");
+            assert!(read(&mut motor, 13, name).is_err(), "{name}");
+        }
+        // The SET names the requested record even if a caller skips the check.
+        assert_eq!(
+            updated_payload(&spec("destination").unwrap(), &[0, 1, 0xff, 0xff], 0, false).unwrap(),
+            [1, 0, 0xff, 0xff]
+        );
+    }
+    #[test]
     fn modern_destination_uses_factory_only_when_oem_is_unset_and_never_defaults_on_error() {
         struct Destination {
             replies: std::collections::VecDeque<Vec<u8>>,
@@ -2223,9 +2651,271 @@ mod tests {
             .is_err());
     }
     #[test]
+    fn committed_web_schemas_match_the_rust_tables() {
+        // The web app prefers these static files over the WASM schema; regenerate
+        // them with `node --experimental-strip-types tools/sync-schemas.ts` after changing a table.
+        macro_rules! schemas {
+            ($($slug:literal),*) => {
+                [$(($slug, include_str!(concat!("../web-instrument/schemas/", $slug, ".json")))),*]
+            };
+        }
+        let listed = schemas!(
+            "ep800-crg",
+            "ep600",
+            "ep801",
+            "ep500",
+            "e5100",
+            "e8000",
+            "e7000",
+            "e6100",
+            "e6000"
+        );
+        for (slug, committed) in listed {
+            let model = SettingsModel::from_name(slug).unwrap();
+            assert_eq!(model.slug(), slug);
+            let committed: Value = serde_json::from_str(committed).unwrap();
+            assert_eq!(
+                serde_json::to_value(schema_for_model(model)).unwrap(),
+                committed,
+                "web-instrument/schemas/{slug}.json is stale; run node --experimental-strip-types tools/sync-schemas.ts"
+            );
+        }
+        // A schema file missing from this list would drift unchecked, and one
+        // missing from the publish lists would never ship.
+        let on_disk: std::collections::BTreeSet<String> = std::fs::read_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/web-instrument/schemas"
+        ))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .map(|path| path.file_stem().unwrap().to_str().unwrap().to_owned())
+        .collect();
+        assert_eq!(
+            on_disk,
+            listed.iter().map(|(slug, _)| slug.to_string()).collect(),
+            "list every web-instrument/schemas/*.json here and in tools/sync-schemas.ts"
+        );
+        for (slug, _) in listed {
+            assert!(
+                include_str!("../tools/sync-schemas.ts").contains(&format!("\"{slug}\"")),
+                "tools/sync-schemas.ts does not regenerate {slug}"
+            );
+            for (lister, list) in [
+                (
+                    "web-instrument/scripts/copy-runtime-assets.mjs",
+                    include_str!("../web-instrument/scripts/copy-runtime-assets.mjs"),
+                ),
+                (
+                    ".github/scripts/check-web-assets.py",
+                    include_str!("../.github/scripts/check-web-assets.py"),
+                ),
+            ] {
+                assert!(
+                    list.contains(&format!("\"schemas/{slug}.json\"")),
+                    "{lister} must list schemas/{slug}.json"
+                );
+            }
+        }
+    }
+    #[test]
+    fn unsetting_any_calendar_component_clears_the_date() {
+        struct Calendar {
+            date: Vec<u8>,
+            reserved_reads_zero: bool,
+        }
+        impl UnitCommands for Calendar {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x48, 0x50) => {
+                        self.date = params.to_vec();
+                        if self.reserved_reads_zero {
+                            self.date[3] = 0;
+                        }
+                        vec![]
+                    }
+                    (0x48, _) => self.date.clone(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        for (case, (name, reserved_reads_zero)) in [
+            ("maintenance-year", false),
+            ("maintenance-month", false),
+            ("maintenance-day", false),
+            // Byte 3 is not part of the date; firmware need not echo it as FF.
+            ("maintenance-day", true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut calendar = Calendar {
+                date: vec![24, 5, 10, 0],
+                reserved_reads_zero,
+            };
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-calendar-{case}-{name}-{}-{}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let receipt = set_for_model(
+                &mut calendar,
+                13,
+                name,
+                "unset",
+                &backup,
+                SettingsModel::Ep800Crg,
+            )
+            .unwrap();
+            assert_eq!(receipt.after, Value::Null, "{name}");
+            assert_eq!(calendar.date[..3], [255; 3], "{name}");
+            std::fs::remove_file(backup).unwrap();
+        }
+    }
+    #[test]
     fn date_validated() {
         let s = spec("maintenance-day").unwrap();
         assert!(validate_combination(&s, &[24, 2, 29, 0]).is_ok());
         assert!(validate_combination(&s, &[25, 2, 29, 0]).is_err());
+    }
+    #[test]
+    fn dry_run_runs_the_live_checks_of_the_write_without_sending_a_set() {
+        struct Motor {
+            drivetrain: Vec<u8>,
+            profile: Vec<u8>,
+            date: Vec<u8>,
+            calls: Vec<(u8, u8)>,
+            sets: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                self.calls.push((group, command));
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x16, 0xfc) => self.profile.clone(),
+                    (0x16, 0xf8) => {
+                        self.profile = params.to_vec();
+                        self.sets += 1;
+                        vec![]
+                    }
+                    (0x0b, 0x84) => self.drivetrain.clone(),
+                    (0x17, 0x1c) => vec![20, 85],
+                    (0x48, 0x54) => self.date.clone(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x} {params:02x?}"),
+                })
+            }
+        }
+        let motor = |drivetrain: Vec<u8>| Motor {
+            drivetrain,
+            profile: vec![2, 3, 70, 6, 3, 0, 0],
+            date: vec![25, 2, 10, 0],
+            calls: vec![],
+            sets: 0,
+        };
+        let dry_run = |motor: &mut Motor, name, value| {
+            dry_run_for_model(motor, 13, name, value, SettingsModel::Ep800Crg)
+        };
+
+        // An internal gear hub with eight speeds caps torque at 50 Nm.
+        let mut hub = motor(vec![3, 8]);
+        let error = dry_run(&mut hub, "profile1.boost.torque", "85").unwrap_err();
+        assert!(error.to_string().contains("50 Nm"), "{error:#}");
+        // February has no 30th.
+        let error = dry_run(&mut hub, "maintenance-day", "30").unwrap_err();
+        assert!(format!("{error:#}").contains("invalid setting combination"));
+
+        let mut chain = motor(vec![0, 12]);
+        let report = dry_run(&mut chain, "profile1.boost.torque", "85").unwrap();
+        assert_eq!(report["valid"], true);
+        assert_eq!(report["current_value"], 70);
+        assert_eq!(report["planned_parameters"], "02035506030000");
+        assert_eq!(report["changed"], true);
+        let checked = std::mem::take(&mut chain.calls);
+        assert_eq!(checked, [(0x16, 0xfc), (0x0b, 0x84), (0x17, 0x1c)]);
+        // The write sends the same GETs, then reads the serial for its backup.
+        let backup = std::env::temp_dir().join(format!(
+            "cranklink-dry-run-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        set_for_model(
+            &mut chain,
+            13,
+            "profile1.boost.torque",
+            "85",
+            &backup,
+            SettingsModel::Ep800Crg,
+        )
+        .unwrap();
+        std::fs::remove_file(&backup).unwrap();
+        assert_eq!(chain.calls[..checked.len()], checked);
+        assert_eq!(chain.calls[checked.len()], (1, 0x3c));
+        assert_eq!((hub.sets, chain.sets), (0, 1));
+    }
+    #[test]
+    fn a_bound_write_to_another_unit_leaves_no_backup_and_sends_no_set() {
+        struct Motor;
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![9; 6],
+                    (0x48, 0x54) => vec![24, 5, 10, 0],
+                    (0x17, 0x24) => [&params[..1], b"Trail"].concat(),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        // Numeric, date and name writes each take their own backup path.
+        for (case, (name, value)) in [
+            ("maintenance-day", "11"),
+            ("maintenance-date", "2024-05-11"),
+            ("profile1.name", "Road"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let backup = std::env::temp_dir().join(format!(
+                "cranklink-bound-{case}-{}-{}.json",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let error = set_for_model_bound(
+                &mut Motor,
+                13,
+                name,
+                value,
+                &backup,
+                SettingsModel::Ep800Crg,
+                Some("010203040506"),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("refusing write"),
+                "{name}: {error:#}"
+            );
+            assert!(!backup.exists(), "{name}");
+        }
     }
 }

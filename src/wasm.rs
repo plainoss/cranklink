@@ -1,5 +1,6 @@
 //! The browser runs the same synchronous CLI in a dedicated worker. Host RPC
-//! bridges WebUSB and durable browser files; no firmware logic lives in JS.
+//! bridges WebUSB, Web Serial, Web Bluetooth and durable browser files; no
+//! firmware logic lives in JS.
 use wasm_bindgen::prelude::*;
 thread_local! {
     static BLE_SESSION: std::cell::RefCell<Option<crate::ble::BleSession>> = const { std::cell::RefCell::new(None) };
@@ -29,6 +30,14 @@ pub(crate) fn end_ble_session() -> anyhow::Result<()> {
         closed?;
     }
     Ok(())
+}
+/// A panic traps without unwinding and the default hook writes nowhere in the
+/// browser, so report the message and location before the trap.
+#[wasm_bindgen(start)]
+pub fn start() {
+    std::panic::set_hook(Box::new(|info| {
+        host_emit("stderr", &format!("error: {info}\n"))
+    }));
 }
 #[wasm_bindgen]
 pub fn disconnect_ble() -> i32 {

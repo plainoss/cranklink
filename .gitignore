@@ -1,6 +1,9 @@
 /target
 **/*.rs.bk
 *.wire.jsonl
+# firmware dump-bootloader's wire.jsonl holds the resident bootloader bytes.
+wire.jsonl
+/donor-read-*/
 *.journal.jsonl
 backup-*.json
 initial_*.json
@@ -24,6 +27,10 @@ tools/firmware-sim/*.local.json
 tools/firmware-sim/.cache/
 .firmware-cache/
 __pycache__/
+.venv*/
+
+# Local scratch scripts
+/scratch/
 
 # Wrangler local state
 web-instrument/.wrangler/

@@ -19,13 +19,16 @@ function connectingTitle(transport: TransportType | null): string {
 }
 
 /** What the operator must not do while this phase runs, per transport. */
-function guidance(phase: SessionPhase, transport: TransportType | null): { text: string; critical: boolean } {
+function guidance(phase: SessionPhase, transport: TransportType | null, check: boolean): { text: string; critical: boolean } {
   if (transport === "sim") {
     return { text: "Simulated bike components. No hardware is involved.", critical: false };
   }
   const link = transport === "ble"
     ? "Keep this page open and the bike powered on and in connection mode"
     : "Keep the cable connected and the bike powered on";
+  if (phase === "flashing" && check) {
+    return { text: `Nothing is written, but the motor enters its bootloader for this check. ${link} until it finishes.`, critical: true };
+  }
   if (phase === "flashing") {
     return { text: `Firmware is being written. ${link} until this finishes, or the motor may need recovery.`, critical: true };
   }
@@ -39,8 +42,11 @@ export function OperationModal({ state }: { state: InstrumentState }) {
   const busy = ["connecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
   // Steps aside for the passkey prompt so focus and the on-screen keyboard go to its field.
   const open = busy && !state.passkeyPromptOpen;
-  const title = state.phase === "connecting" ? connectingTitle(state.transport) : TITLES[state.phase] ?? "Working…";
-  const notice = guidance(state.phase, state.transport);
+  const check = state.phase === "flashing" && state.firmware.operation === "check";
+  const title = state.phase === "connecting"
+    ? connectingTitle(state.transport)
+    : check ? "Checking firmware compatibility…" : TITLES[state.phase] ?? "Working…";
+  const notice = guidance(state.phase, state.transport, check);
 
   // Operations cannot be cancelled from here, so the dialog ignores outside clicks and Escape.
   return (

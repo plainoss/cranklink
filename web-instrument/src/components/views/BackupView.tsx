@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Archive, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import type { InstrumentState, JournalSnapshot } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { formatSetting, settingLabel } from "../../domain/settingFormat.ts";
+import { formatSetting, listText, settingLabel, unwritableValues } from "../../domain/settingFormat.ts";
 import { Button, Card, Disclosure, toast } from "@heroui/react";
 import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
@@ -46,7 +46,8 @@ function restorePoints(state: InstrumentState): RestorePoint[] {
       && (file.settingsModel === state.identity?.modelSlug || (state.identity?.isMotor && !file.settingsModel)));
     const lines = restorable.map((file) =>
       file.setting !== undefined
-        ? `${settingLabel(state.schema, file.setting)}: ${formatSetting(state.schema, file.setting, file.before)}`
+        ? `${settingLabel(state.schema, file.setting)}: ${formatSetting(state.schema, file.setting, file.before)}${
+          unwritableValues(state.schema, [[file.setting, file.before]]).length ? " (cranklink cannot write this value)" : ""}`
         : file.summary);
     const title = files[0].kind === "firmware"
       ? "Firmware image"
@@ -74,7 +75,12 @@ export function BackupView({ state, controller }: BackupViewProps) {
   const [pending, setPending] = useState<RestorePoint | null>(null);
   useEffect(() => setPending(null), [state.identity?.slot, state.identity?.serial, state.identity?.modelSlug]);
   const points = restorePoints(state);
+  // Undoing the restore writes these current values back.
+  const unwritable = unwritableValues(state.schema, (pending?.restorable ?? [])
+    .map((file) => [file.setting ?? "", state.liveValues[file.setting ?? ""]?.value] as const),
+    { model: state.identity?.modelSlug, live: state.liveValues });
   const busy = state.phase !== "ready" || state.linkLost || !state.identity;
+  const hasStaged = Object.keys(state.stagedValues).length > 0;
 
   const restore = async () => {
     if (!pending) return;
@@ -95,6 +101,10 @@ export function BackupView({ state, controller }: BackupViewProps) {
           Back up all settings now
         </Button>
       </div>
+
+      {hasStaged && points.some((point) => point.restorable.length > 0) && (
+        <p className="text-sm text-muted" data-testid="restore-staged-hint">Save or discard staged changes before restoring a backup.</p>
+      )}
 
       {points.length === 0 ? (
         <Card variant="transparent" className="items-center text-center py-12 border border-dashed border-separator">
@@ -122,7 +132,7 @@ export function BackupView({ state, controller }: BackupViewProps) {
                     </ul>
                   </div>
                   {point.restorable.length > 0 && (
-                    <Button variant="outline" isDisabled={busy} onPress={() => {
+                    <Button variant="outline" isDisabled={busy || hasStaged} onPress={() => {
                       toast.clear();
                       setPending(point);
                     }} data-action="restore-snapshot" className="shrink-0 self-start">
@@ -176,7 +186,11 @@ export function BackupView({ state, controller }: BackupViewProps) {
         title={`Restore these values to ${state.identity?.model ?? "the selected component"}?`}
         actions={[{ label: "Restore", onPress: restore, "data-testid": "btn-confirm-restore" }]}
       >
-        <p className="text-sm text-muted mb-3">The current values are backed up first, so this can be undone.</p>
+        <p className="text-sm text-muted mb-3" data-testid="restore-undo-note">
+          {unwritable.length === 0
+            ? "The current values are backed up first, so this can be undone."
+            : `The current values are backed up first, but cranklink cannot write back the current ${listText(unwritable)}, so this cannot be fully undone.`}
+        </p>
         <ul className="text-sm flex flex-col gap-1 rounded-xl border border-separator p-3">
           {pending?.lines.map((line) => <li key={line}>{line}</li>)}
         </ul>

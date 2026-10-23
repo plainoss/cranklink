@@ -1,17 +1,23 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// CRANKLINK_E2E_PORT lets worktrees run the suite side by side.
+const port = Number(process.env.CRANKLINK_E2E_PORT) || 8030;
+
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "**/production.spec.ts",
+  // Both have dedicated configs: built assets, and serial stock-firmware runs.
+  testIgnore: ["**/production.spec.ts", "**/stock-components.spec.ts"],
   timeout: 45_000,
   expect: {
     timeout: 15_000,
   },
   fullyParallel: true,
+  forbidOnly: !!process.env.CI,
   workers: process.env.CI ? 4 : undefined,
   use: {
-    baseURL: "http://127.0.0.1:8030",
-    trace: "on-first-retry",
+    baseURL: `http://127.0.0.1:${port}`,
+    // There are no retries, so "on-first-retry" would never record a trace.
+    trace: "retain-on-failure",
     viewport: { width: 1280, height: 840 },
   },
   projects: [
@@ -22,9 +28,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev -- --host 0.0.0.0 --port 8030",
-    url: "http://127.0.0.1:8030",
-    reuseExistingServer: !process.env.CI,
+    // Loopback only: the dev server serves every file under web-instrument/.
+    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+    url: `http://127.0.0.1:${port}`,
+    // Opt-in: a server already on the port may be another worktree's code.
+    reuseExistingServer: !process.env.CI && process.env.CRANKLINK_E2E_REUSE === "1",
     timeout: 30_000,
   },
 });

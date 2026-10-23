@@ -29,7 +29,13 @@ self.onmessage = async (event) => {
     try {
       postMessage({ type: "ble-disconnected", code: disconnect_ble() });
     } catch (error) {
-      postMessage({ type: "ble-disconnected", code: 1, error: String(error) });
+      // A trap does not unwind; the instance's state is undefined from here on.
+      postMessage({
+        type: "ble-disconnected",
+        code: 1,
+        trapped: true,
+        error: `WASM trapped during Bluetooth cleanup: ${error}. Reload before another command and check the bike.`,
+      });
     }
   }
 };

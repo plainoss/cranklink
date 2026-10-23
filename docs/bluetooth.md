@@ -1,6 +1,6 @@
 # Bluetooth (CLI)
 
-Requires a build with `--features ble` and a bike with an E-TUBE Bluetooth gateway (e.g. SC-EM800); a bare motor has no radio. macOS needs Bluetooth permission for the terminal; Linux needs BlueZ and D-Bus.
+Requires a build with the default `ble` feature (not `--no-default-features`) and a bike with an E-TUBE Bluetooth gateway (e.g. SC-EM800); a bare motor has no radio. macOS needs Bluetooth permission for the terminal; Linux needs BlueZ and D-Bus.
 
 Activate the gateway's connection mode shortly before scanning, and close other apps connected to the bike. The web app includes the same connection help.
 
@@ -29,7 +29,7 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 `units --stock-only` skips optional part-number and model-discriminator GETs. Unresolved models remain candidates. Named component selection resolves only candidates for the requested model, so an unrelated unresponsive lever cannot block another target. Each new connection still discovers its own current slots.
 
-Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically; `--ble-master` overrides the policy.
+Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
 
 ## Disconnect and Di2 recovery
 
@@ -39,7 +39,7 @@ The pending start is tracked before gateway startup. A malformed discovery reply
 
 Gateway acknowledgement and extinguished LEDs do not establish that the entire bike has returned to normal shifting. The observed EW-WU111/BT-DN110 failure and the limits of offline verification are recorded in the [Di2 BLE investigation](di2-ble-investigation.md). The explicit battery-master stop still needs validation on that hardware; simulator success does not establish it.
 
-Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware.
+Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
 
 ## Staged Di2 read validation
 

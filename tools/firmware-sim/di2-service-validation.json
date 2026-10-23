@@ -21,12 +21,13 @@
   ],
   "baseline_commit": "6f5683ef3a99840d64a1bf059e7f616919dd4312",
   "baseline_cli_sha256": "6898fbe5d58bc55b10327fae6dfebc472a79b9d209d756400b998a5d089eda3e",
-  "fixed_cli_sha256": "7c87f21f60b04c721e78f20ac6c5be54aedee6a531a2792de022221978bf7726",
+  "fixed_cli_sha256": "2e3f8d02041a5a645cd7fd99ea25d750bdbeb04a19c137d055e90d86384ef963",
   "tested_source_sha256": {
-    "src/ble.rs": "2bdfca5e04ca9b038d83561fa489485b5abf75410428523c2319836c9d8b8abb",
-    "src/cli.rs": "bc11e37addb4b35cae4a623548c1ed613b56afa9e317d88543d2661464627005",
-    "src/device.rs": "f0688fe06400e9d10dab4db38118f79a59162cdc2ffdfa435798c94d634035c0",
-    "src/settings.rs": "db115e7383c61c21626558f93de7d78b809342bb79bbd59cb5a79b14c073b0c9",
+    "src/ble.rs": "627ca47e0ee5acc220f3e16adfd4a1770a091af99fce960e77a5c715497e73f4",
+    "src/ble/native.rs": "89a7596a291f96c17f2c11f67dba5b1e430ccbd9dd914e036d0c5defb089cd0d",
+    "src/cli.rs": "0778d37da7fb509f70a2988d46129d4edf7ee616c60b9085fc26746bb749477b",
+    "src/device.rs": "adb7f514a29e3d8f2e85437e5a13b5526dc696a1fd94ba3cc4955e91be123e9d",
+    "src/settings.rs": "1e12fcc1735a1f0eed94263db1d80bebc2a2d002ebdde25f5ef257ccf124cccc",
     "tools/firmware-sim/fw_sim/mn101.py": "c1c4c0f53b7de98cb7479da3d476c5a46a5790307db28dd72e44349d34be5a59",
     "tools/firmware-sim/fw_sim/mn101_decode.py": "a8db8dda136cf3fc90fabf055aaa20d1a0863439f8af3664c37a6c6f209fe382",
     "tools/firmware-sim/fw_sim/di2_service.py": "dfb4bb150d5e3f3ca8b513ff3b9d781092a5b57b62bf90fe7c02a388dd40937a",
@@ -303,11 +304,12 @@
     ]
   },
   "checks": {
-    "rust_tests": 291,
-    "web_unit_tests": 64,
-    "simulator_tests": 166,
+    "rust_tests": 354,
+    "web_unit_tests": 121,
+    "simulator_tests": 169,
     "simulator_skipped": 5,
     "fresh_wasm_production_smoke": true,
+    "fresh_wasm_browser_e2e_tests": 24,
     "independent_review": "no remaining scoped blockers"
   }
 }

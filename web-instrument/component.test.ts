@@ -5,6 +5,7 @@ import { SessionController } from "./src/core/sessionController.ts";
 import type { TerminalHost } from "./src/core/sessionController.ts";
 import { WebMCPServer } from "./src/core/webMcpServer.ts";
 import type { ComponentUnit, SettingSpec } from "./src/types.ts";
+import { describeFailure } from "./src/domain/errors.ts";
 import { detectDeviceIdentity } from "./src/domain/motorIdentity.ts";
 import { enrichSchema, settingAcceptsValue } from "./src/domain/schema.ts";
 
@@ -164,6 +165,16 @@ describe("Catalogued component discovery and schema binding", () => {
     assert.deepEqual(fetched, []);
   });
 
+  it("accepts catalogued names containing a slash, such as SW-M8150-R/IR", async () => {
+    const h = harness();
+    h.config.inventory = [...units, { slot: 6, model_series: 0x2e, model_unit: 1, model: "SW-M8150-R/IR", model_candidates: ["SW-M8150-R/IR"] }];
+    await h.controller.connectAndSync("ble");
+    assert.equal(h.controller.getState().identity?.model, LEVER);
+    assert.equal(h.controller.getState().units.length, units.length + 1);
+    assert.deepEqual(detectDeviceIdentity({ model_series: 0x2e, model_unit: 1, model_name: "SW-M8150-R/IR", settings_model: "SW-M8150-R/IR" }).model, "SW-M8150-R/IR");
+    assert.throws(() => detectDeviceIdentity({ model_series: 0x2e, model_unit: 1, model_name: "SW-M8150-R'IR", settings_model: "SW-M8150-R'IR" }), /do not match/);
+  });
+
   it("keeps unknown stock visible without choosing it as a settings target", async () => {
     const h = harness();
     h.config.inventory = [{ slot: 9, model_series: 0x99, model_unit: 4, model: null, model_candidates: [] }];
@@ -183,6 +194,29 @@ describe("Catalogued component discovery and schema binding", () => {
     assert.deepEqual(h.controller.getState().schema, []);
     assert.deepEqual(h.controller.getState().units, units);
     assert.match(h.controller.getState().failure?.error ?? "", /Component schema unavailable/);
+  });
+
+  it("discards a read of the previous component that lands after a target switch", async () => {
+    const h = harness();
+    const motor = { slot: 13, model_series: 0x23, model_unit: 0, model: "DU-EP800-CRG", model_candidates: ["DU-EP800-CRG"] };
+    h.config.inventory = [units[0], motor];
+    h.replies.set(13, {
+      model: "DU-EP800/DU-EP800-CRG", slot: 13,
+      identity: { ...snapshot(motor).identity, serial: "010203040506", cargo: "00-CRG", settings_model: "ep800-crg" },
+      values: { lamp: { value: 1, raw: "01" } }, unavailable: {},
+    });
+    // Motor schemas come from static files, so the motor selection finishes
+    // before a lever read queued behind it.
+    globalThis.fetch = (async () => ({ ok: true, json: async () => [spec("lamp", { min_raw: 0, max_raw: 1, choices: [0, 1] })] })) as unknown as typeof fetch;
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(4);
+    const selecting = h.controller.selectComponent(13);
+    const staleRead = h.controller.readAllParameters();
+    await selecting;
+    await assert.rejects(staleRead, /component changed during the read/);
+    assert.equal(h.controller.getState().identity?.slot, 13);
+    assert.deepEqual(Object.keys(h.controller.getState().liveValues), ["lamp"]);
+    assert.equal(h.controller.getState().failure, null);
   });
 
   it("rejects an identity/schema mismatch before replacing the selected component", async () => {
@@ -274,9 +308,78 @@ describe("Component staging and restore boundaries", () => {
       const commands = [...h.commands];
       await assert.rejects(h.controller.restoreBackupFiles(["backup.json"]), /model or serial does not match/);
       assert.deepEqual(h.commands, commands);
+      assert.equal(h.controller.getState().failure?.kind, "restore");
       assert.equal(h.controller.getState().liveValues["switch-a-function"].value, 2);
     });
   }
+
+  it("restores one save's backups in their plan order through a single batch", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    const files = ["tx_1.001.backup.json", "tx_1.002.backup.json"];
+    for (const [file, setting, before] of [[files[0], "switch-a-function", 2], [files[1], "switch-b-function", 3]] as const) {
+      h.files.set(file, new TextEncoder().encode(JSON.stringify({
+        format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER, setting, before,
+      })));
+    }
+    const start = h.commands.length;
+    // This session's file list keeps write order: lowering a region backs up
+    // the speed (.002) before the destination (.001).
+    await h.controller.restoreBackupFiles([...files].reverse());
+    // One file at a time, the core refuses to undo a region raise.
+    const writes = h.commands.slice(start).filter((line) => /settings (restore|batch)/.test(line));
+    assert.equal(writes.length, 1);
+    const plan = writes[0].match(/settings batch '?([^' ]+)'? --backup-prefix '?(pre_restore_\d+)'?$/);
+    assert.ok(plan, writes[0]);
+    assert.equal(plan[1], `${plan[2]}.plan.json`);
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), files.map((file) => ({ op: "restore", file })));
+    assert.equal(h.controller.getState().phase, "ready");
+  });
+
+  it("restores a save's destination before a limit it planned first", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    // A CLI batch may lower 1 / 32 km/h to 3 / 25 km/h as [speed-limit, destination].
+    // Only the setting names matter to this ordering.
+    const files = ["tx_1.001.backup.json", "tx_1.002.backup.json"];
+    for (const [file, setting, before] of [[files[0], "speed-limit", 32], [files[1], "destination", 1]] as const) {
+      h.files.set(file, new TextEncoder().encode(JSON.stringify({
+        format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER, setting, before,
+      })));
+    }
+    const start = h.commands.length;
+    await h.controller.restoreBackupFiles(files);
+    const plan = h.commands.slice(start).find((line) => /settings batch/.test(line))?.match(/settings batch '?([^' ]+)'?/);
+    assert.ok(plan);
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(h.files.get(plan[1]))), [files[1], files[0]].map((file) => ({ op: "restore", file })));
+  });
+
+  it("records a refused restore while edits are staged or the backup is unreadable", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.files.set("backup.json", new TextEncoder().encode(JSON.stringify({
+      format: "cranklink-setting-backup-v1", serial: "010203040506", settings_model: LEVER,
+      setting: "switch-a-function", before: 0, raw_before: "0300",
+    })));
+    h.files.set("broken.json", new TextEncoder().encode("{"));
+    h.controller.stageParameter("switch-b-function", 1);
+    const commands = [...h.commands];
+    await assert.rejects(h.controller.restoreBackupFiles(["backup.json"]), /Save or discard staged changes/);
+    assert.equal(h.controller.getState().failure?.kind, "restore");
+    h.controller.discardAllStaged();
+    h.controller.dismissError();
+    await assert.rejects(h.controller.restoreBackupFiles(["backup.json", "broken.json"]), /broken\.json is not valid JSON/);
+    assert.equal(h.controller.getState().failure?.kind, "restore");
+    // Like files.js, a missing file throws; it must not read as invalid JSON.
+    const store = (h.controller as any).terminal.files;
+    const bytes = store.bytes;
+    store.bytes = (path: string) => {
+      if (!h.files.has(path)) throw new Error(`File not found: ${path}`);
+      return bytes(path);
+    };
+    await assert.rejects(h.controller.restoreBackupFiles(["gone.json"]), /gone\.json could not be read: File not found/);
+    assert.deepEqual(h.commands, commands);
+  });
 
   it("reconnects the previously selected component and restores edits only after its identity matches", async () => {
     const h = harness();
@@ -303,6 +406,142 @@ describe("Component staging and restore boundaries", () => {
     assert.equal(h.controller.getState().identity?.model, POWER);
     assert.equal(h.controller.getState().identity?.serial, "111213141516");
     assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.match(h.controller.getState().failure?.error ?? "", /unsaved changes were discarded/);
+  });
+
+  it("keeps the read failure that ended the search and says the edits are gone", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    h.replies.get(4)!.identity.serial = "zz";
+    await h.controller.reconnect();
+    const state = h.controller.getState();
+    assert.deepEqual(state.stagedValues, {});
+    assert.match(state.failure?.error ?? "", /lacks a verified serial identity/);
+    assert.equal(describeFailure(state.failure!, state.transport, []).outcome, "Your unsaved changes were discarded.");
+  });
+
+  /** Fails `connect ble` while `failing` is true, as a cancelled browser chooser does. */
+  function cancellableChooser(h: ReturnType<typeof harness>) {
+    const chooser = { failing: true };
+    const terminal = (h.controller as any).terminal;
+    const run = terminal.run;
+    terminal.run = async (line: string) => {
+      if (line === "connect ble" && chooser.failing) {
+        (globalThis as any).estepsTerminalPrint?.("No device selected.", "stderr");
+        return { code: 1 };
+      }
+      return run(line);
+    };
+    return chooser;
+  }
+
+  it("keeps the edits when the reconnect cannot connect and restores them at the next connect to that component", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
+    const chooser = cancellableChooser(h);
+    await assert.rejects(h.controller.reconnect(), /No device selected/);
+    // The connect screen's own button fails the same way, and still keeps them.
+    await assert.rejects(h.controller.connectAndSync("ble"), /No device selected/);
+    let state = h.controller.getState();
+    assert.deepEqual(state.stagedValues, {});
+    assert.equal(state.failure?.kind, "connect");
+    assert.equal(describeFailure(state.failure!, state.transport, []).outcome,
+      "Your unsaved changes are kept: connect to SM-BMR1 (serial 0A0B0C0D0E0F) again to restore them. Connecting to another component discards them.");
+    chooser.failing = false;
+    await h.controller.connectAndSync("ble");
+    state = h.controller.getState();
+    assert.equal(state.identity?.serial, "0A0B0C0D0E0F");
+    assert.deepEqual(state.stagedValues, { "multi-shift-limit.up": 3 });
+    assert.equal(state.failure, null);
+  });
+
+  it("discards held edits when the next connect reaches another component", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
+    const chooser = cancellableChooser(h);
+    await assert.rejects(h.controller.reconnect(), /No device selected/);
+    chooser.failing = false;
+    // Another bike, whose SM-BMR1 has another serial.
+    h.replies.get(13)!.identity.serial = "111213141516";
+    const connectStart = h.commands.length;
+    await h.controller.connectAndSync("ble");
+    const state = h.controller.getState();
+    // The search reads that SM-BMR1, then the component the connect chose is selected again.
+    const reads = h.commands.slice(connectStart).filter((line) => line.includes("settings read"));
+    assert.deepEqual(reads.map((line) => Number(line.match(/--slot (\d+)/)?.[1])), [4, 13, 4]);
+    assert.equal(state.identity?.model, LEVER);
+    assert.deepEqual(state.stagedValues, {});
+    assert.equal(state.failure?.error, "SM-BMR1 (serial 0A0B0C0D0E0F) did not answer this connection, so your unsaved changes were discarded.");
+    // Nothing stays held for a later connect.
+    h.replies.get(13)!.identity.serial = "0A0B0C0D0E0F";
+    await h.controller.disconnect();
+    await h.controller.connectAndSync("ble");
+    assert.equal(h.controller.getState().identity?.model, LEVER);
+    assert.deepEqual(h.controller.getState().stagedValues, {});
+  });
+
+  it("restores held edits before it shows an adapter unplugged during the reconnect", async () => {
+    const h = harness();
+    const terminal = (h.controller as any).terminal;
+    const run = terminal.run;
+    let unplugAt = "";
+    // The harness answers for Bluetooth; the commands are the same over USB.
+    terminal.run = async (line: string) => {
+      const reply = await run(line.replace(/^connect usb$/, "connect ble").replace(/^units$/, "--ble-master=master units"));
+      if (unplugAt && line.includes(unplugAt)) h.controller.adapterDisconnected("USB device disconnected");
+      return reply;
+    };
+    await h.controller.connectAndSync("usb");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
+    // The reconnect's search reads the component, then the adapter is pulled.
+    unplugAt = "--slot 13 ";
+    await h.controller.reconnect();
+    const state = h.controller.getState();
+    assert.equal(state.identity?.serial, "0A0B0C0D0E0F");
+    assert.deepEqual(state.stagedValues, { "multi-shift-limit.up": 3 });
+    assert.equal(state.failure?.kind, "adapter");
+    assert.equal(state.linkLost, true);
+  });
+
+  it("restores no edits when one of them can no longer be staged", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 3);
+    h.controller.stageParameter("switch-b-function", 2);
+    const lever = h.replies.get(4)!;
+    delete lever.values["switch-b-function"];
+    lever.unavailable["switch-b-function"] = "channel not available";
+    await h.controller.reconnect();
+    assert.equal(h.controller.getState().identity?.serial, "010203040506");
+    assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.match(h.controller.getState().failure?.error ?? "", /discarded after reconnecting: .*could not be staged again/);
+  });
+
+  it("keeps looking for the previous serial when one candidate cannot be read", async () => {
+    const h = harness();
+    const lever13 = { ...units[0], slot: 13 };
+    const lever19 = { ...units[0], slot: 19 };
+    h.config.inventory = [units[0], lever13];
+    h.replies.set(13, snapshot(lever13));
+    h.replies.get(13)!.identity.serial = "0A0B0C0D0E0F";
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("switch-a-function", 0);
+    // The previous slot now answers with another identity; the lever moved to slot 19.
+    h.config.inventory = [units[0], lever13, lever19];
+    h.replies.get(13)!.identity.model_unit = 9;
+    h.replies.set(19, snapshot(lever19));
+    h.replies.get(19)!.identity.serial = "0A0B0C0D0E0F";
+    await h.controller.reconnect();
+    assert.equal(h.controller.getState().identity?.slot, 19);
+    assert.deepEqual(h.controller.getState().stagedValues, { "switch-a-function": 0 });
+    assert.equal(h.controller.getState().failure, null);
   });
 
   it("reselects the previous serial when another component has the same model", async () => {
@@ -370,6 +609,59 @@ describe("Agent write review boundaries", () => {
     return h;
   }
 
+  it("answers WebMCP messages only from this page's origin", async () => {
+    const h = harness();
+    let listener: ((event: any) => Promise<void>) | null = null;
+    const page = { addEventListener: (_: string, fn: any) => { listener = fn; }, location: { origin: "https://app.example" } };
+    const browserWindow = (globalThis as any).window;
+    (globalThis as any).window = page;
+    try { new WebMCPServer(h.controller); }
+    finally { (globalThis as any).window = browserWindow; }
+    const replies: Array<[unknown, string]> = [];
+    const source = { postMessage: (message: unknown, origin: string) => { replies.push([message, origin]); } };
+    const data = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    (globalThis as any).window = page;
+    try {
+      await listener!({ data, origin: "https://evil.example", source });
+      assert.deepEqual(replies, []);
+      await listener!({ data, origin: "https://app.example", source });
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0][1], "https://app.example");
+    } finally { (globalThis as any).window = browserWindow; }
+  });
+
+  it("names the target in the review and drops a pending review on disconnect", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    const pending = request(serverFor(h.controller));
+    const identity = h.controller.getState().identity!;
+    assert.deepEqual(h.controller.getState().mcpApproval?.target, { model: LEVER, slot: 4, serial: identity.serial });
+    const disconnecting = h.controller.disconnect();
+    // Authorizing, or a new request, while the disconnect runs must not queue a write behind it.
+    h.controller.respondMcpApproval(true);
+    const late = request(serverFor(h.controller));
+    await disconnecting;
+    await assert.rejects(pending, /rejected by operator/);
+    await assert.rejects(late);
+    assert.equal(h.controller.getState().mcpApproval, null);
+    assert.ok(!h.commands.some((line) => line.includes("settings batch")));
+  });
+
+  it("refuses device tools on a lost link before asking the operator", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    (h.controller as any).update({ linkLost: true });
+    const server = serverFor(h.controller);
+    const commands = [...h.commands];
+    for (const name of ["cranklink_read_settings", "cranklink_create_backup"]) {
+      await assert.rejects(server.handleRequest("tools/call", { name, arguments: {} }), /connected, idle component/);
+    }
+    await assert.rejects(request(server), /connected, idle component/);
+    assert.equal(h.controller.getState().mcpApproval, null);
+    assert.equal(h.controller.getState().linkLost, true);
+    assert.deepEqual(h.commands, commands);
+  });
+
   it("refuses an agent write while other changes are staged", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
@@ -385,7 +677,7 @@ describe("Agent write review boundaries", () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
     const pending = request(serverFor(h.controller));
-    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => entry.name), ["switch-b-function"]);
+    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => [entry.name, entry.regulated]), [["switch-b-function", false]]);
     h.controller.stageParameter("switch-a-function", 0);
     h.controller.respondMcpApproval(true);
     await assert.rejects(pending, /Staged changes appeared during review/);
@@ -458,7 +750,7 @@ describe("Agent write review boundaries", () => {
     const pending = batchRequest(serverFor(h.controller), [
       { name: "destination", value: 1 }, { name: "speed-limit", value: 32 },
     ]);
-    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => entry.name), ["destination", "speed-limit"]);
+    assert.deepEqual(h.controller.getState().mcpApproval?.diff.map((entry) => [entry.name, entry.regulated]), [["destination", true], ["speed-limit", false]]);
     h.controller.respondMcpApproval(true);
     await pending;
     assert.deepEqual(h.controller.getState().stagedValues, {});
@@ -485,6 +777,7 @@ describe("Verified component batch receipts", () => {
     ["duplicate receipt", { completed: 2, results: [valid[0], valid[0]] }],
     ["missing readback", { completed: 2, results: [valid[0], { setting: "switch-b-function" }] }],
     ["mismatched readback", { completed: 2, results: [valid[0], { ...valid[1], after: 2 }] }],
+    ["null readback", { completed: 2, results: [valid[0], { ...valid[1], after: null }] }],
     ["non-array receipts", { completed: 2, results: {} }],
     ["invalid JSON", "Write returned no JSON receipt"],
   ] as const;
@@ -506,6 +799,37 @@ describe("Verified component batch receipts", () => {
       assert.equal(h.commands.filter((line) => line.includes("settings batch")).length, 1);
     });
   }
+
+  it("records a refused save so the banner can explain it", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    const commands = [...h.commands];
+    for (const [patch, error] of [
+      [{ linkLost: true }, /Reconnect to an idle component before saving/],
+      [{ unavailableValues: { "switch-a-function": "channel not available" } }, /switch-a-function is unavailable/],
+    ] as const) {
+      (h.controller as any).update({ failure: null, linkLost: false, unavailableValues: {}, ...patch });
+      await assert.rejects(h.controller.commitStagedBatch(), error);
+      assert.equal(h.controller.getState().failure?.kind, "save");
+      assert.match(h.controller.getState().failure?.error ?? "", error);
+    }
+    assert.deepEqual(h.controller.getState().stagedValues, { "switch-a-function": 0 });
+    assert.deepEqual(h.commands, commands);
+  });
+
+  it("accepts a null readback for a nullable date saved as unset", async () => {
+    const h = harness();
+    h.schemas.set(LEVER, [...leverSchema, spec("maintenance-date", { value_type: "date", nullable: true, unit: "", choices: [] })]);
+    (h.replies.get(4)!.values as any)["maintenance-date"] = { value: "2025-01-01", raw: "19010100" };
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("maintenance-date", "unset");
+    h.config.batch = { completed: 1, results: [{ setting: "maintenance-date", before: "2025-01-01", after: null, changed: true }] };
+    await h.controller.commitStagedBatch();
+    assert.equal(h.controller.getState().liveValues["maintenance-date"].value, null);
+    assert.deepEqual(h.controller.getState().stagedValues, {});
+    assert.equal(h.controller.getState().failure, null);
+  });
 
   it("applies only a complete ordered readback and binds its write plan to model, slot and serial", async () => {
     const h = harness();

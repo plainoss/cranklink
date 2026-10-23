@@ -22,6 +22,10 @@ class Decoder:
                 if value == 0xBB: self.active = True
                 continue
             if value == 0xBB:
+                if not self.escaped and all(b == 0xFF for b in self.data):
+                    # Empty, or fill collected after losing sync: this BB opens.
+                    self.data.clear()
+                    continue
                 data, escaped = bytes(self.data), self.escaped
                 self.data.clear()
                 self.escaped = False

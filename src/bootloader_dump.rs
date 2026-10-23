@@ -147,21 +147,40 @@ pub fn dump(port: &str, expected_serial: Option<&str>, output: &Path) -> Result<
     } else {
         Ok(())
     };
-    file.sync_all()?;
-    write_result(
-        output,
-        &serde_json::json!({
-            "success":result.is_ok() && stopped.is_ok() && postflight.is_ok(),
-            "bytes":file.metadata()?.len(),
-            "result":result.as_ref().ok(),
-            "error":result.as_ref().err().map(|e| format!("{e:#}")),
-            "cleanup_error":stopped.as_ref().err().map(|e| format!("{e:#}")),
-            "postflight_error":postflight.as_ref().err().map(|e| format!("{e:#}")),
-        }),
-    )?;
-    let receipt = result?;
-    stopped?;
-    postflight?;
+    let recorded = (|| -> Result<()> {
+        file.sync_all()?;
+        write_result(
+            output,
+            &serde_json::json!({
+                "success":result.is_ok() && stopped.is_ok() && postflight.is_ok(),
+                "bytes":file.metadata()?.len(),
+                "result":result.as_ref().ok(),
+                "error":result.as_ref().err().map(|e| format!("{e:#}")),
+                "cleanup_error":stopped.as_ref().err().map(|e| format!("{e:#}")),
+                "postflight_error":postflight.as_ref().err().map(|e| format!("{e:#}")),
+            }),
+        )
+    })();
+    // Report the acquisition or cleanup failure first; neither a receipt write
+    // failure nor an acquisition failure may hide an unconfirmed PC-link stop.
+    let mut notes = Vec::new();
+    if let (Err(_), Err(stop)) = (&result, &stopped) {
+        notes.push(format!("{stop:#}"));
+    }
+    if let Err(write) = &recorded {
+        notes.push(format!("result.json was not written: {write:#}"));
+    }
+    let annotated = |error: anyhow::Error| {
+        if notes.is_empty() {
+            error
+        } else {
+            anyhow::anyhow!("{error:#} (also: {})", notes.join("; "))
+        }
+    };
+    let receipt = result.map_err(annotated)?;
+    stopped.map_err(annotated)?;
+    postflight.map_err(annotated)?;
+    recorded?;
     Ok(receipt)
 }
 

@@ -71,6 +71,14 @@ impl Journal {
     }
 }
 
+/// Journal a failed restore; a journal error must never replace it.
+fn journal_uncertain(journal: &mut Journal, error: anyhow::Error) -> anyhow::Error {
+    match journal.record("uncertain", json!(format!("{error:#}"))) {
+        Ok(()) => error,
+        Err(j) => error.context(format!("journal entry 'uncertain' was not written: {j:#}")),
+    }
+}
+
 struct Received {
     frame: Frame,
     ingress: Instant,
@@ -160,12 +168,20 @@ impl Sequence {
             last_tx: None,
         }
     }
+    /// Every key TX, including the last, gets a full RETRY to be answered
+    /// inside the window before an expiry counts as clean.
     fn can_send(&self, now: Instant) -> bool {
-        now < self.start + WINDOW
+        now + RETRY <= self.start + WINDOW
             && now >= self.next_send
             && self.tx_count < MAX_TX
             && !self.full
             && !(self.progress && self.outstanding)
+    }
+    /// The window is over, or the TX cap is reached and the last key has had
+    /// its full RETRY to be answered.
+    fn expired(&self, now: Instant) -> bool {
+        let awaiting = self.outstanding && self.last_tx.is_some_and(|tx| now < tx + RETRY);
+        now >= self.start + WINDOW || (self.tx_count >= MAX_TX && !awaiting)
     }
     fn sent(&mut self, now: Instant) -> Result<()> {
         ensure!(self.can_send(now), "key TX timing/state/cap guard rejected");
@@ -447,7 +463,7 @@ impl Wire {
                 return Ok(true);
             }
             let now = Instant::now();
-            if now >= self.seq.start + WINDOW || self.seq.tx_count >= MAX_TX {
+            if self.seq.expired(now) {
                 ensure!(
                     !self.seq.progress,
                     "key window ended after ACK2; preserving state, no retry"
@@ -469,8 +485,15 @@ impl Wire {
                 self.send(0x88, &[key, k[0], k[1], k[2]])?;
                 self.event("key-tx")?;
             }
-            let mut deadline = self.seq.start + WINDOW;
-            if !self.decoder.has_partial() && !(self.seq.progress && self.seq.outstanding) {
+            let window_end = self.seq.start + WINDOW;
+            let mut deadline = window_end;
+            // Wake early only for a send that is still allowed, or to end the
+            // attempt once the TX at the cap has had its RETRY. In the window's
+            // last RETRY no key may be sent, but replies must still be read.
+            if !self.decoder.has_partial()
+                && !(self.seq.progress && self.seq.outstanding)
+                && (self.seq.next_send + RETRY <= window_end || self.seq.tx_count >= MAX_TX)
+            {
                 deadline = deadline.min(self.seq.next_send);
             }
             if let Some(r) = self.next(deadline)? {
@@ -682,6 +705,10 @@ pub fn recover_bridge(
             "Key 2 did not complete. Adjust the bridge while the next connection attempt starts.",
         );
     }
+    journal.record(
+        "attempts-exhausted",
+        json!({"attempts":options.attempts,"firmware_written":false}),
+    )?;
     bail!("no complete recovery handshake; no firmware written; inspect journal and trace")
 }
 
@@ -711,10 +738,8 @@ fn restore(
     }) {
         Ok(receipt) => receipt,
         Err(error) => {
-            journal.record("uncertain", json!(format!("{error:#}")))?;
-            return Err(
-                error.context("stock restore outcome uncertain; do not automatically retry/reset")
-            );
+            return Err(journal_uncertain(journal, error)
+                .context("stock restore outcome uncertain; do not automatically retry/reset"));
         }
     };
     journal.record("finish-and-reset", json!(receipt))?;
@@ -930,6 +955,21 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
+    fn a_failed_uncertain_journal_entry_keeps_the_restore_error() {
+        let (path, file) = temp_file();
+        drop(file);
+        let mut journal = Journal(OpenOptions::new().read(true).open(&path).unwrap());
+        let error = format!(
+            "{:#}",
+            journal_uncertain(&mut journal, anyhow::anyhow!("stock D write NAK"))
+        );
+        assert!(
+            error.contains("stock D write NAK") && error.contains("was not written"),
+            "{error}"
+        );
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn wrong_live_serial_prevents_writer_and_erase() {
         let mut script = keys();
         script.extend(identity_steps(&[9, 2, 3, 4, 5, 6]));
@@ -1141,6 +1181,93 @@ mod tests {
         s.tx_count = MAX_TX;
         assert!(!s.can_send(x));
         assert!(!s.can_send(t + WINDOW));
+    }
+    /// Answers key 1 at once and makes ACK2 readable at a fixed instant.
+    struct TailPort {
+        pending: VecDeque<u8>,
+        late: Option<(Instant, Vec<u8>)>,
+    }
+    impl Read for TailPort {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if self
+                .late
+                .as_ref()
+                .is_some_and(|(at, _)| Instant::now() >= *at)
+            {
+                self.pending.extend(self.late.take().unwrap().1);
+            }
+            if self.pending.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = bytes.len().min(self.pending.len());
+            for b in &mut bytes[..n] {
+                *b = self.pending.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+    impl Write for TailPort {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let f = Decoder::default().feed(bytes).remove(0).unwrap();
+            if f.control == 0x88 && f.payload[0] == 1 {
+                self.pending
+                    .extend(protocol::encode(0x88, &[0x11, 1, 0, 0x1a]));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Port for TailPort {
+        fn set_timeout(&mut self, _: Duration) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn ack2_arriving_in_the_window_tail_is_read_and_halts() {
+        // 500 ms of window remain; ACK2 becomes readable 50 ms before its end,
+        // inside the last RETRY where no new key may be sent.
+        let start = Instant::now() - (WINDOW - Duration::from_millis(500));
+        let end = start + WINDOW;
+        let port = TailPort {
+            pending: VecDeque::new(),
+            late: Some((
+                end - Duration::from_millis(50),
+                protocol::encode(0x88, &[0x11, 2, 0, 0x1b]),
+            )),
+        };
+        let (path, trace) = temp_file();
+        let mut wire = Wire::new(Box::new(port), trace);
+        wire.seq = Sequence::new(start);
+        let error = wire.handshake(&mut |_| {}).unwrap_err();
+        assert!(format!("{error:#}").contains("after ACK2"), "{error:#}");
+        assert_eq!(wire.seq.acks, [1, 2]);
+        drop(wire);
+        let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn last_key_gets_a_full_retry_before_clean_expiry() {
+        let t = Instant::now();
+        let mut s = Sequence::new(t);
+        let late = t + WINDOW - RETRY / 2;
+        s.next_send = late;
+        assert!(!s.can_send(late));
+        let last = t + WINDOW - RETRY;
+        s.next_send = last;
+        s.sent(last).unwrap();
+        assert!(!s.expired(t + WINDOW - Duration::from_millis(1)));
+        assert!(s.expired(t + WINDOW));
+
+        let mut s = Sequence::new(t);
+        let x = t + Duration::from_millis(60);
+        s.tx_count = MAX_TX - 1;
+        s.sent(x).unwrap();
+        assert!(!s.expired(x));
+        assert!(!s.expired(x + RETRY - Duration::from_millis(1)));
+        assert!(s.expired(x + RETRY));
+        s.ack(1, x, x).unwrap();
+        assert!(s.expired(x));
     }
     #[test]
     fn malformed_raw_data_never_authorizes_handover() {

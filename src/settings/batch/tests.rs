@@ -34,9 +34,11 @@ struct Motor {
     prefix: PathBuf,
     speed: u16,
     destination: u8,
+    max_power: [u16; 3],
     writes: usize,
     fail_write: Option<usize>,
     mismatch: bool,
+    replaced_after_write: bool,
 }
 impl Motor {
     fn new(files: &Files) -> Self {
@@ -44,9 +46,11 @@ impl Motor {
             prefix: files.prefix(),
             speed: 2800,
             destination: 1,
+            max_power: [400; 3],
             writes: 0,
             fail_write: None,
             mismatch: false,
+            replaced_after_write: false,
         }
     }
 }
@@ -61,6 +65,7 @@ impl UnitCommands for Motor {
     ) -> Result<Vec<u8>> {
         assert_eq!(slot, 13);
         match (group, command) {
+            (1, 0x3c) if self.replaced_after_write && self.writes > 0 => Ok(vec![9; 6]),
             (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
             (0x16, 0xb4) => {
                 let n = if self.mismatch && self.writes > 0 {
@@ -71,6 +76,10 @@ impl UnitCommands for Motor {
                 Ok(vec![n as u8, (n >> 8) as u8, 0xff, 0xff])
             }
             (0x16, 0xac) => Ok(vec![1, self.destination, 0xff, 0xff]),
+            (0x17, 0x14) => {
+                let watts = self.max_power[params[0] as usize - 1].to_le_bytes();
+                Ok(vec![params[0], watts[0], watts[1]])
+            }
             (0x16, 0xb0 | 0xa8) => {
                 // Verify backup and durable journal intent exist when asked to write.
                 let rows: Vec<Value> =
@@ -304,4 +313,193 @@ fn invalid_restore_input_prevents_earlier_valid_writes() {
         assert_eq!(motor.writes, 0);
         assert!(!suffixed(&files.prefix(), ".journal.jsonl").exists());
     }
+}
+
+fn attempts(files: &Files) -> Vec<u64> {
+    files
+        .journal()
+        .iter()
+        .filter(|row| row["stage"] == "attempt")
+        .map(|row| row["operation"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn region_changes_listed_region_first_run_in_a_valid_order_and_restore() {
+    // (destination, speed) before, the plan's new pair, and the expected
+    // execution order of [destination, speed-limit].
+    for (before, after, order) in [((1, 3200), (0, 25), [2, 1]), ((0, 2500), (1, 32), [1, 2])] {
+        let files = Files::new();
+        let mut motor = Motor::new(&files);
+        (motor.destination, motor.speed) = before;
+        let report = run(
+            &mut motor,
+            13,
+            &operations(json!([
+                {"op":"set","name":"destination","value":after.0},
+                {"op":"set","name":"speed-limit","value":after.1}
+            ])),
+            &files.prefix(),
+            SettingsModel::Ep800Crg,
+        )
+        .unwrap();
+        assert_eq!(attempts(&files), order);
+        assert_eq!(files.journal()[0]["order"], json!(order));
+        assert_eq!((motor.destination, motor.speed), (after.0, after.1 * 100));
+        assert_eq!(report["results"][0]["setting"], "destination");
+        assert_eq!(report["results"][1]["setting"], "speed-limit");
+
+        // Restoring the save's backups in the same forward order undoes it.
+        let undo = Files::new();
+        motor.prefix = undo.prefix();
+        let backups: Vec<_> = (0..2)
+            .map(|i| json!({"op":"restore","file":report["results"][i]["backup"]}))
+            .collect();
+        run(
+            &mut motor,
+            13,
+            &operations(json!(backups)),
+            &undo.prefix(),
+            SettingsModel::Ep800Crg,
+        )
+        .unwrap();
+        assert_eq!(attempts(&undo), [order[1], order[0]]);
+        assert_eq!((motor.destination, motor.speed), before);
+    }
+}
+
+#[test]
+fn unsatisfied_region_change_is_refused_before_any_write() {
+    for (before, max_power, plan, refusal) in [
+        // The speed fits both regions, but boost power does not fit region 3.
+        (
+            (1, 2800),
+            [400, 400, 500],
+            json!([
+                {"op":"set","name":"destination","value":3},
+                {"op":"set","name":"speed-limit","value":25}
+            ]),
+            "change max-power.boost before destination 3",
+        ),
+        // A read between them keeps the region write first.
+        (
+            (1, 3200),
+            [400; 3],
+            json!([
+                {"op":"set","name":"destination","value":0},
+                {"op":"read","name":"speed-limit"},
+                {"op":"set","name":"speed-limit","value":25}
+            ]),
+            "change speed-limit before destination 0",
+        ),
+        // A limit listed before its region is not moved after it.
+        (
+            (0, 2500),
+            [400; 3],
+            json!([
+                {"op":"set","name":"speed-limit","value":32},
+                {"op":"set","name":"destination","value":1}
+            ]),
+            "destination 0 permits 15..25 km/h",
+        ),
+        // Neither order fits: the old speed is below the new region and the
+        // new speed above the old one, in both directions.
+        (
+            (0, 1500),
+            [400; 3],
+            json!([
+                {"op":"set","name":"destination","value":1},
+                {"op":"set","name":"speed-limit","value":30}
+            ]),
+            "outside destination 0 too (destination 0 permits 15..25 km/h), so first save one both destinations permit: destination 1 permits 19..32 km/h",
+        ),
+        (
+            (1, 3000),
+            [400; 3],
+            json!([
+                {"op":"set","name":"destination","value":0},
+                {"op":"set","name":"speed-limit","value":15}
+            ]),
+            "outside destination 1 too (destination 1 permits 19..32 km/h)",
+        ),
+    ] {
+        let files = Files::new();
+        let mut motor = Motor::new(&files);
+        (motor.destination, motor.speed) = before;
+        motor.max_power = max_power;
+        let error = run(
+            &mut motor,
+            13,
+            &operations(plan),
+            &files.prefix(),
+            SettingsModel::Ep800Crg,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("preflight failed; no batch writes sent"));
+        assert!(format!("{error:#}").contains(refusal), "{error:#}");
+        assert_eq!(motor.writes, 0);
+        assert!(!suffixed(&files.prefix(), ".journal.jsonl").exists());
+    }
+}
+
+#[test]
+fn region_change_never_reorders_writes_of_the_same_setting() {
+    let files = Files::new();
+    let mut motor = Motor::new(&files);
+    (motor.destination, motor.speed) = (0, 2000);
+    run(
+        &mut motor,
+        13,
+        &operations(json!([
+            {"op":"set","name":"destination","value":1},
+            {"op":"set","name":"speed-limit","value":32},
+            {"op":"set","name":"speed-limit","value":25}
+        ])),
+        &files.prefix(),
+        SettingsModel::Ep800Crg,
+    )
+    .unwrap();
+    assert_eq!(attempts(&files), [1, 2, 3]);
+    assert_eq!((motor.destination, motor.speed), (1, 2500));
+}
+
+#[test]
+fn a_unit_that_takes_over_the_slot_gets_no_backup_and_no_set() {
+    let files = Files::new();
+    let mut motor = Motor::new(&files);
+    let ops = operations(json!([
+        {"op":"set","name":"speed-limit","value":25},
+        {"op":"set","name":"speed-limit","value":28}
+    ]));
+    let error = run_bound(
+        &mut motor,
+        13,
+        &ops,
+        &files.prefix(),
+        SettingsModel::Ep800Crg,
+        Some("0a0b0c0d0e0f"),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("not the verified 0a0b0c0d0e0f"));
+    assert!(!suffixed(&files.prefix(), ".journal.jsonl").exists());
+
+    motor.replaced_after_write = true;
+    let error = run_bound(
+        &mut motor,
+        13,
+        &ops,
+        &files.prefix(),
+        SettingsModel::Ep800Crg,
+        Some("010203040506"),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("now reports serial 090909090909"),
+        "{error:#}"
+    );
+    assert_eq!((motor.writes, motor.speed), (1, 2500));
+    assert!(suffixed(&files.prefix(), ".001.backup.json").exists());
+    assert!(!suffixed(&files.prefix(), ".002.backup.json").exists());
 }

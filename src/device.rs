@@ -1,7 +1,8 @@
 //! Exclusive transport session. Commands are serialized and full frames journaled.
 //!
 //! `Session::units` discovers arbitrary catalogued component types and refines
-//! their stock identities without motor PC-link startup. Explicit component
+//! their stock identities without motor PC-link startup, re-initializing the
+//! adapter first when this connection already ran discovery. Explicit component
 //! probes and settings require a unique catalogued identity; default startup
 //! and firmware paths retain their motor gates and application/boot checks.
 //! A resolved name alone does not grant every operation. Normal routed requests carry
@@ -89,6 +90,17 @@ impl UnitIdentity {
             !self.model_candidates.is_empty(),
             "slot {} is not a catalogued component (series {:02X}, unit {:02X}); inspect units before starting a settings session",
             self.slot, self.model_series, self.model_unit
+        );
+        // A drive unit outside the motor families (e.g. DU-E5000) must not
+        // take the generic component path with its motor-specific services.
+        ensure!(
+            !self
+                .model_candidates
+                .iter()
+                .any(|name| name.starts_with("DU-")),
+            "slot {} is an unsupported drive unit ({}); no settings session is available",
+            self.slot,
+            self.model_candidates.join(" / ")
         );
         if self.model.is_none() {
             self.resolve_name(commands)?;
@@ -196,6 +208,19 @@ pub struct Session {
     target_slot: Option<u8>,
     adapter_supply: bool,
     unit_auth_attempted: bool,
+    discovery: DiscoveryState,
+}
+/// Where the next discovery starts relative to the last adapter
+/// initialization; see `reinitialize_for_unlinked_identity`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscoveryState {
+    /// No discovery since the last completed `initialize` (or since opening).
+    Fresh,
+    /// Discovery has run since the last completed `initialize`.
+    Repeated,
+    /// An adapter reset was requested and `initialize` has not completed since,
+    /// so the adapter's power and protocol state are unknown.
+    ResetIncomplete,
 }
 impl Session {
     /// Continue the same exclusive USB connection after the bounded bridge
@@ -214,6 +239,7 @@ impl Session {
             target_slot: Some(31),
             adapter_supply: true,
             unit_auth_attempted: false,
+            discovery: DiscoveryState::Fresh,
         }
     }
     pub fn open(port: &str, trace: Option<&Path>) -> Result<Self> {
@@ -233,6 +259,7 @@ impl Session {
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
+            discovery: DiscoveryState::Fresh,
         })
     }
     fn log(&mut self, direction: &str, bytes: &[u8]) -> Result<()> {
@@ -247,6 +274,17 @@ impl Session {
         }
         Ok(())
     }
+    /// Wire tracing is diagnostic: a failed trace write must not abort a
+    /// transfer mid-sequence (for example after an erase) or drop bytes already
+    /// read. Disable the trace once and continue.
+    fn trace_wire(&mut self, direction: &str, bytes: &[u8]) {
+        if let Err(error) = self.log(direction, bytes) {
+            self.trace = None;
+            platform::notice(&format!(
+                "Wire trace disabled after a write failure: {error:#}"
+            ));
+        }
+    }
     pub(crate) fn normal_pc_slot(&self) -> u8 {
         self.pc_slot
     }
@@ -255,7 +293,7 @@ impl Session {
     /// callers must still match the operation's protocol response.
     pub fn send(&mut self, control: u8, payload: &[u8]) -> Result<()> {
         let bytes = protocol::encode(control, payload);
-        self.log("tx", &bytes)?;
+        self.trace_wire("tx", &bytes);
         self.port.set_timeout(Duration::from_millis(500))?;
         self.port
             .write_all(&bytes)
@@ -277,13 +315,13 @@ impl Session {
             match self.port.read(&mut b) {
                 Ok(0) => {}
                 Ok(n) => {
-                    self.log("rx", &b[..n])?;
+                    self.trace_wire("rx", &b[..n]);
                     for frame in self.decoder.feed(&b[..n]) {
                         match frame {
                             Ok(f) if fast_idle_frame(&f) => {}
                             Ok(f) => self.incoming.push_back(f),
                             Err(e) => {
-                                self.log("decode-error", e.as_bytes())?;
+                                self.trace_wire("decode-error", e.as_bytes());
                             }
                         }
                     }
@@ -337,6 +375,11 @@ impl Session {
     /// The reset, charging, protocol-change and PnP sleeps in this session are
     /// Cranklink's pacing policies, not measured minimum E-TUBE bus timings.
     pub fn initialize(&mut self) -> Result<PowerInfo> {
+        // Until this completes, the adapter can be reset without its power
+        // setup, so discovery is refused. Routed traffic after a reset must
+        // select its target again.
+        self.discovery = DiscoveryState::ResetIncomplete;
+        self.target_slot = None;
         self.ack(0x10, &[], 0x30)?;
         sleep(Duration::from_secs(3));
         let p = self.adapter(0x1a, &[1], 0x3a)?;
@@ -388,6 +431,7 @@ impl Session {
             _ => bail!("unknown adapter power state {state}"),
         }
         sleep(Duration::from_secs(1));
+        self.discovery = DiscoveryState::Fresh;
         Ok(PowerInfo {
             adapter_supply: self.adapter_supply,
             raw_state: state,
@@ -444,7 +488,28 @@ impl Session {
         );
         Ok(r.payload[3..].to_vec())
     }
+    /// PnP can reassign slots, and a stop sent afterwards would reach whichever
+    /// unit now holds the old slot. Until its Stop is acknowledged, a PC-link
+    /// blocks discovery and any further start.
+    fn require_no_pc_link(&self) -> Result<()> {
+        if let Some(slot) = self.normal_slot {
+            bail!("PC-link session at slot {slot} is still active; stop it before discovery or another start");
+        }
+        Ok(())
+    }
+    /// A failed `initialize` can leave the adapter reset without its power
+    /// setup. Discovery and PC-link start wait until one completes.
+    fn require_complete_initialization(&self) -> Result<()> {
+        ensure!(
+            self.discovery != DiscoveryState::ResetIncomplete,
+            "SM-PCE02 initialization did not complete after its reset; initialize the adapter again or reconnect before discovery"
+        );
+        Ok(())
+    }
     pub fn discover(&mut self) -> Result<Vec<u8>> {
+        self.require_no_pc_link()?;
+        self.require_complete_initialization()?;
+        self.discovery = DiscoveryState::Repeated;
         self.set_protocol(0)?;
         let p = self.adapter(0x1d, &[0], 0x3d)?;
         ensure!(p.starts_with(&[0, 0]), "PnP rejected");
@@ -455,8 +520,27 @@ impl Session {
             .filter(|&s| p[s as usize / 8] & (1 << (s % 8)) != 0)
             .collect())
     }
+    /// On a DU-EP800-CRG, the 16/7C attribute read outside a PC-link was
+    /// answered in the first discovery after `initialize`, but not in a later
+    /// one on the same connection, while stock identity and a PC-linked 16/7C
+    /// still answered. Part queries take the same unlinked path. When discovery
+    /// has already run since the last initialization, or an initialization
+    /// failed, initialize again first, never while a PC-link is active, so the
+    /// next discovery starts from the same reset, power and protocol sequence
+    /// as the first. A failure here leaves discovery refused until a later
+    /// initialization completes.
+    fn reinitialize_for_unlinked_identity(&mut self) -> Result<()> {
+        self.require_no_pc_link()?;
+        if self.discovery != DiscoveryState::Fresh {
+            self.initialize()?;
+        }
+        Ok(())
+    }
     /// No motor PC-link start, key exchange, settings, or boot commands.
+    /// A repeated inventory first re-initializes the adapter; see
+    /// `reinitialize_for_unlinked_identity`.
     pub fn units(&mut self) -> Result<Vec<UnitIdentity>> {
+        self.reinitialize_for_unlinked_identity()?;
         let slots = self.discover()?;
         let mut units = self.inventory_slots(&slots)?;
         for unit in &mut units {
@@ -533,6 +617,10 @@ impl Session {
         component: Option<&str>,
         allow_component: bool,
     ) -> Result<Identity> {
+        // Explicit selections can refine identities before the PC-link starts.
+        if allow_component || component.is_some() {
+            self.reinitialize_for_unlinked_identity()?;
+        }
         let slots = self.discover()?;
         let slot = if let Some(component) = component {
             let named_slots = match slot {
@@ -572,6 +660,8 @@ impl Session {
         component: Option<&str>,
         allow_component: bool,
     ) -> Result<Identity> {
+        self.require_no_pc_link()?;
+        self.require_complete_initialization()?;
         self.target(slot)?;
         let mut unit = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         unit.prepare_session(self, allow_component)?;
@@ -1089,7 +1179,7 @@ pub(crate) fn dcas_buffer_packet(packet: u8, index: u16, block: &[u8; 64], sum: 
     p
 }
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     struct ScriptPort {
         steps: std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>,
@@ -1129,14 +1219,11 @@ mod tests {
             Ok(())
         }
     }
-    type ScriptSteps = std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>;
-    fn scripted(steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
-        let steps = std::rc::Rc::new(std::cell::RefCell::new(steps.into()));
-        let session = Session {
-            port: Box::new(ScriptPort {
-                steps: steps.clone(),
-                pending: VecDeque::new(),
-            }),
+    pub(crate) type ScriptSteps = std::rc::Rc<std::cell::RefCell<VecDeque<(Frame, Frame)>>>;
+    /// A freshly opened session over `port`, as `Session::open` leaves it.
+    fn session_over(port: Box<dyn Port>) -> Session {
+        Session {
+            port,
             decoder: Decoder::default(),
             incoming: VecDeque::new(),
             trace: None,
@@ -1146,10 +1233,177 @@ mod tests {
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
-        };
+            discovery: DiscoveryState::Fresh,
+        }
+    }
+    /// A session over a port that asserts each request and answers it in order.
+    pub(crate) fn scripted(steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
+        let steps = std::rc::Rc::new(std::cell::RefCell::new(steps.into()));
+        let session = session_over(Box::new(ScriptPort {
+            steps: steps.clone(),
+            pending: VecDeque::new(),
+        }));
         (session, steps)
     }
-    fn frame(control: u8, payload: &[u8]) -> Frame {
+    const PC_LINK_KEYS: [[u8; 2]; 5] = [
+        [0xa2, 0x2b],
+        [0x30, 0x0e],
+        [0x7a, 0x4d],
+        [0x62, 0x2b],
+        [0x85, 0xb4],
+    ];
+    /// A stateful SM-PCE02 with a DU-EP800-CRG at slot 13. It models the
+    /// hardware report against `units` in one `cranklink session` connection:
+    /// the motor answers stock reads at any time and the 16/7C attribute read
+    /// inside a PC-link, but outside one only during the first discovery after
+    /// an adapter reset. A repeated PnP without a reset, as an earlier `units`
+    /// or `probe` leaves it, gets stock replies and no 16/7C reply. Hardware
+    /// has not confirmed which earlier step closes that window; the model only
+    /// reproduces the observed behaviour. Unmodelled requests panic.
+    #[derive(Default)]
+    pub(crate) struct ModeledBus {
+        master: bool,
+        target: Option<u8>,
+        discoveries_since_reset: u32,
+        next_key: Option<usize>,
+        linked: bool,
+        pub(crate) resets: u32,
+        pub(crate) unanswered_attribute_reads: u32,
+        /// Reject this many power unlocks after their reset.
+        pub(crate) rejected_power_unlocks: u32,
+        pub(crate) requests: u32,
+    }
+    impl ModeledBus {
+        pub(crate) const MOTOR: u8 = 13;
+        pub(crate) fn respond(&mut self, request: &Frame) -> Vec<Frame> {
+            let reply = |control: u8, payload: &[u8]| vec![frame(control, payload)];
+            self.requests += 1;
+            match (request.control, request.payload.as_slice()) {
+                (0x10, []) => {
+                    assert!(!self.linked, "adapter reset during an active PC-link");
+                    self.resets += 1;
+                    self.master = false;
+                    self.target = None;
+                    self.discoveries_since_reset = 0;
+                    reply(0x30, &[0])
+                }
+                (0x1a, [1]) if self.rejected_power_unlocks > 0 => {
+                    self.rejected_power_unlocks -= 1;
+                    reply(0x3a, &[1, 1])
+                }
+                (0x1a, [1]) => reply(0x3a, &[1, 0]),
+                (0x1a, [2]) => reply(0x3a, &[2, 1]),
+                (3, [0x20]) => {
+                    // A role request invalidates the target selection.
+                    self.master = true;
+                    self.target = None;
+                    reply(0x23, &[0])
+                }
+                (4, []) => reply(0x24, &[if self.master { 0xa0 } else { 0x80 }]),
+                (0x1d, [0]) if self.master => {
+                    self.discoveries_since_reset += 1;
+                    reply(0x3d, &[0, 0])
+                }
+                (0x1b, []) if self.master => reply(0x3b, &[0, 1 << (Self::MOTOR - 8), 0, 0]),
+                (6, [slot]) => {
+                    self.target = Some(*slot);
+                    reply(0x26, &[0])
+                }
+                (0x48, [slot, request @ ..])
+                    if *slot == Self::MOTOR && self.master && self.target == Some(*slot) =>
+                {
+                    self.motor(request)
+                }
+                _ => panic!("unmodelled adapter request {request:02x?}"),
+            }
+        }
+        fn motor(&mut self, request: &[u8]) -> Vec<Frame> {
+            let reply = |payload: &[u8]| vec![frame(0x48, &[&[0], payload].concat())];
+            match request {
+                [1, 0x1c, 0] => reply(&[1, 0x1e, 0x23, 0]),
+                [0x16, 0x7c, 0] if self.linked || self.discoveries_since_reset == 1 => {
+                    reply(&[0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0])
+                }
+                [0x16, 0x7c, 0] => {
+                    self.unanswered_attribute_reads += 1;
+                    Vec::new()
+                }
+                [0x32, 0x10, 1, 0, 0, 0] if !self.linked => {
+                    self.next_key = Some(0);
+                    Vec::new()
+                }
+                [0x32, 0x30, a, b, 0, 0] => {
+                    let index = self.next_key.take().expect("PC-link key before start");
+                    assert_eq!([*a, *b], PC_LINK_KEYS[index], "PC-link key {index}");
+                    if index + 1 < PC_LINK_KEYS.len() {
+                        self.next_key = Some(index + 1);
+                        return Vec::new();
+                    }
+                    self.linked = true;
+                    reply(&[0x32, 0x12, 1, 0, 0xff, 0xff])
+                }
+                [0x32, 0x10, 0, 0, 0, 0] if self.linked => {
+                    self.linked = false;
+                    reply(&[0x32, 0x12, 0])
+                }
+                [1, 0x2c, 0] if self.linked => reply(&[1, 0x2e, 0x42, 0, 0]),
+                [1, 0x84, 1] if self.linked => reply(&[1, 0x86, 0x41, 11, 0]),
+                [1, 0x3c, 0] if self.linked => reply(&[1, 0x3e, 1, 2, 3, 4, 5, 6, 0xff]),
+                _ => panic!("unmodelled motor request {request:02x?}"),
+            }
+        }
+    }
+    struct ModelPort {
+        bus: std::rc::Rc<std::cell::RefCell<ModeledBus>>,
+        decoder: Decoder,
+        pending: VecDeque<u8>,
+    }
+    impl Read for ModelPort {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            let n = bytes.len().min(self.pending.len());
+            for byte in &mut bytes[..n] {
+                *byte = self.pending.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+    impl Write for ModelPort {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            for request in self.decoder.feed(bytes) {
+                for reply in self.bus.borrow_mut().respond(&request.unwrap()) {
+                    self.pending
+                        .extend(protocol::encode(reply.control, &reply.payload));
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Port for ModelPort {
+        fn set_timeout(&mut self, _: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    /// A freshly opened session over `ModeledBus`.
+    fn modeled() -> (Session, std::rc::Rc<std::cell::RefCell<ModeledBus>>) {
+        let bus = std::rc::Rc::default();
+        let session = session_over(Box::new(ModelPort {
+            bus: std::rc::Rc::clone(&bus),
+            decoder: Decoder::default(),
+            pending: VecDeque::new(),
+        }));
+        (session, bus)
+    }
+    /// A scripted session whose PC-link to the motor at `slot` is already open.
+    pub(crate) fn scripted_motor(slot: u8, steps: Vec<(Frame, Frame)>) -> (Session, ScriptSteps) {
+        let (mut session, steps) = scripted(steps);
+        session.normal_slot = Some(slot);
+        session.normal_is_motor = true;
+        (session, steps)
+    }
+    pub(crate) fn frame(control: u8, payload: &[u8]) -> Frame {
         Frame {
             control,
             payload: payload.to_vec(),
@@ -1172,6 +1426,101 @@ mod tests {
             frame(0x48, &[slot, 1, 0x1c, 0]),
             frame(0x48, &[0, 1, 0x1e, series, unit]),
         )
+    }
+    #[test]
+    fn modeled_bus_withholds_unlinked_attributes_after_a_repeated_discovery() {
+        let (mut session, bus) = modeled();
+        session.initialize().unwrap();
+        let attributes = |session: &mut Session| {
+            session.target(ModeledBus::MOTOR).unwrap();
+            let request = [ModeledBus::MOTOR, 0x16, 0x7c, 0];
+            session.exchange(0x48, &request, Duration::from_millis(100), |f| {
+                normal_response_matches(f, 0, 0x16, 0x7e)
+            })
+        };
+        session.discover().unwrap();
+        attributes(&mut session).unwrap();
+        // The hardware symptom: stock identity still answers, 16/7C does not.
+        assert_eq!(session.discover().unwrap(), [ModeledBus::MOTOR]);
+        session.target(ModeledBus::MOTOR).unwrap();
+        let stock = session.command(ModeledBus::MOTOR, 1, 0x1c, &[0], 0x1e);
+        assert_eq!(stock.unwrap(), [0x23, 0]);
+        assert!(attributes(&mut session).is_err());
+        assert_eq!(bus.borrow().unanswered_attribute_reads, 1);
+    }
+    #[test]
+    fn repeated_units_and_probes_share_one_connection() {
+        let (mut session, bus) = modeled();
+        session.initialize().unwrap();
+        let resolved = |units: Vec<UnitIdentity>| -> Vec<(u8, Option<&str>)> {
+            units.iter().map(|unit| (unit.slot, unit.model)).collect()
+        };
+        let motor = [(ModeledBus::MOTOR, Some("DU-EP800-CRG"))];
+        // The first inventory after initialization adds no reset, as in
+        // `cranklink units`; a repeated one starts from a new initialization.
+        assert_eq!(resolved(session.units().unwrap()), motor);
+        assert_eq!(bus.borrow().resets, 1);
+        assert_eq!(resolved(session.units().unwrap()), motor);
+        assert_eq!(bus.borrow().resets, 2);
+        // A default probe reads 16/7C inside its PC-link and needs no reset.
+        let probe = session.probe(None).unwrap();
+        session.normal_stop().unwrap();
+        assert_eq!(probe.identity.cargo, "00-CRG");
+        assert_eq!(probe.serial, "010203040506");
+        assert_eq!(bus.borrow().resets, 2);
+        assert_eq!(resolved(session.units().unwrap()), motor);
+        assert_eq!(bus.borrow().resets, 3);
+        // A named probe resolves 16/7C before its PC-link, like an inventory.
+        let named = session.probe_component(None, Some("DU-EP800-CRG")).unwrap();
+        session.normal_stop().unwrap();
+        assert_eq!(named.identity.slot, ModeledBus::MOTOR);
+        assert_eq!(bus.borrow().resets, 4);
+        // An active PC-link refuses both before any reset reaches the adapter.
+        session.normal_start(None).unwrap();
+        let error = session.units().unwrap_err().to_string();
+        assert!(error.contains("still active"), "{error}");
+        assert!(session.probe_component(None, Some("DU-EP800-CRG")).is_err());
+        session.normal_stop().unwrap();
+        assert_eq!(bus.borrow().resets, 4);
+        assert_eq!(bus.borrow().unanswered_attribute_reads, 0);
+    }
+    #[test]
+    fn failed_reinitialization_refuses_discovery_until_one_completes() {
+        let (mut session, bus) = modeled();
+        session.initialize().unwrap();
+        session.units().unwrap();
+        // The repeated inventory resets the adapter, then its power setup fails.
+        bus.borrow_mut().rejected_power_unlocks = 1;
+        let error = session.units().unwrap_err().to_string();
+        assert!(error.contains("power unlock rejected"), "{error}");
+        assert_eq!(bus.borrow().resets, 2);
+        // A default probe, which does not initialize, must not discover or
+        // start a PC-link on the half-initialized adapter.
+        let requests = bus.borrow().requests;
+        let error = session.probe(None).unwrap_err().to_string();
+        assert!(error.contains("did not complete"), "{error}");
+        assert_eq!(bus.borrow().requests, requests);
+        // An inventory initializes again; then probes work as before.
+        let units = session.units().unwrap();
+        assert_eq!(units[0].model, Some("DU-EP800-CRG"));
+        assert_eq!(bus.borrow().resets, 3);
+        session.probe(None).unwrap();
+        session.normal_stop().unwrap();
+        assert_eq!(bus.borrow().resets, 3);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_trace_writes_disable_the_trace_without_failing_the_exchange() {
+        let (mut session, steps) = scripted(vec![(frame(4, &[]), frame(0x24, &[0xa0]))]);
+        // Every write to /dev/full fails with ENOSPC.
+        session.trace = Some(OpenOptions::new().append(true).open("/dev/full").unwrap());
+        session.send(4, &[]).unwrap();
+        assert!(session.trace.is_none());
+        let reply = session
+            .wait(Duration::from_secs(1), |f| f.control == 0x24)
+            .unwrap();
+        assert_eq!(reply.payload, [0xa0]);
+        assert!(steps.borrow().is_empty());
     }
     fn component_start_steps(slot: u8) -> Vec<(Frame, Frame)> {
         let mut steps = vec![
@@ -1324,6 +1673,22 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not a catalogued component"));
+        assert!(steps.borrow().is_empty());
+        assert!(session.normal_slot.is_none());
+    }
+    #[test]
+    fn unsupported_drive_unit_is_not_admitted_as_a_component() {
+        let mut commands = discovery_steps(&[13]);
+        commands.extend([
+            (frame(6, &[13]), frame(0x26, &[0])),
+            stock_step(13, 0x22, 0),
+        ]);
+        let (mut session, steps) = scripted(commands);
+        let error = session
+            .normal_start_component(Some(13), None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported drive unit"), "{error}");
         assert!(steps.borrow().is_empty());
         assert!(session.normal_slot.is_none());
     }
@@ -1527,6 +1892,24 @@ mod tests {
         assert!(steps.borrow().is_empty());
     }
     #[test]
+    fn discovery_and_start_refuse_while_a_pc_link_is_active() {
+        // The script admits no command: the guard must refuse before any write.
+        let (mut session, steps) = scripted_motor(13, vec![]);
+        assert!(session
+            .discover()
+            .unwrap_err()
+            .to_string()
+            .contains("still active"));
+        assert!(session.units().is_err());
+        assert!(session.normal_start(None).is_err());
+        assert!(session.probe(Some(13)).is_err());
+        assert!(session.probe_component(None, Some("RD-6770")).is_err());
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(session.normal_start_discovered(13).is_err());
+        assert_eq!(session.normal_slot, Some(13));
+        assert!(steps.borrow().is_empty());
+    }
+    #[test]
     fn names_do_not_grant_motor_access_and_selectors_require_unique_resolved_models() {
         let display = UnitIdentity::from_reply(4, vec![4, 0x23, 2]).unwrap();
         assert_eq!(display.model, Some("SC-EM800"));
@@ -1689,6 +2072,10 @@ mod tests {
 #[cfg(test)]
 #[path = "device_unit_auth_tests.rs"]
 mod unit_auth_tests;
+
+#[cfg(test)]
+#[path = "device_boot_tests.rs"]
+mod boot_tests;
 
 impl crate::firmware_io::FirmwareIo for Session {
     fn send(&mut self, control: u8, payload: &[u8]) -> Result<()> {
