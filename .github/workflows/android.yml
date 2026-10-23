@@ -38,6 +38,8 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v3
         if: steps.filter.outputs.has_changes == 'true'
+        with:
+          packages: platform-tools
       - name: Install Android SDK and NDK
         if: steps.filter.outputs.has_changes == 'true'
         run: |
