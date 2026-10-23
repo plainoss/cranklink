@@ -970,18 +970,14 @@ mod tests {
 
     #[test]
     fn flash_profiles_agree_with_unit_models() {
-        // DCAS2 bootloader identities with no stock unit model entry; keep any
-        // addition here deliberate.
-        const UNMODELLED_LIVE: &[(u8, u8)] = &[(0x0a, 0), (0x0c, 0), (0x15, 0)];
         for profile in MOTOR_FLASH_PROFILES {
             let live = (profile.live_series, profile.live_unit);
             let names = crate::unit_models::candidates(live.0, live.1, None, None)
                 .into_iter()
                 .filter(|name| name.starts_with("DU-"))
                 .collect::<Vec<_>>();
-            assert_eq!(
-                names.is_empty(),
-                UNMODELLED_LIVE.contains(&live),
+            assert!(
+                !names.is_empty(),
                 "live {:02x}/{:02x} unit models {names:?}",
                 live.0,
                 live.1

@@ -55,7 +55,7 @@ impl UnitIdentity {
         matches!(
             (self.model_series, self.model_unit),
             (
-                0x08 | 0x12 | 0x20 | 0x21 | 0x23 | 0x30 | 0x35 | 0x37 | 0x38,
+                0x08 | 0x0a | 0x0c | 0x12 | 0x15 | 0x20 | 0x21 | 0x23 | 0x30 | 0x35 | 0x37 | 0x38,
                 0
             )
         )
@@ -731,7 +731,7 @@ impl Session {
         }
         let cargo = crate::motor_support::read_params(self, slot, unit.model_series)?;
         ensure!(
-            unit.model_series == 0x08 || cargo.len() >= 7,
+            matches!(unit.model_series, 0x08 | 0x0a) || cargo.len() >= 7,
             "truncated cargo attribute reply: {}",
             hex::encode(&cargo)
         );

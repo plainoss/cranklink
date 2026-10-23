@@ -880,7 +880,7 @@ impl BleSession {
         }
         let cargo = crate::motor_support::read_params(self, slot, unit.model_series)?;
         ensure!(
-            unit.model_series == 0x08 || cargo.len() >= 7,
+            matches!(unit.model_series, 0x08 | 0x0a) || cargo.len() >= 7,
             "truncated BLE motor attribute reply"
         );
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;

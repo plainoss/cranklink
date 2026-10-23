@@ -26,6 +26,9 @@ pub enum SettingsModel {
     E7000,
     E6100,
     E6000,
+    E6001,
+    E6002Pre33,
+    E6002,
     Component(&'static str),
 }
 /// Settings serial admission follows the selected model; motor identities retain
@@ -47,7 +50,9 @@ impl SettingsModel {
             Self::E8000 => "DU-E8000/DU-E8080",
             Self::E7000 => "DU-E7000",
             Self::E6100 => "DU-E6100 family",
-            Self::E6000 => "DU-E6000 family",
+            Self::E6000 => "DU-E6000",
+            Self::E6001 => "DU-E6001/DU-E6010/DU-E6050",
+            Self::E6002Pre33 | Self::E6002 => "DU-E6002/DU-E6012",
             Self::Component(name) => name,
         }
     }
@@ -62,27 +67,10 @@ impl SettingsModel {
             Self::E7000 => "e7000",
             Self::E6100 => "e6100",
             Self::E6000 => "e6000",
+            Self::E6001 => "e6001",
+            Self::E6002Pre33 => "e6002-pre33",
+            Self::E6002 => "e6002",
             Self::Component(name) => name,
-        }
-    }
-    pub(crate) fn series(self) -> u8 {
-        match self {
-            Self::Ep800Crg => 0x23,
-            Self::Ep600 => 0x30,
-            Self::Ep801 => 0x35,
-            Self::Ep500 => 0x37,
-            Self::E5100 => 0x38,
-            Self::E8000 => 0x12,
-            Self::E7000 => 0x21,
-            Self::E6100 => 0x20,
-            Self::E6000 => 0x08,
-            Self::Component(name) => {
-                crate::unit_models::UNIT_MODELS
-                    .iter()
-                    .find(|entry| entry.name == name)
-                    .expect("component settings model belongs to catalog")
-                    .series
-            }
         }
     }
     fn modern(self) -> bool {
@@ -101,6 +89,9 @@ impl SettingsModel {
             "e7000" => Self::E7000,
             "e6100" => Self::E6100,
             "e6000" => Self::E6000,
+            "e6001" => Self::E6001,
+            "e6002-pre33" => Self::E6002Pre33,
+            "e6002" => Self::E6002,
             _ => {
                 let entry = crate::unit_models::UNIT_MODELS.iter()
                     .find(|entry| crate::unit_models::name_matches(name, entry.name))
@@ -130,13 +121,19 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
     let mut specs = schema();
     if matches!(
         model,
-        SettingsModel::E8000 | SettingsModel::E7000 | SettingsModel::E6100 | SettingsModel::E6000
+        SettingsModel::E8000
+            | SettingsModel::E7000
+            | SettingsModel::E6100
+            | SettingsModel::E6000
+            | SettingsModel::E6001
+            | SettingsModel::E6002Pre33
+            | SettingsModel::E6002
     ) {
         specs.retain(|s| {
             matches!(
                 s.name.as_str(),
                 "tire-circumference" | "mounting-angle" | "lamp"
-            )
+            ) || (model == SettingsModel::E6002 && s.name == "destination")
         });
         for spec in &mut specs {
             if spec.name == "lamp" {
@@ -146,7 +143,13 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
             if spec.name == "mounting-angle" {
                 spec.template.truncate(2);
             }
-            if model == SettingsModel::E6000 {
+            if matches!(
+                model,
+                SettingsModel::E6000
+                    | SettingsModel::E6001
+                    | SettingsModel::E6002Pre33
+                    | SettingsModel::E6002
+            ) {
                 if spec.name == "tire-circumference" {
                     spec.min = 2000;
                     spec.max = 2400;
@@ -154,6 +157,9 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
                 if spec.name == "mounting-angle" {
                     spec.max = 45;
                 }
+            }
+            if model == SettingsModel::E6002 && spec.name == "destination" {
+                spec.choices = vec![0, 1, 4];
             }
         }
         return specs;
@@ -939,6 +945,9 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
         SettingsModel::E7000,
         SettingsModel::E6100,
         SettingsModel::E6000,
+        SettingsModel::E6001,
+        SettingsModel::E6002Pre33,
+        SettingsModel::E6002,
     ]
     .into_iter()
     .chain(
@@ -1485,6 +1494,9 @@ fn destination_limits(
 fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
     components::validate_reply(spec, raw)?;
     components_other::validate_reply(spec, raw)?;
+    if spec.name == "destination" {
+        ensure!(raw.len() >= 2, "invalid destination reply length");
+    }
     if spec.preserve == Some(6) {
         ensure!(
             raw.len() >= 7 && raw[..2] == spec.query[..2],
@@ -1992,6 +2004,142 @@ mod tests {
             SettingsModel::E6000,
         ] {
             assert!(checked_serial(&mut Serial, 11, None, motor).is_err());
+        }
+    }
+
+    #[test]
+    fn e6002_region_schema_has_its_own_choices_and_firmware_boundary() {
+        for model in [
+            SettingsModel::E6000,
+            SettingsModel::E6001,
+            SettingsModel::E6002Pre33,
+        ] {
+            assert_eq!(schema_for_model(model).len(), 3);
+            assert!(spec_for_model("destination", model).is_err());
+            assert!(spec_for_model("speed-limit", model).is_err());
+        }
+        let spec = spec_for_model("destination", SettingsModel::E6002).unwrap();
+        assert_eq!(spec.choices, [0, 1, 4]);
+        assert_eq!((spec.group, spec.get, spec.set), (0x16, 0xac, 0xa8));
+        assert_eq!(spec.query, [1]);
+        assert_eq!(spec.template, [1, 0, 255, 255]);
+        assert!(spec.oem);
+        for n in ["0", "1", "4"] {
+            assert!(spec.raw_value(n).is_ok());
+        }
+        for n in ["2", "3", "5", "255"] {
+            assert!(spec.raw_value(n).is_err());
+        }
+        assert!(spec_for_model("speed-limit", SettingsModel::E6002).is_err());
+        assert_eq!(schema_for_model(SettingsModel::E6002).len(), 4);
+    }
+
+    #[test]
+    fn e6002_region_changes_backup_readback_and_restore_the_named_value() {
+        struct RegionMotor {
+            region: u8,
+            sets: usize,
+            backup: std::path::PathBuf,
+            malformed: bool,
+        }
+        impl UnitCommands for RegionMotor {
+            fn command(
+                &mut self,
+                slot: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!(slot, 13);
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (0x16, 0xac) => {
+                        assert_eq!(params, [1]);
+                        Ok(vec![
+                            if self.malformed { 0 } else { 1 },
+                            self.region,
+                            0xff,
+                            0xff,
+                        ])
+                    }
+                    (0x16, 0xa8) => {
+                        let backup: Value = serde_json::from_slice(&std::fs::read(&self.backup)?)?;
+                        assert_eq!(backup["before"], self.region);
+                        assert_eq!(params.len(), 4);
+                        assert_eq!(params[0], 1);
+                        assert_eq!(params[2..], [255, 255]);
+                        assert!([0, 1, 4].contains(&params[1]));
+                        self.region = params[1];
+                        self.sets += 1;
+                        Ok(vec![])
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+        let prefix = format!(
+            "cranklink-e6002-region-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        );
+        let before = std::env::temp_dir().join(format!("{prefix}-before.json"));
+        let restore = std::env::temp_dir().join(format!("{prefix}-restore.json"));
+        let rejected = std::env::temp_dir().join(format!("{prefix}-rejected.json"));
+        let mut motor = RegionMotor {
+            region: 0,
+            sets: 0,
+            backup: before.clone(),
+            malformed: false,
+        };
+        assert!(set_for_model(
+            &mut motor,
+            13,
+            "destination",
+            "3",
+            &rejected,
+            SettingsModel::E6002
+        )
+        .is_err());
+        assert!(set_for_model(
+            &mut motor,
+            13,
+            "destination",
+            "1",
+            &rejected,
+            SettingsModel::E6002Pre33
+        )
+        .is_err());
+        assert!(!rejected.exists());
+        let receipt = set_for_model(
+            &mut motor,
+            13,
+            "destination",
+            "4",
+            &before,
+            SettingsModel::E6002,
+        )
+        .unwrap();
+        assert_eq!(receipt.after, json!(4));
+        assert_eq!(motor.region, 4);
+        motor.backup = restore.clone();
+        restore_for_model(&mut motor, 13, &before, &restore, SettingsModel::E6002).unwrap();
+        assert_eq!(motor.region, 0);
+        assert_eq!(motor.sets, 2);
+        motor.malformed = true;
+        assert!(set_for_model(
+            &mut motor,
+            13,
+            "destination",
+            "1",
+            &rejected,
+            SettingsModel::E6002
+        )
+        .is_err());
+        assert!(!rejected.exists());
+        assert_eq!(motor.sets, 2);
+        for path in [before, restore] {
+            std::fs::remove_file(path).unwrap();
         }
     }
     #[test]
@@ -2680,7 +2828,10 @@ mod tests {
             "e8000",
             "e7000",
             "e6100",
-            "e6000"
+            "e6000",
+            "e6001",
+            "e6002-pre33",
+            "e6002"
         );
         for (slug, committed) in listed {
             let model = SettingsModel::from_name(slug).unwrap();

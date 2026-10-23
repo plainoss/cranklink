@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 import unittest
-from fw_sim.mn101 import CPU, BASE, pack_pc, unpack_pc
+from fw_sim.mn101 import CPU, BASE, pack_pc_strict as pack_pc, unpack_pc_strict as unpack_pc
 from fw_sim.di2_service import Di2Service, PROFILES, WIRELESS_INTERRUPT_WRITES
 
 

@@ -7,7 +7,7 @@ explicit interrupt-control write fixture; this does not prove shifting works.
 """
 from pathlib import Path
 from .di2_images import IMAGES, MAX_BYTES, assess_image
-from .mn101 import CPU, unpack_pc
+from .mn101 import CPU, unpack_pc_strict as unpack_pc
 
 PROFILES = {
     'BTDN110.4.5.0.dat': dict(entry=0x6749, mode=0x47, owner=0x45, send_vector=4),

@@ -1,7 +1,8 @@
-"""Strict experimental MN101 subset decoder from Panasonic 21449-041E XIX-25..30.
+"""Strict MN101 subset decoder from Panasonic 21449-041E XIX-25..30.
 
-pc/base are linear nibble addresses/byte origin respectively. Unknown encodings
-raise DecodeError; decoded instructions do not imply an execution profile.
+pc/base are linear nibble addresses/byte origin; fetch is low nibble first.
+Unknown encodings and unmapped code trap. Decoding does not establish execution
+coverage or a complete CPU profile.
 """
 class DecodeError(RuntimeError):
     pass

@@ -41,6 +41,14 @@ Signed values can be supplied directly, for example `cranklink --port usb -c MU-
 
 Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. Browser tests additionally drive the current UI and WASM through SC-EM800 4.6.0 and MU-UR500 3.3.1 save, power-cycle, readback and restore flows, and an unfinished hub adjustment. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
+## E6000-family drive units
+
+E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose `destination` from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.
+
+Offline schemas use `--model e6000`, `e6001`, `e6002-pre33`, or `e6002`. Live identities distinguish the generations: `08/00` E6000, `0A/00` or `0C/00` E6001 family, and `15/00` E6002/E6012. Known product attributes distinguish shared-series variants; unsupported discriminator queries are omitted.
+
+E6000/E6001-family writes require no motor authentication. E6002/E6012 use legacy authentication from D3.4.0 and none earlier. These additions have synthetic identity, authorization, backup and readback tests. Both board variants of E6002 D3.3.0/D3.4.0 also execute stock region storage and reload routines under a modeled resident ROM append service. Authentication, transport, erase/rollover and hardware remain outside that isolated check; see [simulator scope](firmware-simulator.md#older-family-region-storage).
+
 ## Protected writes
 
 Fields flagged `oem` require drive-unit authentication. A `set`, `restore` or `batch` that writes one runs it automatically with the live serial; with `--no-auth` it is refused instead. `--unit-auth` (alias `--ble-unit-auth`) forces authentication before every connected settings command, reads included, except `set --dry-run`, and cannot be combined with `--no-auth`. The web app adds it for EP600, EP801 and EP500 motors to every save and restore, and to reads over Bluetooth. The protocol is chosen from the live motor identity:

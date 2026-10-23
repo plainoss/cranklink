@@ -818,7 +818,7 @@ export class SessionController {
       this.speedDestinationBeforeAuto = null;
       const range = destinationSpeedRange(model, Number(value));
       const speed = Number(nextStaged["speed-limit"] ?? this.state.liveValues["speed-limit"]?.value);
-      if (range && Number.isFinite(speed)) {
+      if (range && Number.isFinite(speed) && this.state.schema.some((setting) => setting.name === "speed-limit")) {
         stage("speed-limit", Math.min(range.max, Math.max(range.min, speed)));
       }
     }

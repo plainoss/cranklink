@@ -279,39 +279,46 @@ pub const UNIT_MODELS: &[UnitModel] = &[
         model_params: None,
     },
     UnitModel {
-        series: 0x08,
+        series: 0x0a,
         unit: 0x00,
         name: "DU-E6001",
         part: None,
         model_params: None,
     },
     UnitModel {
-        series: 0x08,
+        series: 0x0c,
         unit: 0x00,
-        name: "DU-E6002",
+        name: "DU-E6001",
         part: None,
-        model_params: None,
+        model_params: Some(&[0x00, 0x10, 0, 0, 0, 0, 0]),
     },
     UnitModel {
-        series: 0x08,
+        series: 0x0c,
         unit: 0x00,
         name: "DU-E6010",
         part: None,
-        model_params: None,
+        model_params: Some(&[0x01, 0, 0, 0, 0, 0, 0]),
     },
     UnitModel {
-        series: 0x08,
+        series: 0x15,
         unit: 0x00,
         name: "DU-E6012",
         part: None,
-        model_params: None,
+        model_params: Some(&[0x01, 0x20, 0, 0, 0, 0, 0]),
     },
     UnitModel {
-        series: 0x08,
+        series: 0x0c,
         unit: 0x00,
         name: "DU-E6050",
         part: None,
-        model_params: None,
+        model_params: Some(&[0x05, 0, 0, 0, 0, 0, 0]),
+    },
+    UnitModel {
+        series: 0x15,
+        unit: 0x00,
+        name: "DU-E6002",
+        part: None,
+        model_params: Some(&[0x00, 0x20, 0, 0, 0, 0, 0]),
     },
     UnitModel {
         series: 0x08,
@@ -1501,6 +1508,24 @@ pub fn name_matches(selector: &str, model: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn e6000_generations_use_live_stock_identity_and_exact_product_attributes() {
+        assert_eq!(identify(0x08, 0, None, None), Some("DU-E6000"));
+        assert_eq!(identify(0x0a, 0, None, None), Some("DU-E6001"));
+        for (series, params, name) in [
+            (0x0c, [0, 0x10, 0, 0, 0, 0, 0], "DU-E6001"),
+            (0x0c, [1, 0, 0, 0, 0, 0, 0], "DU-E6010"),
+            (0x0c, [5, 0, 0, 0, 0, 0, 0], "DU-E6050"),
+            (0x15, [0, 0x20, 0, 0, 0, 0, 0], "DU-E6002"),
+            (0x15, [1, 0x20, 0, 0, 0, 0, 0], "DU-E6012"),
+        ] {
+            assert_eq!(identify(series, 0, None, Some(&params)), Some(name));
+        }
+        assert_eq!(identify(0x0c, 0, None, None), None);
+        assert_eq!(identify(0x15, 0, None, None), None);
+        assert_eq!(identify(0x15, 0, None, Some(&[0; 7])), None);
+    }
 
     #[test]
     fn component_catalog_resolves_known_stock_identities() {

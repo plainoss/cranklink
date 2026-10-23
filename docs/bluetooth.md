@@ -52,3 +52,5 @@ one read from the freshly selected named component. Use `--read-only` and a new
 with the rider between stages. Do not reuse an old component slot or combine
 the stages into an automatic retry loop. A failed read closes the link and ends
 the test; it is not retried automatically.
+
+E6000/E6001-family writes require no motor authentication; E6002/E6012 use legacy authentication from D3.4.0. E6002 region selection is available from D3.3.0. These additions remain hardware-unvalidated; see [E6000-family settings](settings.md#e6000-family-drive-units).
