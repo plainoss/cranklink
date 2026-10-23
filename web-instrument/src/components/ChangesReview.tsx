@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, RotateCcw, ShieldCheck } from "lucide-react";
 import type { InstrumentState } from "../types.ts";
 import type { SessionController } from "../core/sessionController.ts";
-import { formatSetting, isRegulatedSetting, settingLabel } from "../domain/settingFormat.ts";
+import { formatSetting, isRegulatedSetting, settingLabel, unwritableNotice, unwritableValues } from "../domain/settingFormat.ts";
 import { Alert, Button, Card, Checkbox, Label, Modal } from "@heroui/react";
 
 interface StagedChange {
@@ -115,6 +115,8 @@ export function ReviewDialog({ state, controller, open, onOpenChange, disconnect
   const changes = stagedChanges(state);
   const count = changes.length;
   const regulated = changes.filter((change) => change.regulated);
+  // A backup of a value cranklink cannot write is not a way back.
+  const unwritable = unwritableValues(state.schema, changes.map((change) => [change.name, state.liveValues[change.name]?.value]));
   const [acknowledged, setAcknowledged] = useState(false);
   const saving = state.phase === "committing";
 
@@ -192,10 +194,20 @@ export function ReviewDialog({ state, controller, open, onOpenChange, disconnect
                 </Alert>
               )}
 
-              <p className="flex items-start gap-2 text-xs text-muted">
-                <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
-                Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
-              </p>
+              {unwritable.length === 0 ? (
+                <p className="flex items-start gap-2 text-xs text-muted">
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
+                  Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
+                </p>
+              ) : (
+                <p className="flex items-start gap-2 text-xs font-medium" data-testid="review-unwritable">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                  <span>
+                    {unwritableNotice(unwritable)}
+                    {unwritable.length < count && " The other changes are backed up first and can be restored there."}
+                  </span>
+                </p>
+              )}
               {state.linkLost && (
                 <p className="flex items-start gap-2 text-xs font-medium" data-testid="review-link-lost">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />

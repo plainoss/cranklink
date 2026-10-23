@@ -17,6 +17,7 @@ import {
 } from "./navigation.ts";
 import { useMediaQuery } from "./hooks.ts";
 import { friendlyMotorName } from "./domain/motorIdentity.ts";
+import { unwritableNotice } from "./domain/settingFormat.ts";
 import { ConnectView } from "./components/views/ConnectView.tsx";
 import { OverviewView } from "./components/views/OverviewView.tsx";
 import { TuneView } from "./components/views/TuneView.tsx";
@@ -202,6 +203,11 @@ export function App({ controller }: AppProps) {
             </span>
           ))}
         </Alert.Description>
+        {state.mcpApproval.unwritable.length > 0 && (
+          <Alert.Description className="[overflow-wrap:anywhere] text-xs font-medium" data-testid="mcp-approval-unwritable">
+            {unwritableNotice(state.mcpApproval.unwritable)}
+          </Alert.Description>
+        )}
         {mcpRegulated.length > 0 && (
           <div className="mt-2">
             <RegulatedAcknowledgment

@@ -20,7 +20,7 @@ import type {
   OperationKind,
 } from "../types.ts";
 import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
-import { formatValue, formatSetting, isRegulatedSetting, settingLabel } from "../domain/settingFormat.ts";
+import { formatValue, formatSetting, isRegulatedSetting, listText, settingLabel, unwritableValues } from "../domain/settingFormat.ts";
 import { isLinkLost } from "../domain/errors.ts";
 import { CATALOG_NAME, detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
@@ -812,6 +812,8 @@ export class SessionController {
       return 0;
     });
     const plural = entries.length > 1 ? "s" : "";
+    // Their backups cannot be written back, so the confirmation must not imply they can.
+    const unwritable = unwritableValues(this.state.schema, entries.map(([name]) => [name, this.state.liveValues[name]?.value]));
 
     this.startOperation({
       phase: "committing",
@@ -875,7 +877,8 @@ export class SessionController {
         linkLost: false,
         statusMessage: `Committed ${entries.length} change${plural} (${backupPrefix}).`,
       });
-      this.notify(`Saved ${entries.length} setting${plural} to the bike. A backup of the previous values was created.`, "backup");
+      this.notify(`Saved ${entries.length} setting${plural} to the bike. A backup of the previous values was created${
+        unwritable.length ? `, but cranklink cannot write back the previous ${listText(unwritable)}` : ""}.`, "backup");
 
       return resultJson;
     } catch (err: any) {
@@ -1265,6 +1268,7 @@ export class SessionController {
           params,
           diff: enrichedDiff,
           target: { model: identity.model, slot: identity.slot, serial: identity.serial },
+          unwritable: unwritableValues(this.state.schema, diff.map((d) => [d.name, d.before])),
           resolve: (ok: boolean) => {
             this.update({ mcpApproval: null });
             resolve(ok);

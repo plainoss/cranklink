@@ -186,6 +186,33 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("restore-staged-hint")).toHaveCount(0);
   });
 
+  test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // Another tool left the speed above the 15-32 km/h cranklink writes.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const { liveValues } = controller.getState();
+      controller.update({ liveValues: { ...liveValues, destination: { value: 1, raw: "" }, "speed-limit": { value: 35, raw: "" } } });
+    });
+    const warning = "cranklink cannot write back the current Assist Speed Limit (35 km/h), so Backup & Restore cannot undo that change.";
+
+    const rpc = page.evaluate(() => (window as any).webMcpServer.handleRequest("tools/call", {
+      name: "cranklink_set_setting",
+      arguments: { name: "speed-limit", value: 30 },
+    }).catch((error: Error) => error.message));
+    await expect(page.getByTestId("mcp-approval-unwritable")).toHaveText(warning);
+    await page.getByTestId("btn-mcp-reject").click();
+    expect(await rpc).toBe("Transaction rejected by operator.");
+
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.stageParameter("speed-limit", 30));
+    await page.getByTestId("btn-review-save").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-unwritable")).toHaveText(warning);
+    await expect(review).not.toContainText("so you can restore it");
+  });
+
   test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
     await openInstrument(page);
 

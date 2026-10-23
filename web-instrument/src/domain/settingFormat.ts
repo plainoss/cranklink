@@ -6,6 +6,7 @@
  */
 
 import type { EnrichedSetting } from "../types.ts";
+import { settingAcceptsValue } from "./schema.ts";
 
 type Value = number | string | null | undefined;
 
@@ -57,4 +58,31 @@ export function formatSetting(schema: EnrichedSetting[], name: string, value: Va
  */
 export function isRegulatedSetting(spec: EnrichedSetting | undefined, name: string): boolean {
   return name === "destination" || spec?.oem === true || spec?.section === "oem";
+}
+
+/**
+ * "Label (value)" for each value cranklink could not write back, as a restore
+ * would: outside the setting's range, step or choices, or unset where the
+ * setting cannot be unset. The core also checks region limits when writing.
+ */
+export function unwritableValues(schema: EnrichedSetting[], values: ReadonlyArray<readonly [string, Value]>): string[] {
+  return values.flatMap(([name, value]) => {
+    const spec = schema.find((setting) => setting.name === name);
+    // Without a schema entry or a value read from the bike there is nothing to judge.
+    if (!spec || value === undefined) return [];
+    const writable = value === null || value === ""
+      ? spec.nullable
+      : (spec.value_type !== "number" && spec.value_type !== "enum") || settingAcceptsValue(spec, Number(value));
+    return writable ? [] : [`${settingLabel(schema, name)} (${formatValue(spec, value)})`];
+  });
+}
+
+/** The review's warning for current values in `unwritableValues`. */
+export function unwritableNotice(values: string[]): string {
+  return `cranklink cannot write back the current ${listText(values)}, so Backup & Restore cannot undo ${values.length === 1 ? "that change" : "those changes"}.`;
+}
+
+/** "A", "A and B", "A, B and C". */
+export function listText(items: string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }

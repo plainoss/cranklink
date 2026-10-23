@@ -145,6 +145,8 @@ export interface MCPApprovalRequest {
   diff: Array<{ name: string; label: string; before: any; after: any; regulated: boolean }>;
   /** The component the write would reach, shown to the operator. */
   target: { model: string; slot: number; serial: string };
+  /** "Label (value)" for current values cranklink could not write back from a backup. */
+  unwritable: string[];
   resolve: (approved: boolean) => void;
   reject: (err: Error) => void;
 }

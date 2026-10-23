@@ -14,7 +14,7 @@ import {
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
 import { WebUsbPort } from "./usb.js";
 import { WebSerialPort } from "./serial.js";
-import { formatSetting, formatValue, isRegulatedSetting } from "./src/domain/settingFormat.ts";
+import { formatSetting, formatValue, isRegulatedSetting, listText, unwritableValues } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { preferredTransport } from "./src/core/platform.ts";
@@ -748,6 +748,33 @@ describe("Speed and destination staging", () => {
     assert.match(controller.getState().failure!.error, /No supported destination/);
   });
 
+  it("does not promise to restore a current value cranklink cannot write", async () => {
+    (globalThis as any).window = globalThis;
+    // A speed outside 15-32 km/h, set by other tools, is refused when written back.
+    const controller = connected("ep800-crg", 1, 35);
+    const files = new Map<string, Uint8Array>();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
+      files: { list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {}, import: async (p, bytes) => { files.set(p, bytes); } },
+      run: async () => {
+        const operations = JSON.parse(new TextDecoder().decode([...files.values()].at(-1)));
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ completed: operations.length, results: operations.map((op: any) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        return { code: 0 };
+      },
+    });
+    const review = controller.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 35, after: 25 }]);
+    assert.deepEqual(controller.getState().mcpApproval?.unwritable, ["Assist Speed Limit (35 km/h)"]);
+    controller.respondMcpApproval(false);
+    assert.equal(await review, false);
+    controller.stageParameter("speed-limit", 25);
+    await controller.commitStagedBatch();
+    assert.equal(controller.getState().toast?.message,
+      "Saved 1 setting to the bike. A backup of the previous values was created, but cranklink cannot write back the previous Assist Speed Limit (35 km/h).");
+    controller.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 25, after: 30 }]);
+    assert.deepEqual(controller.getState().mcpApproval?.unwritable, []);
+  });
+
   it("rejects another save while a transaction is committing", async () => {
     const controller = connected("ep800-crg", 0, 25);
     (controller as any).update({ phase: "committing" });
@@ -1253,6 +1280,14 @@ describe("Setting value formatting", () => {
     assert.equal(formatSetting(schema, "destination", 1), "Region 1 / US Class 1 (32 km/h)");
     assert.equal(formatSetting(schema, "start-mode", 0), "Off");
     assert.equal(formatSetting(schema, "speed-limit", null), "—");
+  });
+
+  it("names current values a restore could not write back", () => {
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 35], ["speed-limit", 14], ["speed-limit", 25], ["destination", 2], ["destination", null]]),
+      ["Assist Speed Limit (35 km/h)", "Assist Speed Limit (14 km/h)", "Market Region (2)", "Market Region (—)"]);
+    // Unset is writable where the setting is nullable; text and unread values are not judged here.
+    assert.deepEqual(unwritableValues(schema, [["maintenance-date", null], ["profile1.name", "CARGO"], ["speed-limit", undefined], ["unknown", 5]]), []);
+    assert.deepEqual([listText(["A"]), listText(["A", "B"]), listText(["A", "B", "C"])], ["A", "A and B", "A, B and C"]);
   });
 
   it("asks for the regulated-change acknowledgment for every oem setting", () => {
