@@ -301,6 +301,54 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("btn-fw-dry-run-pair")).toBeDisabled();
   });
 
+  test("the non-erasing check reads as a check and leaves its result on the page", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    await page.getByTestId("nav-section-firmware").click();
+    // No firmware is bundled, so the firmware commands are held open here; the
+    // session is shown as Bluetooth because simulated sessions give no guidance.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const image = (role: string, filename: string, version: string) => ({
+        filename, sizeBytes: 1, sha256: "00".repeat(32), role,
+        metadata: { kind: role === "dcas" ? "dcas-x" : "renesas", series: 0x23, unit: 0, version, source_sha256: "" },
+      });
+      controller.update({
+        transport: "ble",
+        firmware: {
+          ...controller.getState().firmware, companionValid: true,
+          dcasFile: image("dcas", "DUEP800-D.4.2.0.dat", "4.2.0.0"), rxFile: image("rx", "DUEP800-M.4.1.11.dat", "4.1.11.0"),
+        },
+      });
+      const terminal = controller.terminal;
+      const run = terminal.run;
+      terminal.run = (line: string) => line.includes("firmware flash")
+        ? new Promise((resolve) => { (window as any).finishFirmware = () => resolve({ code: 0 }); })
+        : run(line);
+    });
+
+    const modal = page.getByTestId("operation-modal");
+    await page.getByTestId("btn-fw-dry-run-pair").click();
+    await expect(modal).toContainText("Checking firmware compatibility…");
+    await expect(modal).toContainText("Nothing is written, but the motor enters its bootloader for this check.");
+    await expect(modal).not.toContainText("Firmware is being written");
+    await page.evaluate(() => (window as any).finishFirmware());
+    await expect(modal).toBeHidden();
+    const result = page.getByTestId("fw-check-result");
+    await expect(result).toContainText("Non-erasing check passed");
+    await expect(result).toContainText("Drive unit 010203040506 (DCAS 4.2.0.0, RX 4.1.11.0) with images DCAS 4.2.0.0 and RX 4.1.11.0.");
+
+    // Programming keeps the write dialog.
+    await page.getByTestId("btn-fw-flash-pair").click();
+    await page.getByTestId("btn-confirm-program").click();
+    await expect(modal).toContainText("Updating firmware…");
+    await expect(modal).toContainText("Firmware is being written.");
+    await page.evaluate(() => (window as any).finishFirmware());
+    await expect(modal).toBeHidden();
+    await expect(result).toHaveCount(0);
+  });
+
   test("WebMCP external agent authorization flow", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();

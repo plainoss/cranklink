@@ -3,7 +3,7 @@ import { UploadCloud, FileCheck2 } from "lucide-react";
 import { Alert, Button, Card, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { RECOVERY_URL } from "../../domain/errors.ts";
+import { RECOVERY_URL, userFacingError } from "../../domain/errors.ts";
 import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 type ProgramTarget = "pair" | "dcas" | "rx";
@@ -176,6 +176,23 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
             Program both to the bike
           </Button>
         </Card.Footer>
+        {firmware.lastCheck && (
+          <Alert status={firmware.lastCheck.passed ? "success" : "danger"} data-testid="fw-check-result">
+            <Alert.Indicator />
+            <Alert.Content className="min-w-0">
+              <Alert.Title>{firmware.lastCheck.passed ? "Non-erasing check passed" : "Non-erasing check failed"}</Alert.Title>
+              <Alert.Description className="text-xs leading-relaxed [overflow-wrap:anywhere]">
+                Drive unit {firmware.lastCheck.serial} (DCAS {firmware.lastCheck.installed.dcas}, RX {firmware.lastCheck.installed.rx}) with
+                images DCAS {firmware.lastCheck.images.dcas} and RX {firmware.lastCheck.images.rx}. No firmware was written.
+              </Alert.Description>
+              {firmware.lastCheck.error && (
+                <Alert.Description className="text-xs leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]">
+                  {userFacingError(firmware.lastCheck.error, state.transport)}
+                </Alert.Description>
+              )}
+            </Alert.Content>
+          </Alert>
+        )}
       </Card>
 
       <Card className="gap-0 py-2" data-testid="single-mcu-override">

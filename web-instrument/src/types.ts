@@ -127,6 +127,19 @@ export interface InspectedFirmwareFile {
   error?: string;
 }
 
+/** The outcome of a non-erasing check, kept on the Firmware view. */
+export interface FirmwareCheckResult {
+  passed: boolean;
+  /** The drive unit the check was bound to. */
+  serial: string;
+  /** Firmware the drive unit reported when the check started. */
+  installed: { dcas: string; rx: string };
+  /** Versions of the checked images. */
+  images: { dcas: string; rx: string };
+  /** Why the check stopped, when it failed. */
+  error?: string;
+}
+
 export interface FirmwarePackageState {
   dcasFile: InspectedFirmwareFile | null;
   rxFile: InspectedFirmwareFile | null;
@@ -135,6 +148,9 @@ export interface FirmwarePackageState {
   dryRunPassed: boolean;
   dryRunSerial: string | null;
   lastFlashReceipt: any | null;
+  /** The running firmware operation: the non-erasing check writes nothing. */
+  operation: "check" | "write" | null;
+  lastCheck: FirmwareCheckResult | null;
 }
 
 export interface MCPApprovalRequest {

@@ -27,6 +27,7 @@ import {
   classifyFirmwareRole,
   evaluateCompanionPair,
   buildSynchronizedFlashPlan,
+  formatVersion,
   shellQuote,
 } from "../domain/firmwarePackage.ts";
 import {
@@ -115,6 +116,8 @@ export class SessionController {
         dryRunPassed: false,
         dryRunSerial: null,
         lastFlashReceipt: null,
+        operation: null,
+        lastCheck: null,
       },
       snapshots: [],
       logs: [],
@@ -542,7 +545,7 @@ export class SessionController {
       // Validate before replacing the old target's identity and values.
       if (!snapshot?.values || typeof snapshot.values !== "object" || Array.isArray(snapshot.values)) throw new Error("Component response lacks a valid settings snapshot.");
       this.speedDestinationBeforeAuto = null;
-      this.update({ identity, schema, stagedValues: {}, firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, lastFlashReceipt: null } });
+      this.update({ identity, schema, stagedValues: {}, firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, lastFlashReceipt: null, lastCheck: null } });
       this.applyParameterSnapshot(snapshot, identity);
       this.refreshSnapshots();
       return identity;
@@ -1155,6 +1158,7 @@ export class SessionController {
         companionMessage: companionEval.message,
         dryRunPassed: false,
         dryRunSerial: null,
+        lastCheck: null,
       },
     });
   }
@@ -1191,9 +1195,17 @@ export class SessionController {
       overrideSingleTarget,
     });
 
+    // The check enters the bootloaders like a write, so it keeps the flashing
+    // phase and its guards; the dialog and the result name it as a check.
+    const checked = {
+      serial: identity.serial,
+      installed: { dcas: identity.dcasVersion, rx: identity.rxVersion },
+      images: { dcas: formatVersion(firmware.dcasFile.metadata?.version), rx: formatVersion(firmware.rxFile.metadata?.version) },
+    };
     this.startOperation({
       phase: "flashing",
       statusMessage: plan.description,
+      firmware: { ...firmware, operation: write ? "write" : "check", lastCheck: null },
     });
 
     try {
@@ -1217,6 +1229,8 @@ export class SessionController {
           dryRunPassed: !write ? true : false,
           dryRunSerial: !write ? identity.serial : null,
           lastFlashReceipt: lastOutput,
+          operation: null,
+          lastCheck: write ? null : { passed: true, ...checked },
         },
       });
     } catch (err: any) {
@@ -1224,7 +1238,10 @@ export class SessionController {
       this.fail("firmware", err, {
         phase: "ready",
         status: (error) => `Firmware operation stopped: ${error}`,
-        firmware: { ...this.state.firmware, dryRunPassed: false, dryRunSerial: null },
+        firmware: {
+          ...this.state.firmware, dryRunPassed: false, dryRunSerial: null, operation: null,
+          lastCheck: write ? null : { passed: false, ...checked, error: err instanceof Error ? err.message : String(err) },
+        },
       });
       throw err;
     }

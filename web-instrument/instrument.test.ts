@@ -428,6 +428,65 @@ describe("Firmware programming preconditions", () => {
   });
 });
 
+describe("Non-erasing firmware check", () => {
+  function session(run: (line: string) => Promise<{ code: number }>) {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport: "usb" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run,
+    });
+    const image = (role: "dcas" | "rx", filename: string, version: string) => ({
+      filename, sizeBytes: 1, sha256: "00".repeat(32), role,
+      metadata: { kind: role === "dcas" ? "dcas-x" as const : "renesas" as const, series: 0x23, unit: 0, version, source_sha256: "" },
+    });
+    (controller as any).update({
+      phase: "ready", transport: "usb",
+      identity: { slot: 0, modelSlug: "ep800-crg", model: "DU-EP800-CRG", isMotor: true, modelUnit: 0, serial: "010203040506", dcasVersion: "4.2.0.0", rxVersion: "4.1.11.0" },
+      firmware: {
+        ...controller.getState().firmware,
+        dcasFile: image("dcas", "DUEP800-D.4.2.0.dat", "4.2.0.0"), rxFile: image("rx", "DUEP800-M.4.1.11.dat", "4.1.11.0"),
+        companionValid: true,
+      },
+    });
+    return controller;
+  }
+  const checked = { serial: "010203040506", installed: { dcas: "4.2.0.0", rx: "4.1.11.0" }, images: { dcas: "4.2.0.0", rx: "4.1.11.0" } };
+
+  it("runs as a check, not a write, and keeps its result", async () => {
+    const running: Array<string | null> = [];
+    const controller = session(async () => {
+      running.push(controller.getState().firmware.operation);
+      return { code: 0 };
+    });
+    await controller.executeFirmwareSync(false);
+    assert.deepEqual(running, ["check", "check"]);
+    const { firmware } = controller.getState();
+    assert.equal(firmware.operation, null);
+    assert.deepEqual(firmware.lastCheck, { passed: true, ...checked });
+
+    // Programming is a write and replaces the check's result.
+    running.length = 0;
+    await controller.executeFirmwareSync(true);
+    assert.deepEqual(running, ["write", "write", "write"]);
+    assert.equal(controller.getState().firmware.lastCheck, null);
+  });
+
+  it("keeps a failed check with its cause", async () => {
+    const controller = session(async () => {
+      (globalThis as any).estepsTerminalPrint("error: DCAS bootloader handshake failed\n", "stderr");
+      return { code: 1 };
+    });
+    await assert.rejects(controller.executeFirmwareSync(false), /handshake failed/);
+    const { firmware } = controller.getState();
+    assert.equal(firmware.operation, null);
+    assert.deepEqual(firmware.lastCheck, { passed: false, ...checked, error: "error: DCAS bootloader handshake failed" });
+    assert.equal(firmware.dryRunPassed, false);
+  });
+});
+
 describe("Firmware programming progress", () => {
   it("shows the write progress the CLI reports on stderr", async () => {
     (globalThis as any).window = globalThis;
