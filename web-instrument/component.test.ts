@@ -421,21 +421,61 @@ describe("Component staging and restore boundaries", () => {
     assert.equal(describeFailure(state.failure!, state.transport, []).outcome, "Your unsaved changes were discarded.");
   });
 
-  it("says the edits are gone when the reconnect cannot connect", async () => {
-    const h = harness();
-    await h.controller.connectAndSync("ble");
-    h.controller.stageParameter("switch-a-function", 0);
+  /** Fails `connect ble` while `failing` is true, as a cancelled browser chooser does. */
+  function cancellableChooser(h: ReturnType<typeof harness>) {
+    const chooser = { failing: true };
     const terminal = (h.controller as any).terminal;
     const run = terminal.run;
     terminal.run = async (line: string) => {
-      if (line === "connect ble") throw new Error("Connection attempt failed");
+      if (line === "connect ble" && chooser.failing) {
+        (globalThis as any).estepsTerminalPrint?.("No device selected.", "stderr");
+        return { code: 1 };
+      }
       return run(line);
     };
-    await assert.rejects(h.controller.reconnect(), /Connection attempt failed/);
-    const state = h.controller.getState();
+    return chooser;
+  }
+
+  it("keeps the edits when the reconnect cannot connect and restores them at the next connect to that component", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
+    const chooser = cancellableChooser(h);
+    await assert.rejects(h.controller.reconnect(), /No device selected/);
+    // The connect screen's own button fails the same way, and still keeps them.
+    await assert.rejects(h.controller.connectAndSync("ble"), /No device selected/);
+    let state = h.controller.getState();
     assert.deepEqual(state.stagedValues, {});
     assert.equal(state.failure?.kind, "connect");
-    assert.equal(describeFailure(state.failure!, state.transport, []).outcome, "Your unsaved changes were discarded.");
+    assert.equal(describeFailure(state.failure!, state.transport, []).outcome,
+      "Your unsaved changes are kept: connect to SM-BMR1 (serial 0A0B0C0D0E0F) again to restore them. Connecting to another component discards them.");
+    chooser.failing = false;
+    await h.controller.connectAndSync("ble");
+    state = h.controller.getState();
+    assert.equal(state.identity?.serial, "0A0B0C0D0E0F");
+    assert.deepEqual(state.stagedValues, { "multi-shift-limit.up": 3 });
+    assert.equal(state.failure, null);
+  });
+
+  it("discards held edits when the next connect reaches another component", async () => {
+    const h = harness();
+    await h.controller.connectAndSync("ble");
+    h.controller.stageParameter("switch-a-function", 0);
+    const chooser = cancellableChooser(h);
+    await assert.rejects(h.controller.reconnect(), /No device selected/);
+    chooser.failing = false;
+    h.replies.get(4)!.identity.serial = "111213141516";
+    await h.controller.connectAndSync("ble");
+    const state = h.controller.getState();
+    assert.equal(state.identity?.serial, "111213141516");
+    assert.deepEqual(state.stagedValues, {});
+    assert.equal(state.failure?.error, "ST-6870-L (serial 010203040506) did not answer this connection, so your unsaved changes were discarded.");
+    // Nothing stays held for a later connect.
+    h.replies.get(4)!.identity.serial = "010203040506";
+    await h.controller.disconnect();
+    await h.controller.connectAndSync("ble");
+    assert.deepEqual(h.controller.getState().stagedValues, {});
   });
 
   it("restores no edits when one of them can no longer be staged", async () => {

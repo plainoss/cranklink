@@ -81,6 +81,12 @@ export class SessionController {
   private disconnecting = false;
   /** The chip the latest flash progress line belongs to. */
   private flashStep: { echo: string; done: number; chip: string } | null = null;
+  /**
+   * The component a reconnect reopens and its staged edits. A failed attempt
+   * keeps them for the next connect, which restores them only when the same
+   * component answers.
+   */
+  private held: { identity: DeviceIdentity; staged: Array<[string, number | string]> } | null = null;
 
   constructor() {
     this.state = {
@@ -315,7 +321,7 @@ export class SessionController {
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
   ): Promise<DeviceIdentity | null> {
-    const task = this.doConnectAndSync(transport, simOpts);
+    const task = this.doConnectAndSync(transport, simOpts).then((next) => this.resumeHeld(next));
     this.syncInProgress = task;
     try {
       return await task;
@@ -382,35 +388,48 @@ export class SessionController {
       return await this.doSelectComponent(preferred).catch(() => null);
     } catch (err: any) {
       this.fail("connect", err, { phase: "error", status: (error) => `Handshake failed: ${error}` });
+      // A cancelled chooser or a failed connection loses nothing: the next
+      // connect to the same component restores the held edits.
+      const held = this.held;
+      if (held && held.staged.length > 0) {
+        const { model, serial } = held.identity;
+        this.update({ failure: { ...this.state.failure!, stagedHeld: { model, serial } } });
+      } else {
+        this.held = null;
+      }
       throw err;
     }
   }
 
   /**
    * Reopen the session after the link closed, keeping staged edits when the
-   * same drive unit answers.
+   * same component answers, now or at a later connect.
    */
   public async reconnect(): Promise<void> {
     const { transport, identity, stagedValues, simulatorOptions } = this.state;
     if (!transport) throw new Error("No previous connection to reopen.");
-    const staged = Object.entries(stagedValues);
-    // disconnect() clears the staged edits: keep the failure's cause and say so.
+    // disconnect() clears the staged edits. Without an identity, an earlier
+    // failed attempt already holds them.
+    if (identity) this.held = { identity, staged: Object.entries(stagedValues) };
+    await this.disconnect().catch(() => {});
+    await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
+  }
+
+  /** After a connect, select the held component and restore its edits, all or nothing. */
+  private async resumeHeld(next: DeviceIdentity | null): Promise<DeviceIdentity | null> {
+    const held = this.held;
+    this.held = null;
+    if (!held) return next;
+    const { identity, staged } = held;
+    // A failed read of the previous component is the cause worth showing; say the edits went with it.
     const discarded = () => {
       const failure = this.state.failure;
       if (failure && staged.length > 0) this.update({ failure: { ...failure, stagedDiscarded: true } });
     };
-    await this.disconnect().catch(() => {});
-    let next: DeviceIdentity | null;
-    try {
-      next = await this.connectAndSync(transport, transport === "sim" ? simulatorOptions : undefined);
-    } catch (error) {
-      discarded();
-      throw error;
-    }
-    const samePrevious = (candidate: DeviceIdentity | null) => !!identity && !!candidate
+    const samePrevious = (candidate: DeviceIdentity | null) => !!candidate
       && candidate.serial === identity.serial && candidate.modelSlug === identity.modelSlug
       && candidate.modelSeries === identity.modelSeries && candidate.modelUnit === identity.modelUnit;
-    if (identity && !samePrevious(next)) {
+    if (!samePrevious(next)) {
       const candidates = this.state.units.filter((unit) => unit.model_series === identity.modelSeries && unit.model_unit === identity.modelUnit
         && (identity.isMotor || unit.model === identity.model || unit.model_candidates.includes(identity.model)))
         .sort((a, b) => Number(b.slot === identity.slot) - Number(a.slot === identity.slot));
@@ -425,12 +444,11 @@ export class SessionController {
         if (samePrevious(next)) break;
       }
     }
-    if (staged.length === 0) return;
+    if (staged.length === 0) return next;
     if (!samePrevious(next)) {
-      // A failed read of the previous component is the cause worth showing.
       if (this.state.failure) discarded();
-      else this.fail("stage", "The same component did not answer after reconnecting, so your unsaved changes were discarded.");
-      return;
+      else this.fail("stage", `${identity.model} (serial ${identity.serial}) did not answer this connection, so your unsaved changes were discarded.`);
+      return next;
     }
     // All or nothing: half of a related pair, such as swapped buttons, is worse than neither.
     const dropped: string[] = [];
@@ -446,6 +464,7 @@ export class SessionController {
       this.discardAllStaged();
       this.fail("stage", `Your unsaved changes were discarded after reconnecting: ${dropped.join(", ")} could not be staged again.`);
     }
+    return next;
   }
 
 

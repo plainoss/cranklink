@@ -167,6 +167,8 @@ export interface OperationFailure {
   settings?: string[];
   /** The staged edits were lost with this failure. */
   stagedDiscarded?: boolean;
+  /** The staged edits are kept for the next connect to this component. */
+  stagedHeld?: { model: string; serial: string };
 }
 
 export interface Toast {

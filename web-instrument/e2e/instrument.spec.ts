@@ -584,18 +584,28 @@ test("adopting a granted USB adapter after the simulator ends simulated timing",
   expect(state).toEqual({ simulated: true, simulator: false, transport: "usb" });
 });
 
-// Without this the sidebar stayed Connected until the next operation failed.
-test("unplugging the selected USB adapter between commands offers Reconnect at once", async ({ page }) => {
+/**
+ * Moves the simulated drive unit's session onto a granted USB adapter, then
+ * unplugs another SM-PCE02. `window.unplugUsb()` unplugs the selected one;
+ * app.js listens on the browser's own navigator.usb. Reopening it finds no
+ * adapter, as when the chooser is cancelled after a replug.
+ */
+async function moveSessionToUsb(page: Page): Promise<boolean> {
   await openInstrument(page);
   await page.getByTestId("btn-connect-sim").click();
   await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
   await page.getByTestId("stepper-plus-tire-circumference").click();
-  // Swap the session's port for a granted USB adapter; app.js listens on the browser's own navigator.usb.
-  const hasUsb = await page.evaluate(async () => {
+  return page.evaluate(async () => {
     const usb = (navigator as any).usb as EventTarget | undefined;
     if (!usb) return false;
     const adapter = { vendorId: 0x1e44, productId: 0x7151, configurations: [] };
-    Object.defineProperty(navigator, "usb", { configurable: true, value: { getDevices: async () => [adapter] } });
+    Object.defineProperty(navigator, "usb", {
+      configurable: true,
+      value: {
+        getDevices: async () => [adapter],
+        requestDevice: async () => { throw new DOMException("No device selected.", "NotFoundError"); },
+      },
+    });
     await (window as any).estepsTerminal.selectGranted("usb");
     (window as any).cranklinkInstrumentController.update({ transport: "usb" });
     const unplug = (device: object) => usb.dispatchEvent(Object.defineProperty(new Event("disconnect"), "device", { value: device }));
@@ -603,7 +613,11 @@ test("unplugging the selected USB adapter between commands offers Reconnect at o
     unplug({ vendorId: 0x1e44, productId: 0x7151, configurations: [] });
     return true;
   });
-  test.skip(!hasUsb, "This browser exposes no WebUSB");
+}
+
+// Without this the sidebar stayed Connected until the next operation failed.
+test("unplugging the selected USB adapter between commands offers Reconnect at once", async ({ page }) => {
+  test.skip(!(await moveSessionToUsb(page)), "This browser exposes no WebUSB");
   await expect(page.getByTestId("link-status")).toHaveText("Connected");
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
 
@@ -612,6 +626,19 @@ test("unplugging the selected USB adapter between commands offers Reconnect at o
   await expect(banner).toContainText("USB adapter disconnected");
   await expect(banner.getByTestId("btn-error-reconnect")).toBeVisible();
   await expect(page.getByTestId("link-status")).toHaveText("Link closed");
+  await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+});
+
+// After a replug the browser may show its chooser again; cancelling it lost the edits.
+test("a cancelled Reconnect keeps staged edits until the same drive unit connects", async ({ page }) => {
+  test.skip(!(await moveSessionToUsb(page)), "This browser exposes no WebUSB");
+  await page.evaluate(() => (window as any).unplugUsb());
+  await page.getByTestId("btn-error-reconnect").click();
+  await expect(page.getByTestId("error-banner")).toContainText("Couldn’t connect");
+  await expect(page.getByTestId("error-outcome")).toHaveText("Your unsaved changes are kept: connect to DU-EP800-CRG "
+    + "(serial 010203040506) again to restore them. Connecting to another component discards them.");
+  await page.getByTestId("btn-connect-sim").click();
+  await expect(page.getByTestId("identity-strip")).toContainText("SN: 010203040506");
   await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
 });
 

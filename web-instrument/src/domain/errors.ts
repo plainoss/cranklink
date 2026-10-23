@@ -166,6 +166,10 @@ export function describeFailure(
     outcome = "No change was written. Your staged values are kept.";
   }
   if (failure.stagedDiscarded) outcome = `${outcome ? `${outcome} ` : ""}Your unsaved changes were discarded.`;
+  if (failure.stagedHeld) {
+    const { model, serial } = failure.stagedHeld;
+    outcome = `${outcome ? `${outcome} ` : ""}Your unsaved changes are kept: connect to ${model} (serial ${serial}) again to restore them. Connecting to another component discards them.`;
+  }
 
   return {
     title: TITLES[kind],
