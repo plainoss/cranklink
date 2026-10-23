@@ -1479,42 +1479,32 @@ fn execute_firmware_command(
                     Ok(after) => after,
                     Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
                 };
-                let serial_check = check_application_serial(&mut s, after.slot, &serial);
-                let stop = s.normal_stop();
-                let application = JournaledApplication {
-                    identity: &after,
-                    serial: serial_check.is_ok().then_some(serial_str),
-                };
-                let journaled =
-                    finished.and_then(|()| jnl.record("application-after", &application));
-                let verified = serial_check.and_then(|()| {
-                    ensure!(
-                        after.dcas_version == fw.metadata.version.to_string(),
-                        "post-flash DCAS version mismatch"
-                    );
-                    ensure!(
-                        after.rx_version == fw.metadata.compatibility_version.to_string()
-                            || after.rx_version == comp.metadata.version.to_string(),
-                        "post-flash RX version mismatch"
-                    );
-                    if let Some(before) = &before {
+                verify_flashed_application(
+                    &mut s,
+                    &mut jnl,
+                    finished,
+                    &after,
+                    &serial,
+                    serial_str,
+                    || {
                         ensure!(
-                            before.cargo == after.cargo,
-                            "cargo identity changed after flashing"
+                            after.dcas_version == fw.metadata.version.to_string(),
+                            "post-flash DCAS version mismatch"
                         );
-                    }
-                    Ok(())
-                });
-                let verified = verified
-                    .map_err(|e| journal_failure(&mut jnl, "verification-failed", e))
-                    .and_then(|()| {
-                        journaled.context(
-                            "transfer finished and verified, but the flash journal is incomplete",
-                        )
-                    });
-                finish_operation(verified, stop)?;
-                jnl.record("verified", &application)
-                    .context("flash verified, but the flash journal is incomplete")?;
+                        ensure!(
+                            after.rx_version == fw.metadata.compatibility_version.to_string()
+                                || after.rx_version == comp.metadata.version.to_string(),
+                            "post-flash RX version mismatch"
+                        );
+                        if let Some(before) = &before {
+                            ensure!(
+                                before.cargo == after.cargo,
+                                "cargo identity changed after flashing"
+                            );
+                        }
+                        Ok(())
+                    },
+                )?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
@@ -1737,36 +1727,26 @@ fn execute_firmware_command(
                     Ok(after) => after,
                     Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
                 };
-                let serial_check = check_application_serial(&mut s, after.slot, &serial);
-                let stop = s.normal_stop();
-                let application = JournaledApplication {
-                    identity: &after,
-                    serial: serial_check.is_ok().then_some(serial_str),
-                };
-                let journaled =
-                    finished.and_then(|()| jnl.record("application-after", &application));
-                let verified = serial_check.and_then(|()| {
-                    ensure!(
-                        after.cargo == before.cargo
-                            && after.dcas_version == d.metadata.version.to_string(),
-                        "cargo or D version changed after RX update"
-                    );
-                    ensure!(
-                        after.rx_version == fw.metadata.version.to_string(),
-                        "post-flash RX version mismatch"
-                    );
-                    Ok(())
-                });
-                let verified = verified
-                    .map_err(|e| journal_failure(&mut jnl, "verification-failed", e))
-                    .and_then(|()| {
-                        journaled.context(
-                            "transfer finished and verified, but the flash journal is incomplete",
-                        )
-                    });
-                finish_operation(verified, stop)?;
-                jnl.record("verified", &application)
-                    .context("flash verified, but the flash journal is incomplete")?;
+                verify_flashed_application(
+                    &mut s,
+                    &mut jnl,
+                    finished,
+                    &after,
+                    &serial,
+                    serial_str,
+                    || {
+                        ensure!(
+                            after.cargo == before.cargo
+                                && after.dcas_version == d.metadata.version.to_string(),
+                            "cargo or D version changed after RX update"
+                        );
+                        ensure!(
+                            after.rx_version == fw.metadata.version.to_string(),
+                            "post-flash RX version mismatch"
+                        );
+                        Ok(())
+                    },
+                )?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
@@ -2345,7 +2325,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         jnl.record("rx-finish-and-reset", &receipt)?;
         link.application_return()?;
 
-        let (after, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
+        let (after, after_serial) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
         ensure!(
             after.cargo == before.cargo,
             "cargo identity changed after pair operation"
@@ -2373,7 +2353,13 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             crate::settings::decoded_snapshots_equal(&settings_before, &settings_after),
             "settings changed after firmware operation; inspect backup and journal"
         );
-        jnl.record("verified", &after)?;
+        jnl.record(
+            "verified",
+            &JournaledApplication {
+                identity: &after,
+                serial: Some(&after_serial),
+            },
+        )?;
         Ok(serde_json::json!({
             "transport": "ble",
             "write": true,
@@ -3152,7 +3138,12 @@ fn return_after_rx_refusal(
         .normal_stop()
         .context("RX refused before erase; PC-link stop failed")?;
     if let Some(jnl) = jnl {
-        jnl.record("application-after", &after)?;
+        // The restarted application's serial is not read here.
+        let application = JournaledApplication {
+            identity: &after,
+            serial: None,
+        };
+        jnl.record("application-after", &application)?;
     }
     Ok(())
 }
@@ -3540,7 +3531,8 @@ fn print_settings_result(
     Ok(())
 }
 
-/// `firmware inspect` text output; a validated companion adds its integrity.
+/// `firmware inspect` text output; a validated companion adds its integrity
+/// and SHA-256.
 fn firmware_metadata_text(
     meta: &crate::firmware::FirmwareMetadata,
     companion: Option<&crate::firmware::FirmwareMetadata>,
@@ -3569,16 +3561,21 @@ fn firmware_metadata_text(
         format!("  Target Board/Series: {}", board_str),
         format!("  Checksum:            0x{:02X}", meta.checksum),
         format!("  Integrity:           {}", integrity_label(meta)),
+        format!("  Source SHA-256:      {}", meta.source_sha256),
     ];
+    if let Some(out) = decode_to {
+        lines.push(format!("  Decoded Output:      {}", out.display()));
+    }
+    // After the image's own lines, so each hash sits with its file.
     if let Some(companion) = companion {
         lines.push(format!(
             "  Companion Integrity: {}",
             integrity_label(companion)
         ));
-    }
-    lines.push(format!("  Source SHA-256:      {}", meta.source_sha256));
-    if let Some(out) = decode_to {
-        lines.push(format!("  Decoded Output:      {}", out.display()));
+        lines.push(format!(
+            "  Companion SHA-256:   {}",
+            companion.source_sha256
+        ));
     }
     lines.join("\n")
 }
@@ -3627,13 +3624,44 @@ impl Journal {
     }
 }
 
-/// A post-flash application identity as journaled, with the serial it
+/// A returned application identity as journaled, with the serial it
 /// reported in the same session; `None` when that serial was not confirmed.
 #[derive(serde::Serialize)]
 struct JournaledApplication<'a> {
     #[serde(flatten)]
     identity: &'a crate::device::Identity,
     serial: Option<&'a str>,
+}
+
+/// The wired DCAS and RX flashes after the transfer `finished`: check the
+/// returned application's serial, stop its PC-link and journal it as
+/// application-after, then run `checks` and journal verified. Each record
+/// names the serial only once it matched.
+fn verify_flashed_application(
+    session: &mut Session,
+    jnl: &mut Journal,
+    finished: Result<()>,
+    after: &crate::device::Identity,
+    serial: &[u8],
+    serial_str: &str,
+    checks: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let serial_check = check_application_serial(session, after.slot, serial);
+    let stop = session.normal_stop();
+    let application = JournaledApplication {
+        identity: after,
+        serial: serial_check.is_ok().then_some(serial_str),
+    };
+    let journaled = finished.and_then(|()| jnl.record("application-after", &application));
+    let verified = serial_check
+        .and_then(|()| checks())
+        .map_err(|e| journal_failure(jnl, "verification-failed", e))
+        .and_then(|()| {
+            journaled.context("transfer finished and verified, but the flash journal is incomplete")
+        });
+    finish_operation(verified, stop)?;
+    jnl.record("verified", &application)
+        .context("flash verified, but the flash journal is incomplete")
 }
 
 /// Journal a failed step; a journal error must never replace it.
@@ -3972,9 +4000,12 @@ mod cli_tests {
         assert_eq!(pair["companion"]["source_sha256"], "m0");
 
         let text = firmware_metadata_text(&d, Some(&m), None);
+        // Each hash sits with its own file's lines.
         assert!(
-            text.contains(
-                "  Integrity:           MD5-verified container\n  Companion Integrity: none (plaintext"
+            text.ends_with(
+                "  Integrity:           MD5-verified container\n  Source SHA-256:      d0\n  \
+                 Companion Integrity: none (plaintext image; corruption cannot be detected)\n  \
+                 Companion SHA-256:   m0"
             ),
             "{text}"
         );
@@ -4263,39 +4294,80 @@ mod cli_tests {
 
     #[test]
     fn post_flash_journal_stages_record_the_confirmed_serial() {
-        let path = std::env::temp_dir().join(format!(
-            "cranklink-after-{}-{}",
-            std::process::id(),
-            crate::platform::now_ms()
-        ));
+        use crate::device::tests::{frame, scripted_motor};
+        // The flash paths need a live bootloader, so this drives the
+        // post-transfer step both wired flashes share.
         let after = crate::device::Identity {
             slot: 13,
             cargo: "00-CRG".into(),
             dcas_version: "4.2.0.0".into(),
             rx_version: "4.1.11.0".into(),
         };
-        let mut jnl = Journal::new(&path).unwrap();
-        for serial in [Some("010203040506"), None] {
-            let application = JournaledApplication {
-                identity: &after,
-                serial,
-            };
-            jnl.record("verified", &application).unwrap();
-        }
-        drop(jnl);
-        let text = std::fs::read_to_string(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        let data: Vec<serde_json::Value> = text
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["data"].clone())
-            .collect();
+        let run = |live: [u8; 6], checks: fn() -> Result<()>| {
+            let path = std::env::temp_dir().join(format!(
+                "cranklink-after-{}-{}",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let mut reply = vec![0, 1, 0x3e];
+            reply.extend(live);
+            let (mut session, steps) = scripted_motor(
+                13,
+                vec![
+                    (frame(0x48, &[13, 1, 0x3c, 0]), frame(0x48, &reply)),
+                    (
+                        frame(0x48, &[13, 0x32, 0x10, 0, 0, 0, 0]),
+                        frame(0x48, &[0, 0x32, 0x12, 0]),
+                    ),
+                ],
+            );
+            let mut jnl = Journal::new(&path).unwrap();
+            let result = verify_flashed_application(
+                &mut session,
+                &mut jnl,
+                Ok(()),
+                &after,
+                &[1, 2, 3, 4, 5, 6],
+                "010203040506",
+                checks,
+            );
+            // The PC-link is stopped whatever the verdict.
+            assert!(steps.borrow().is_empty());
+            drop(jnl);
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            let stages: Vec<(String, serde_json::Value)> = text
+                .lines()
+                .map(|line| {
+                    let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                    (
+                        record["stage"].as_str().unwrap().into(),
+                        record["data"].clone(),
+                    )
+                })
+                .collect();
+            (result, stages)
+        };
+
+        let (result, stages) = run([1, 2, 3, 4, 5, 6], || Ok(()));
+        result.unwrap();
+        let confirmed = serde_json::json!({"slot": 13, "cargo": "00-CRG",
+            "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0", "serial": "010203040506"});
         assert_eq!(
-            data[0],
-            serde_json::json!({"slot": 13, "cargo": "00-CRG", "dcas_version": "4.2.0.0",
-                "rx_version": "4.1.11.0", "serial": "010203040506"})
+            stages,
+            [
+                ("application-after".into(), confirmed.clone()),
+                ("verified".into(), confirmed)
+            ]
         );
-        // An unconfirmed serial is recorded as such, never as the expected one.
-        assert!(data[1]["serial"].is_null() && data[1]["slot"] == 13);
+
+        // A different motor answered: its identity is journaled, never with
+        // the expected serial, and the checks and verified are never reached.
+        let (result, stages) = run([9, 9, 9, 9, 9, 9], || panic!("checks after a mismatch"));
+        assert!(format!("{:#}", result.unwrap_err()).contains("differs from --expect-serial"));
+        let names: Vec<&str> = stages.iter().map(|(stage, _)| stage.as_str()).collect();
+        assert_eq!(names, ["application-after", "verification-failed"]);
+        assert!(stages[0].1["serial"].is_null() && stages[0].1["slot"] == 13);
     }
 
     #[test]
