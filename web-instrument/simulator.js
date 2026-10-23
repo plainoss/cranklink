@@ -140,7 +140,7 @@ export class DeviceSimulator extends EventTarget {
   _createDefaultRegisters(preset) {
     const regs = {
       speedLimitCentiKmh: 2500, // 0x16 0xb4 read / 0x16 0xb0 write (default 2500 = 25.0 km/h)
-      destinationRegion: 1,     // 0x16 0xac read / 0x16 0xa8 write (default 1 = Europe)
+      destinationRegion: 1,     // 0x16 0xac read / 0x16 0xa8 write (default 1 = 19-32 km/h range)
       tireCircumferenceMm: 2200,// 0x16 0x9c or 0x35 0x04 read / 0x16 0x98 or 0x35 0x00 write
       lampState: 0,             // 0x10 0x14 read / 0x10 0x10 write
       lightOutputWattCenti: 200,// 0x10 0x1c read / 0x10 0x18 write

@@ -151,7 +151,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
     const rule = "=".repeat(80);
     for (const error of [
-      // ble-pair prints no warning of its own once the write has started.
+      // A Bluetooth write that started, even without the CLI's warning.
       "Programming 8192/65536 bytes (12%)\nerror: Bluetooth disconnected\n[exit 1]",
       `Programming 8192/65536 bytes (12%)\n${rule}\nCRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.\n`
         + "DO NOT POWER CYCLE THE MOTOR.\nTo recover, re-run with:\n  cranklink --port webusb -s 010203040506 firmware flash dcas D.dat "

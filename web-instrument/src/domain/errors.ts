@@ -89,9 +89,10 @@ export function userFacingError(error: string, transport: TransportType | null =
 }
 
 /**
- * True when a failure may have left the motor in its bootloader. The wired
- * flash prints its own warning; the Bluetooth ble-pair relay prints none, so
- * there any firmware failure after the write started counts.
+ * True when a failure may have left the motor in its bootloader. The CLI prints
+ * an interrupted-flash warning for wired and ble-pair writes; over Bluetooth,
+ * any firmware failure after the write started also counts, in case the
+ * warning never reached us (e.g. the worker died first).
  */
 function isFlashCritical(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
   return FLASH_INTERRUPTED.test(error)

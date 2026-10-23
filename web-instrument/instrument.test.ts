@@ -1089,7 +1089,7 @@ describe("Concise connection errors", () => {
   });
 
   it("treats a Bluetooth flash that failed after the write started as critical", () => {
-    // ble-pair prints no interrupted-flash warning of its own.
+    // Without the CLI's warning (e.g. the worker died first), a started write still counts.
     const error = "Programming 8192/65536 bytes (12%)\nProgramming 16384/65536 bytes (25%)\nerror: Bluetooth disconnected\n[exit 1]";
     for (const transport of ["ble", "sim"] as const) {
       const failure = describeFailure({ kind: "firmware", error }, transport, []);
