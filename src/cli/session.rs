@@ -138,9 +138,22 @@ pub fn run_session(
     trace_path: Option<PathBuf>,
     expect_serial: Option<String>,
 ) -> Result<()> {
-    let stdin = std::io::stdin();
-    let mut reader = stdin.lock();
-    let mut stdout = std::io::stdout();
+    run_session_io(
+        std::io::stdin().lock(),
+        std::io::stdout(),
+        default_port,
+        trace_path,
+        expect_serial,
+    )
+}
+
+fn run_session_io(
+    mut reader: impl BufRead,
+    mut stdout: impl Write,
+    default_port: Option<String>,
+    trace_path: Option<PathBuf>,
+    expect_serial: Option<String>,
+) -> Result<()> {
     let mut line = Vec::new();
 
     let mut session: Option<crate::device::Session> = None;
@@ -609,5 +622,75 @@ mod tests {
         assert!(out.contains(r#""jsonrpc":"2.0""#));
         assert!(out.contains(r#""connected":true"#));
         assert!(!out.contains(r#""error""#));
+    }
+
+    /// One connection to the modeled SM-PCE02 and EP800-CRG, whose motor
+    /// answers 16/7C outside a PC-link only in the first discovery after an
+    /// adapter reset, as the hardware did.
+    #[cfg(unix)]
+    #[test]
+    fn units_repeat_and_interleave_with_probes_on_one_connection() {
+        use crate::device::tests::ModeledBus;
+        use std::io::Read;
+        use std::os::unix::net::UnixListener;
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-session-units-{}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&path).unwrap();
+        let device = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bus = ModeledBus::default();
+            let mut decoder = crate::protocol::Decoder::default();
+            let mut bytes = [0; 4096];
+            while let Ok(n @ 1..) = stream.read(&mut bytes) {
+                for request in decoder.feed(&bytes[..n]) {
+                    for reply in bus.respond(&request.unwrap()) {
+                        let encoded = crate::protocol::encode(reply.control, &reply.payload);
+                        stream.write_all(&encoded).unwrap();
+                    }
+                }
+            }
+            bus
+        });
+        let port = format!("sim:{}", path.display());
+        let input: String = [
+            json!({"id": 1, "method": "session.connect", "params": {"port": port}}),
+            json!({"id": 2, "method": "units"}),
+            json!({"id": 3, "method": "units"}),
+            json!({"id": 4, "method": "probe"}),
+            json!({"id": 5, "method": "units"}),
+            json!({"id": 6, "method": "probe", "params": {"component": "DU-EP800-CRG"}}),
+            json!({"id": 7, "method": "exit"}),
+        ]
+        .iter()
+        .map(|request| format!("{request}\n"))
+        .collect();
+        let mut output = Vec::new();
+        let result = run_session_io(input.as_bytes(), &mut output, None, None, None);
+        std::fs::remove_file(&path).unwrap();
+        result.unwrap();
+        let responses: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(responses.len(), 8, "{responses:#?}");
+        for (id, response) in responses.iter().enumerate().skip(1) {
+            assert_eq!(response["id"], id, "{response}");
+            assert!(response.get("error").is_none(), "{response}");
+        }
+        for id in [2, 3, 5] {
+            assert_eq!(responses[id]["result"]["units"][0]["slot"], 13);
+            assert_eq!(responses[id]["result"]["units"][0]["model"], "DU-EP800-CRG");
+        }
+        for id in [4, 6] {
+            assert_eq!(responses[id]["result"]["serial"], "010203040506");
+        }
+        // `exit` closed the connection, which ends the device thread.
+        let bus = device.join().unwrap();
+        // Connect, then the repeated inventories and the named probe.
+        assert_eq!(bus.resets, 4);
+        assert_eq!(bus.unanswered_attribute_reads, 0);
     }
 }
