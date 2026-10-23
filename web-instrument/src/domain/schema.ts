@@ -39,21 +39,6 @@ export function clampSettingValue(setting: EnrichedSetting, value: number): numb
   return Math.min(setting.userMax, Math.max(setting.userMin, snapped));
 }
 
-const LEGACY_DESTINATION_LABELS: Record<number, string> = {
-  0: "Region 0 (25 km/h)",
-  1: "Region 1 / US Class 1 (32 km/h)",
-  3: "Europe / Restricted (25 km/h)",
-  4: "Australia / 25 km/h",
-};
-
-const MODERN_DESTINATION_LABELS: Record<number, string> = {
-  0: "Standard (25 km/h)",
-  1: "US Class 1 (32 km/h)",
-  2: "Japan (24 km/h)",
-  3: "Europe (25 km/h)",
-  5: "US Class 3 (45 km/h)",
-};
-
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
   const modern = isModernModel(model);
@@ -454,10 +439,12 @@ function enrichSetting(
   }
 
   if (spec.name === "destination") {
-    choiceLabels =
-      isModernModel(modelSlug)
-        ? MODERN_DESTINATION_LABELS
-        : LEGACY_DESTINATION_LABELS;
+    // Labelled by the speed range the core enforces, as the CLI prints them:
+    // the vendor region names are unverified.
+    choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
+      const range = destinationSpeedRange(modelSlug, choice);
+      return range ? [[choice, `${choice} (${range.min}–${range.max} km/h)`]] : [];
+    }));
   }
 
   if (!choiceLabels && (spec.unit === "bool" || (spec.min_raw === 0 && spec.max_raw === 1 && spec.step_raw === 1 && spec.value_type === "number" && !spec.name.includes("display")))) {

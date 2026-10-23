@@ -186,6 +186,27 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("restore-staged-hint")).toHaveCount(0);
   });
 
+  test("region and speed controls show what the core enforces", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // EP800 destinations are 0, 1, 3 and 4, labelled by their speed range.
+    await page.getByTestId("param-row-destination").getByRole("button", { name: /Market Region/ }).click();
+    await expect(page.getByRole("option")).toHaveText(["0 (15–25 km/h)", "1 (19–32 km/h)", "3 (15–25 km/h)", "4 (15–25 km/h)"]);
+    await page.keyboard.press("Escape");
+
+    // Another tool left the speed above the 15-32 km/h cranklink writes.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const { liveValues } = controller.getState();
+      controller.update({ liveValues: { ...liveValues, "speed-limit": { value: 35, raw: "" } } });
+    });
+    const speed = page.getByTestId("param-row-speed-limit");
+    await expect(speed).toContainText("Live: 35 km/h");
+    await expect(speed.getByTestId("slider-outside-speed-limit")).toHaveText(
+      "The current value, 35 km/h, is outside the range cranklink can write (15 km/h to 32 km/h), so the slider stops at 32 km/h.");
+  });
+
   test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();
