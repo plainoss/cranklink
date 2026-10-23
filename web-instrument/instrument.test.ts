@@ -1258,6 +1258,35 @@ describe("Disconnect cleanup reporting", () => {
     assertCleared(controller);
     assert.equal(controller.getState().failure, null);
     assert.equal(controller.getState().statusMessage, "Disconnected.");
+    assert.equal(controller.getState().bluetoothDisconnectNotice, true);
+    controller.dismissBluetoothDisconnectNotice();
+    assert.equal(controller.getState().bluetoothDisconnectNotice, false);
+  });
+
+  it("keeps disconnect progress visible and prevents another connection while cleanup is pending", async () => {
+    let finish!: () => void;
+    let calls = 0;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const controller = connected(async () => { calls++; await pending; return { code: 0 }; });
+    const cleanup = controller.disconnect();
+    assert.equal(controller.getState().phase, "disconnecting");
+    assert.equal(controller.getState().transport, "ble");
+    assert.equal(controller.getState().bluetoothDisconnectNotice, false);
+    await controller.disconnect();
+    assert.equal(calls, 1);
+    await assert.rejects(controller.connectAndSync("ble"), /Wait for disconnect/);
+    finish();
+    await cleanup;
+    assertCleared(controller);
+    assert.equal(controller.getState().bluetoothDisconnectNotice, true);
+  });
+
+  it("does not show Bluetooth recovery guidance for a USB disconnect", async () => {
+    const controller = connected(async () => ({ code: 0 }));
+    (controller as any).update({ transport: "usb" });
+    await controller.disconnect();
+    assertCleared(controller);
+    assert.equal(controller.getState().bluetoothDisconnectNotice, false);
   });
 });
 

@@ -24,6 +24,8 @@ The core compiled to WebAssembly; all protocol work runs in the browser. Require
 - **SM-PCE02** over WebUSB or Web Serial. On Android, use WebUSB. Firmware recovery also needs an SM-PCE02, but runs only in the [CLI](#recover-a-motor-stuck-in-bootloader-mode): the web app cannot reach a motor stuck in its bootloader.
 - **Bluetooth**, via the bike's E-TUBE gateway (e.g. SC-EM800 or EW-WU111). Activate its connection mode before connecting and close other apps connected to the bike. The app includes model-specific pairing help: Di2 uses the appropriate function/Junction A button, while most STEPS displays open a short window after power-on or a button press. See [Bluetooth connection instructions](docs/bluetooth.md#connection-mode).
 
+When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
+
 After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.

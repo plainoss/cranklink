@@ -198,6 +198,7 @@ export interface Toast {
 
 export type SessionPhase =
   | "disconnected"
+  | "disconnecting"
   | "connecting"
   | "probing"
   | "reading"
@@ -208,6 +209,8 @@ export type SessionPhase =
 
 export interface InstrumentState {
   phase: SessionPhase;
+  /** Link closure cannot confirm that the bike has returned to riding mode. */
+  bluetoothDisconnectNotice: boolean;
   statusMessage: string;
   failure: OperationFailure | null;
   /** The transport link closed after a failure; reconnect before more commands. */

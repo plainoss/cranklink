@@ -37,6 +37,8 @@ Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware
 
 The browser retains its normal/slave service session between commands without stopping the logical master. Final Disconnect closes GATT. Changing routing roles on an active retained session requires disconnect/reconnect. Explicit master-routing sessions keep their acknowledged component stop and routing-restoration sequence.
 
+The web app keeps **Disconnect** visible in its top bar, including on phones. It shows progress while closing the link, then a completion screen explaining that the bike may need a few seconds to return to riding mode. The browser cannot observe that physical transition; the completion screen stays until you choose **Back to connection screen**. A failed cleanup remains an error rather than showing successful Bluetooth closure.
+
 Read and write errors still fail the operation; closing the link never converts an error into a successful read or write. A failed command is not retried. Link closure and normal physical operation are distinct observations: confirm shifting, display and controls when validating a new gateway. See the [Di2 BLE investigation](di2-ble-investigation.md) for the successful physical checks, rejected experiments and simulator limits.
 
 In the web app choose **Di2 shifting only (no STEPS motor)** or **STEPS e-bike** based on whether the bike has a STEPS motor. STEPS e-bikes can also use Di2 components. This keeps a shifting-only session in ordinary routing while preserving the existing STEPS master-routing workflow for protected motor settings.
