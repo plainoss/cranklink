@@ -208,9 +208,19 @@ pub struct Session {
     target_slot: Option<u8>,
     adapter_supply: bool,
     unit_auth_attempted: bool,
-    /// Discovery has run since the last completed `initialize`. A later
-    /// inventory must start from a freshly initialized adapter again.
-    discovered_since_initialize: bool,
+    discovery: DiscoveryState,
+}
+/// Where the next discovery starts relative to the last adapter
+/// initialization; see `reinitialize_for_unlinked_identity`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscoveryState {
+    /// No discovery since the last completed `initialize` (or since opening).
+    Fresh,
+    /// Discovery has run since the last completed `initialize`.
+    Repeated,
+    /// An adapter reset was requested and `initialize` has not completed since,
+    /// so the adapter's power and protocol state are unknown.
+    ResetIncomplete,
 }
 impl Session {
     /// Continue the same exclusive USB connection after the bounded bridge
@@ -229,7 +239,7 @@ impl Session {
             target_slot: Some(31),
             adapter_supply: true,
             unit_auth_attempted: false,
-            discovered_since_initialize: false,
+            discovery: DiscoveryState::Fresh,
         }
     }
     pub fn open(port: &str, trace: Option<&Path>) -> Result<Self> {
@@ -249,7 +259,7 @@ impl Session {
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
-            discovered_since_initialize: false,
+            discovery: DiscoveryState::Fresh,
         })
     }
     fn log(&mut self, direction: &str, bytes: &[u8]) -> Result<()> {
@@ -365,9 +375,12 @@ impl Session {
     /// The reset, charging, protocol-change and PnP sleeps in this session are
     /// Cranklink's pacing policies, not measured minimum E-TUBE bus timings.
     pub fn initialize(&mut self) -> Result<PowerInfo> {
-        self.ack(0x10, &[], 0x30)?;
-        // Routed traffic after a reset must select its target again.
+        // Until this completes, the adapter can be reset without its power
+        // setup, so discovery is refused. Routed traffic after a reset must
+        // select its target again.
+        self.discovery = DiscoveryState::ResetIncomplete;
         self.target_slot = None;
+        self.ack(0x10, &[], 0x30)?;
         sleep(Duration::from_secs(3));
         let p = self.adapter(0x1a, &[1], 0x3a)?;
         ensure!(
@@ -418,7 +431,7 @@ impl Session {
             _ => bail!("unknown adapter power state {state}"),
         }
         sleep(Duration::from_secs(1));
-        self.discovered_since_initialize = false;
+        self.discovery = DiscoveryState::Fresh;
         Ok(PowerInfo {
             adapter_supply: self.adapter_supply,
             raw_state: state,
@@ -484,9 +497,19 @@ impl Session {
         }
         Ok(())
     }
+    /// A failed `initialize` can leave the adapter reset without its power
+    /// setup. Discovery and PC-link start wait until one completes.
+    fn require_complete_initialization(&self) -> Result<()> {
+        ensure!(
+            self.discovery != DiscoveryState::ResetIncomplete,
+            "SM-PCE02 initialization did not complete after its reset; initialize the adapter again or reconnect before discovery"
+        );
+        Ok(())
+    }
     pub fn discover(&mut self) -> Result<Vec<u8>> {
         self.require_no_pc_link()?;
-        self.discovered_since_initialize = true;
+        self.require_complete_initialization()?;
+        self.discovery = DiscoveryState::Repeated;
         self.set_protocol(0)?;
         let p = self.adapter(0x1d, &[0], 0x3d)?;
         ensure!(p.starts_with(&[0, 0]), "PnP rejected");
@@ -501,12 +524,14 @@ impl Session {
     /// answered in the first discovery after `initialize`, but not in a later
     /// one on the same connection, while stock identity and a PC-linked 16/7C
     /// still answered. Part queries take the same unlinked path. When discovery
-    /// has already run since the last initialization, initialize again first,
-    /// never while a PC-link is active, so the next discovery starts from the
-    /// same reset, power and protocol sequence as the first.
+    /// has already run since the last initialization, or an initialization
+    /// failed, initialize again first, never while a PC-link is active, so the
+    /// next discovery starts from the same reset, power and protocol sequence
+    /// as the first. A failure here leaves discovery refused until a later
+    /// initialization completes.
     fn reinitialize_for_unlinked_identity(&mut self) -> Result<()> {
         self.require_no_pc_link()?;
-        if self.discovered_since_initialize {
+        if self.discovery != DiscoveryState::Fresh {
             self.initialize()?;
         }
         Ok(())
@@ -631,6 +656,7 @@ impl Session {
         allow_component: bool,
     ) -> Result<Identity> {
         self.require_no_pc_link()?;
+        self.require_complete_initialization()?;
         self.target(slot)?;
         let mut unit = UnitIdentity::from_reply(slot, self.model_identity(slot)?)?;
         unit.prepare_session(self, allow_component)?;
@@ -1202,7 +1228,7 @@ pub(crate) mod tests {
             target_slot: None,
             adapter_supply: false,
             unit_auth_attempted: false,
-            discovered_since_initialize: false,
+            discovery: DiscoveryState::Fresh,
         }
     }
     /// A session over a port that asserts each request and answers it in order.
@@ -1238,11 +1264,15 @@ pub(crate) mod tests {
         linked: bool,
         pub(crate) resets: u32,
         pub(crate) unanswered_attribute_reads: u32,
+        /// Reject this many power unlocks after their reset.
+        pub(crate) rejected_power_unlocks: u32,
+        pub(crate) requests: u32,
     }
     impl ModeledBus {
         pub(crate) const MOTOR: u8 = 13;
         pub(crate) fn respond(&mut self, request: &Frame) -> Vec<Frame> {
             let reply = |control: u8, payload: &[u8]| vec![frame(control, payload)];
+            self.requests += 1;
             match (request.control, request.payload.as_slice()) {
                 (0x10, []) => {
                     assert!(!self.linked, "adapter reset during an active PC-link");
@@ -1251,6 +1281,10 @@ pub(crate) mod tests {
                     self.target = None;
                     self.discoveries_since_reset = 0;
                     reply(0x30, &[0])
+                }
+                (0x1a, [1]) if self.rejected_power_unlocks > 0 => {
+                    self.rejected_power_unlocks -= 1;
+                    reply(0x3a, &[1, 1])
                 }
                 (0x1a, [1]) => reply(0x3a, &[1, 0]),
                 (0x1a, [2]) => reply(0x3a, &[2, 1]),
@@ -1444,6 +1478,30 @@ pub(crate) mod tests {
         session.normal_stop().unwrap();
         assert_eq!(bus.borrow().resets, 4);
         assert_eq!(bus.borrow().unanswered_attribute_reads, 0);
+    }
+    #[test]
+    fn failed_reinitialization_refuses_discovery_until_one_completes() {
+        let (mut session, bus) = modeled();
+        session.initialize().unwrap();
+        session.units().unwrap();
+        // The repeated inventory resets the adapter, then its power setup fails.
+        bus.borrow_mut().rejected_power_unlocks = 1;
+        let error = session.units().unwrap_err().to_string();
+        assert!(error.contains("power unlock rejected"), "{error}");
+        assert_eq!(bus.borrow().resets, 2);
+        // A default probe, which does not initialize, must not discover or
+        // start a PC-link on the half-initialized adapter.
+        let requests = bus.borrow().requests;
+        let error = session.probe(None).unwrap_err().to_string();
+        assert!(error.contains("did not complete"), "{error}");
+        assert_eq!(bus.borrow().requests, requests);
+        // An inventory initializes again; then probes work as before.
+        let units = session.units().unwrap();
+        assert_eq!(units[0].model, Some("DU-EP800-CRG"));
+        assert_eq!(bus.borrow().resets, 3);
+        session.probe(None).unwrap();
+        session.normal_stop().unwrap();
+        assert_eq!(bus.borrow().resets, 3);
     }
     #[cfg(target_os = "linux")]
     #[test]

@@ -44,7 +44,7 @@ Each request is one line holding a JSON object with a string `method`, optional 
 - `units` runs discovery and reads each slot's identity without starting a PC-link. It needs an open connection, from `session.connect` or an earlier `probe`. If the connection has already run discovery (an earlier `units` or `probe`), `units` first resets and initializes the adapter again, as `session.connect` does, so it adds the same waits, about 5 s, or up to 90 s when the adapter needs charging. Without this, a tested EP800-CRG left its model read unanswered in a second inventory on one connection.
 - `settings.schema` and `firmware.inspect` work offline, with or without a connection. A `companion` is checked against `file` first, and a mismatch is an error. Paths are relative to the session's working directory.
 
-If a PC-link stop is not acknowledged, the connection refuses further discovery and probes until `session.connect` reopens the port.
+If a PC-link stop is not acknowledged, the connection refuses further discovery and probes until `session.connect` reopens the port. If the adapter re-initialization before a repeated `units` or a `probe` with a selector fails, a later `units`, a `probe` with a selector or `session.connect` initializes the adapter again, and a `probe` without one is refused until an initialization completes.
 
 ## Errors
 

@@ -167,10 +167,11 @@ does not start a motor PC-link session, so its `16/7C` model read is unlinked.
 On a tested DU-EP800-CRG, that read went unanswered in a second inventory on
 the same connection, although stock identity still answered and the same read
 inside a PC-link worked. A repeated wired inventory therefore resets and
-initializes the adapter again first, so it starts from the state of the first;
-which earlier step withholds the reply has not been established. Bluetooth
-discovery can also require gateway setup and role changes, so its traffic is
-not identical to the wired inventory.
+initializes the adapter again first, so it starts from the state of the first.
+Which earlier step stops the reply, and whether the motor withholds it or
+addresses it elsewhere, has not been established. Bluetooth discovery can also
+require gateway setup and role changes, so its traffic is not identical to the
+wired inventory.
 
 Default `probe`, motor settings and motor firmware paths require a recognized
 drive unit. Explicit `--component` or slot selection also permits probes and
