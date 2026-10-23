@@ -967,6 +967,37 @@ fn integrity_label(meta: &crate::firmware::FirmwareMetadata) -> &'static str {
     }
 }
 
+/// `firmware inspect --json`: the image's metadata with its integrity, and
+/// the same under `companion` for a companion validated against it.
+#[derive(serde::Serialize)]
+struct InspectedImage<'a> {
+    #[serde(flatten)]
+    metadata: &'a crate::firmware::FirmwareMetadata,
+    /// `integrity_label` as `md5-verified-container` or `none`.
+    integrity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    companion: Option<Box<InspectedImage<'a>>>,
+}
+
+fn inspect_json<'a>(
+    meta: &'a crate::firmware::FirmwareMetadata,
+    companion: Option<&'a crate::firmware::FirmwareMetadata>,
+) -> InspectedImage<'a> {
+    let image = |metadata: &'a crate::firmware::FirmwareMetadata| InspectedImage {
+        metadata,
+        integrity: if metadata.encrypted {
+            "md5-verified-container"
+        } else {
+            "none"
+        },
+        companion: None,
+    };
+    InspectedImage {
+        companion: companion.map(|companion| Box::new(image(companion))),
+        ..image(meta)
+    }
+}
+
 fn execute_firmware_command(
     port: Option<&str>,
     trace: Option<&std::path::Path>,
@@ -1018,8 +1049,9 @@ fn execute_firmware_command(
             decode_to,
         } => {
             let fw = Firmware::load(file)?;
-            if let Some(c) = companion {
-                fw.validate_companion(&Firmware::load(c)?)?;
+            let companion = companion.map(Firmware::load).transpose()?;
+            if let Some(c) = &companion {
+                fw.validate_companion(c)?;
             }
             if let Some(out) = &decode_to {
                 use std::io::Write;
@@ -1033,10 +1065,17 @@ fn execute_firmware_command(
                 f.write_all(&fw.data)?;
                 f.sync_all()?;
             }
+            let companion = companion.as_ref().map(|c| &c.metadata);
             if is_json {
-                out_println!("{}", serde_json::to_string_pretty(&fw.metadata)?);
+                out_println!(
+                    "{}",
+                    serde_json::to_string_pretty(&inspect_json(&fw.metadata, companion))?
+                );
             } else {
-                print_firmware_metadata(&fw.metadata, decode_to.as_deref());
+                out_println!(
+                    "{}",
+                    firmware_metadata_text(&fw.metadata, companion, decode_to.as_deref())
+                );
             }
             Ok(())
         }
@@ -3501,10 +3540,12 @@ fn print_settings_result(
     Ok(())
 }
 
-fn print_firmware_metadata(
+/// `firmware inspect` text output; a validated companion adds its integrity.
+fn firmware_metadata_text(
     meta: &crate::firmware::FirmwareMetadata,
+    companion: Option<&crate::firmware::FirmwareMetadata>,
     decode_to: Option<&std::path::Path>,
-) {
+) -> String {
     let kind_str = match meta.kind {
         FirmwareKind::DcasX => "DCASX",
         FirmwareKind::Dcas2i => "DCAS2i",
@@ -3518,20 +3559,28 @@ fn print_firmware_metadata(
         ),
         None => format!("Series 0x{:02X}, Unit 0x{:02X}", meta.series, meta.unit),
     };
-    out_println!("Firmware Image Metadata:");
-    out_println!("  Kind:                {}", kind_str);
-    out_println!(
-        "  Version:             v{} (Compatibility: v{})",
-        meta.version,
-        meta.compatibility_version
-    );
-    out_println!("  Target Board/Series: {}", board_str);
-    out_println!("  Checksum:            0x{:02X}", meta.checksum);
-    out_println!("  Integrity:           {}", integrity_label(meta));
-    out_println!("  Source SHA-256:      {}", meta.source_sha256);
-    if let Some(out) = decode_to {
-        out_println!("  Decoded Output:      {}", out.display());
+    let mut lines = vec![
+        "Firmware Image Metadata:".to_owned(),
+        format!("  Kind:                {}", kind_str),
+        format!(
+            "  Version:             v{} (Compatibility: v{})",
+            meta.version, meta.compatibility_version
+        ),
+        format!("  Target Board/Series: {}", board_str),
+        format!("  Checksum:            0x{:02X}", meta.checksum),
+        format!("  Integrity:           {}", integrity_label(meta)),
+    ];
+    if let Some(companion) = companion {
+        lines.push(format!(
+            "  Companion Integrity: {}",
+            integrity_label(companion)
+        ));
     }
+    lines.push(format!("  Source SHA-256:      {}", meta.source_sha256));
+    if let Some(out) = decode_to {
+        lines.push(format!("  Decoded Output:      {}", out.display()));
+    }
+    lines.join("\n")
 }
 
 fn print_adapter_status(power: &crate::device::PowerInfo) {
@@ -3888,6 +3937,48 @@ mod cli_tests {
             "{error:#}"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_reports_the_integrity_of_the_image_and_its_companion() {
+        let meta = |kind, encrypted, sha: &str| crate::firmware::FirmwareMetadata {
+            kind,
+            version: Version([4, 2, 0, 0]),
+            compatibility_version: Version([4, 1, 11, 0]),
+            series: 0x23,
+            unit: 0,
+            board: Some(1),
+            encrypted,
+            source_bytes: 128,
+            decoded_bytes: 128,
+            source_sha256: sha.into(),
+            decoded_sha256: sha.into(),
+            checksum: 0,
+        };
+        let d = meta(FirmwareKind::DcasX, true, "d0");
+        let m = meta(FirmwareKind::Renesas, false, "m0");
+
+        let alone = serde_json::to_value(inspect_json(&d, None)).unwrap();
+        assert_eq!(alone["integrity"], "md5-verified-container");
+        // Existing metadata fields stay at the top level.
+        assert_eq!(
+            (&alone["kind"], &alone["source_sha256"]),
+            (&"dcas-x".into(), &"d0".into())
+        );
+        assert!(alone.get("companion").is_none());
+        let pair = serde_json::to_value(inspect_json(&d, Some(&m))).unwrap();
+        assert_eq!(pair["integrity"], "md5-verified-container");
+        assert_eq!(pair["companion"]["integrity"], "none");
+        assert_eq!(pair["companion"]["source_sha256"], "m0");
+
+        let text = firmware_metadata_text(&d, Some(&m), None);
+        assert!(
+            text.contains(
+                "  Integrity:           MD5-verified container\n  Companion Integrity: none (plaintext"
+            ),
+            "{text}"
+        );
+        assert!(!firmware_metadata_text(&d, None, None).contains("Companion"));
     }
 
     #[test]

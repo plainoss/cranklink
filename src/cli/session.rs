@@ -496,13 +496,14 @@ fn run_session_io(
                 match file_str {
                     Some(f) => match crate::firmware::Firmware::load(Path::new(f)) {
                         Ok(fw) => {
+                            let mut companion = None;
                             if let Some(comp_str) =
                                 req.params.get("companion").and_then(Value::as_str)
                             {
                                 match crate::firmware::Firmware::load(Path::new(comp_str))
-                                    .and_then(|comp| fw.validate_companion(&comp))
+                                    .and_then(|comp| fw.validate_companion(&comp).map(|()| comp))
                                 {
-                                    Ok(()) => {}
+                                    Ok(comp) => companion = Some(comp),
                                     Err(e) => {
                                         let err_resp = JsonRpcResponse {
                                             jsonrpc: "2.0",
@@ -516,11 +517,16 @@ fn run_session_io(
                                     }
                                 }
                             }
+                            let companion = companion.as_ref().map(|c| &c.metadata);
                             JsonRpcResponse {
                                 jsonrpc: "2.0",
                                 id,
                                 result: Some(
-                                    serde_json::to_value(&fw.metadata).unwrap_or_default(),
+                                    serde_json::to_value(super::inspect_json(
+                                        &fw.metadata,
+                                        companion,
+                                    ))
+                                    .unwrap_or_default(),
                                 ),
                                 error: None,
                             }

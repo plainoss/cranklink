@@ -34,7 +34,7 @@ Each request is one line holding a JSON object with a string `method`, optional 
 | `probe` | `slot` (integer 0–31), `component` (model name); both optional | `{"slot", "cargo", "dcas_version", "rx_version", "serial", "model_series", "model_unit"}` |
 | `units` | none | `{"units": [...]}`: stock identity and resolved model per slot |
 | `settings.schema` | `model` (default `ep800-crg`), `name` (optional) | All of the model's setting specs, or the one named (case-insensitive) |
-| `firmware.inspect` | `file` (required), `companion` (optional) | The container's metadata: kind, versions, series/unit, board, sizes, SHA-256s, checksum |
+| `firmware.inspect` | `file` (required), `companion` (optional) | The container's metadata: kind, versions, series/unit, board, sizes, SHA-256s, checksum and `integrity` (`md5-verified-container` or `none`), as `firmware inspect --json` prints it; with `companion`, the same for it under `companion` |
 | `exit` (`quit`) | none | `{"exited": true}` |
 
 - `session.connect` stops and closes any open connection, then opens and initializes the adapter, waiting up to 90 s if it needs charging. A `port` given here is kept for later calls, even if opening it fails. An invalid `expect_serial` is an `INVALID_PARAMS` error and changes nothing; a valid one replaces the serial from `-s`. Non-string values of either are ignored.
