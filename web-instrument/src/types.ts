@@ -3,7 +3,7 @@
  */
 
 export type TransportType = "usb" | "serial" | "ble" | "sim";
-export type BluetoothBike = "steps" | "di2";
+export type BluetoothBike = "auto" | "steps" | "di2";
 
 export type SimulatedModel = "ep800-crg" | "ep600" | "ep801";
 export type MotorModel = SimulatedModel | "ep500" | "e5100" | "e8000" | "e7000" | "e6100" | "e6000" | "e6001" | "e6002-pre33" | "e6002";
@@ -219,6 +219,10 @@ export interface InstrumentState {
   transport: TransportType | null;
   simulatorOptions: SimulatorOptions;
   bluetoothBike: BluetoothBike;
+  bluetoothSystem: "steps" | "di2" | null;
+  bluetoothSystemSource: "detected" | "manual" | null;
+  bluetoothMasterSeries: number | null;
+  bluetoothSystemPrompt: string | null;
   identity: DeviceIdentity | null;
   units: ComponentUnit[];
   schema: EnrichedSetting[];

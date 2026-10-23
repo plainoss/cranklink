@@ -611,6 +611,7 @@ describe("BLE initial settings connection", () => {
   it("loads verified identity and parameters from one read, preserving unavailable fields", async () => {
     (globalThis as any).window = globalThis;
     const controller = new SessionController();
+    controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
     const commands: string[] = [];
     controller.attachTerminal(terminalFor({
       identity: { slot: 0, cargo: "00-CRG", serial: "010203040506", model_series: 0x23, model_unit: 0, dcas_version: "4.1.11.0", rx_version: "4.1.11.0" },
@@ -631,6 +632,7 @@ describe("BLE initial settings connection", () => {
   it("refuses settings responses without a verified serial and does not reconnect", async () => {
     (globalThis as any).window = globalThis;
     const controller = new SessionController();
+    controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
     const commands: string[] = [];
     controller.attachTerminal(terminalFor({ identity: { serial: null, model_series: 0x23 }, values: {} }, commands));
     assert.equal(await controller.connectAndSync("ble"), null);
@@ -650,6 +652,7 @@ describe("BLE initial settings connection", () => {
       [0x37, "00", "ep500", "DU-EP500"],
     ] as const) {
       const controller = new SessionController();
+    controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
       const commands: string[] = [];
       controller.attachTerminal(terminalFor({
         identity: { slot: 13, cargo, serial: "010203040506", model_series: series, model_unit: 0, dcas_version: "4.7.1.0", rx_version: "4.7.1.0" },
@@ -669,6 +672,7 @@ describe("BLE initial settings connection", () => {
     (globalThis as any).window = globalThis;
     for (const [transport, prefix, auth] of [["usb", "", ""], ["serial", "", ""], ["ble", "--ble-master=master ", "--ble-unit-auth "]] as const) {
       const controller = new SessionController();
+    controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
       const reads: string[] = [];
       controller.attachTerminal({
         setPasskeyPrompt: () => {},
@@ -712,6 +716,7 @@ describe("BLE initial settings connection", () => {
       [0x08, "e6000", "E6000 family", 3],
     ] as const) {
       const controller = new SessionController();
+    controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
       const commands: string[] = [];
       controller.attachTerminal(terminalFor({
         identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },

@@ -21,6 +21,7 @@ Release at the indicated signal; holding longer can select another mode. Classic
 ```sh
 cranklink ble scan
 cranklink --port 'ble:DEVICE_ID' ble test-link
+cranklink --port 'ble:DEVICE_ID' --read-only ble detect-system
 cranklink --port 'ble:DEVICE_ID' units --stock-only
 cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.json
 ```
@@ -41,7 +42,21 @@ The web app keeps **Disconnect** visible in its top bar, including on phones. It
 
 Read and write errors still fail the operation; closing the link never converts an error into a successful read or write. A failed command is not retried. Link closure and normal physical operation are distinct observations: confirm shifting, display and controls when validating a new gateway. See the [Di2 BLE investigation](di2-ble-investigation.md) for the successful physical checks, rejected experiments and simulator limits.
 
-In the web app choose **Di2 shifting only (no STEPS motor)** or **STEPS e-bike** based on whether the bike has a STEPS motor. STEPS e-bikes can also use Di2 components. This keeps a shifting-only session in ordinary routing while preserving the existing STEPS master-routing workflow for protected motor settings.
+The web app detects supported master families before starting service, keeping the original GATT connection. It queries gateway master metadata (`00 0d 00`) after normal/slave authentication, before PC-link (`00 0c 01`). Supported STEPS families select the existing master-routing workflow; BM-DN100/BT-DN110/BT-DN300 master families select ordinary routing. Di2 components on a STEPS bike do not change that decision.
+
+A complete reply with valid battery status but an unknown family opens a choice **before service**, retaining Bluetooth. Historical STEPS families and third-party adapters do not silently become shifting-only bikes. Truncated metadata, invalid battery status and query timeouts fail and close the connection; timeout poison is never cleared to permit a fallback. Under **Bluetooth options**, a manual override can bypass detection on a new connection if the gateway cannot answer. A detected family must agree with later inventory, and a selected motor's stock identity is checked before its settings session starts. Native `ble detect-system` reports the master family and `service_started: false`, then closes; ordinary native routing defaults are unchanged.
+
+### Validate automatic detection on a phone
+
+The pre-service metadata handler has offline firmware coverage and vendor bytecode establishes the ordering. Explicit pre-service queries still need physical validation. Use the PR preview for testing; do not use the production URL until that change is merged and deployed.
+
+1. Close E-TUBE and any other app connected to the bike. Open the preview in Chrome on Android or Bluefy on iPhone. Leave **Bluetooth options → Bike system override** at **Detect automatically**.
+2. On the shifting-only bike, enable Bluetooth and connect once. Expect **Di2 shifting only detected** above the settings. Read one component's settings without saving anything.
+3. Press **Disconnect**, wait for normal shifting and junction-button response, and note whether another power cycle was needed.
+4. On the STEPS bike, enable its power-on Bluetooth window and connect once. Expect **STEPS detected**, including when Di2 shifting components are installed. Inventory and a settings read should succeed within that same connection, without another chooser or power cycle.
+5. Press **Disconnect** and confirm the display, controls and shifting return to normal. Record which bike was tested, the detected label, any error text, and whether recovery needed a power cycle.
+
+If a choice appears rather than a detected label, automatic identification was inconclusive: the manual choice tests only fallback. If a query fails, report the error before retrying with a manual override on a newly enabled connection. These checks cover inventory and reads; they do not validate settings writes or firmware updates.
 
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
 

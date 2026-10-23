@@ -30,6 +30,7 @@ import { FailureBanner } from "./components/FailureBanner.tsx";
 import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
 import { PasskeyDialog } from "./components/ui/PasskeyDialog.tsx";
+import { BluetoothSystemDialog } from "./components/ui/BluetoothSystemDialog.tsx";
 import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
 import { OptionSelect } from "./components/ui/OptionSelect.tsx";
 
@@ -245,6 +246,7 @@ export function App({ controller }: AppProps) {
         {approvalBanner}
         <OperationModal state={state} />
         <PasskeyDialog state={state} controller={controller} />
+        <BluetoothSystemDialog state={state} controller={controller} />
         {riskWarning}
         <Toast.Provider />
       </>
@@ -443,7 +445,10 @@ export function App({ controller }: AppProps) {
             </div>
           </div>
           {state.transport === "ble" && (
-            <p className="px-4 sm:px-8 pb-2 text-xs text-muted">Disconnect when finished so the bike can return to riding mode.</p>
+            <p className="px-4 sm:px-8 pb-2 text-xs text-muted" data-testid="bluetooth-routing-status">
+              {state.bluetoothSystem ? `${state.bluetoothSystem === "steps" ? "STEPS" : "Di2 shifting only"} ${state.bluetoothSystemSource === "detected" ? "detected" : "selected manually"}. ` : ""}
+              Disconnect when finished so the bike can return to riding mode.
+            </p>
           )}
           {!isDesktop && showSearchInput && (
             <div className="px-4 pb-3 flex items-center gap-2">
@@ -527,6 +532,7 @@ export function App({ controller }: AppProps) {
       {approvalBanner}
       <OperationModal state={state} />
       <PasskeyDialog state={state} controller={controller} />
+      <BluetoothSystemDialog state={state} controller={controller} />
       {riskWarning}
       <Toast.Provider />
     </div>
