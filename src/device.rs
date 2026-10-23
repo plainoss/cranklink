@@ -20,6 +20,23 @@ use std::{
     path::Path,
     time::Duration,
 };
+/// Discoveries `Session::await_application` runs before it gives up.
+pub const APPLICATION_RETURN_DISCOVERIES: u32 = 4;
+/// One discovery: the 1 s protocol confirmation, then the 5 s PnP settle.
+const DISCOVERY_SECONDS: u32 = 6;
+/// The motor slot that answered after a reset, and the discoveries it took.
+#[derive(Debug, Serialize, Clone, Copy)]
+pub struct AwaitedApplication {
+    pub slot: u8,
+    pub discoveries: u32,
+}
+/// An application PC-link started after a bootloader reset.
+#[derive(Debug, Serialize, Clone)]
+pub struct ReturnedApplication {
+    #[serde(flatten)]
+    pub identity: Identity,
+    pub discoveries: u32,
+}
 #[derive(Debug, Serialize)]
 pub struct PowerInfo {
     pub adapter_supply: bool,
@@ -625,6 +642,61 @@ impl Session {
     pub fn normal_start_for_rx_recovery(&mut self, slot: Option<u8>) -> Result<Identity> {
         self.normal_start_inner(slot, false, None, false)
     }
+    /// `normal_start` after an acknowledged bootloader reset, once
+    /// `await_application` finds the motor.
+    pub fn normal_start_after_reset(&mut self, slot: Option<u8>) -> Result<ReturnedApplication> {
+        self.start_after_reset(slot, true)
+    }
+    /// `normal_start_for_rx_recovery` after an acknowledged bootloader reset.
+    pub fn normal_start_for_rx_recovery_after_reset(
+        &mut self,
+        slot: Option<u8>,
+    ) -> Result<ReturnedApplication> {
+        self.start_after_reset(slot, false)
+    }
+    fn start_after_reset(
+        &mut self,
+        slot: Option<u8>,
+        require_versions: bool,
+    ) -> Result<ReturnedApplication> {
+        let returned = self.await_application(slot)?;
+        let identity = self.normal_start_selected(returned.slot, require_versions, None, false)?;
+        Ok(ReturnedApplication {
+            identity,
+            discoveries: returned.discoveries,
+        })
+    }
+    /// After a bootloader reset the application rejoins the bus on its own
+    /// schedule. On a DU-EP800-CRG the first discovery, about 5 s after the
+    /// reset, occasionally found no components while the motor answered a
+    /// few seconds later. Repeat discovery until the selected slot, or else
+    /// exactly one recognized motor, answers, at most
+    /// `APPLICATION_RETURN_DISCOVERIES` times. A unit in the bitmap that does
+    /// not yet answer its stock identity counts as not yet returned. Only for
+    /// returns after a reset: an ordinary probe discovers once.
+    pub fn await_application(&mut self, slot: Option<u8>) -> Result<AwaitedApplication> {
+        let mut discoveries = 0;
+        loop {
+            discoveries += 1;
+            let slots = self.discover()?;
+            let selected = match slot {
+                Some(slot) => select_motor_slot(&slots, Some(slot)),
+                None => self
+                    .inventory_slots(&slots)
+                    .and_then(|units| select_current_motor(&units)),
+            };
+            match selected {
+                Ok(slot) => return Ok(AwaitedApplication { slot, discoveries }),
+                Err(e) if discoveries == APPLICATION_RETURN_DISCOVERIES => {
+                    return Err(e.context(format!(
+                        "the motor did not answer {discoveries} discoveries over about {} s after the bootloader reset",
+                        discoveries * DISCOVERY_SECONDS
+                    )))
+                }
+                Err(_) => {}
+            }
+        }
+    }
     fn normal_start_inner(
         &mut self,
         slot: Option<u8>,
@@ -1145,6 +1217,12 @@ pub(crate) fn select_current_motor(units: &[UnitIdentity]) -> Result<u8> {
         .filter(|unit| unit.is_motor())
         .map(|unit| unit.slot)
         .collect();
+    ensure!(!units.is_empty(), "no components answered discovery");
+    ensure!(
+        !motors.is_empty(),
+        "no recognized motor in current discovery; found slots {:?}",
+        units.iter().map(|unit| unit.slot).collect::<Vec<_>>()
+    );
     ensure!(motors.len() == 1, "expected one recognized motor in current discovery; found motor slots {motors:?}; select --slot explicitly when multiple motors are present");
     Ok(motors[0])
 }
@@ -1161,6 +1239,7 @@ pub(crate) fn select_named_component(units: &[UnitIdentity], selector: &str) -> 
     Ok(matching[0])
 }
 pub(crate) fn select_motor_slot(slots: &[u8], selected: Option<u8>) -> Result<u8> {
+    ensure!(!slots.is_empty(), "no components answered discovery");
     if let Some(slot) = selected {
         ensure!(slots.contains(&slot), "slot {slot} absent; found {slots:?}");
         return Ok(slot);
@@ -1274,7 +1353,10 @@ pub(crate) mod tests {
     /// an adapter reset. A repeated PnP without a reset, as an earlier `units`
     /// or `probe` leaves it, gets stock replies and no 16/7C reply. Hardware
     /// has not confirmed which earlier step closes that window; the model only
-    /// reproduces the observed behaviour. Unmodelled requests panic.
+    /// reproduces the observed behaviour. A DCAS bootloader reset is
+    /// acknowledged, and the motor then misses `silent_after_boot_reset`
+    /// discoveries before it rejoins, as the first discovery after a reset
+    /// occasionally does on hardware. Unmodelled requests panic.
     #[derive(Default)]
     pub(crate) struct ModeledBus {
         master: bool,
@@ -1287,6 +1369,10 @@ pub(crate) mod tests {
         /// Reject this many power unlocks after their reset.
         pub(crate) rejected_power_unlocks: u32,
         pub(crate) requests: u32,
+        pub(crate) silent_after_boot_reset: u32,
+        silent_discoveries: u32,
+        motor_absent: bool,
+        pub(crate) boot_resets: u32,
     }
     impl ModeledBus {
         pub(crate) const MOTOR: u8 = 13;
@@ -1317,9 +1403,18 @@ pub(crate) mod tests {
                 (4, []) => reply(0x24, &[if self.master { 0xa0 } else { 0x80 }]),
                 (0x1d, [0]) if self.master => {
                     self.discoveries_since_reset += 1;
+                    self.motor_absent = self.silent_discoveries > 0;
+                    self.silent_discoveries = self.silent_discoveries.saturating_sub(1);
                     reply(0x3d, &[0, 0])
                 }
+                (0x1b, []) if self.master && self.motor_absent => reply(0x3b, &[0, 0, 0, 0]),
                 (0x1b, []) if self.master => reply(0x3b, &[0, 1 << (Self::MOTOR - 8), 0, 0]),
+                (0x88, [0x28, 0, 0, 0]) => {
+                    assert!(!self.linked, "bootloader reset during an active PC-link");
+                    self.boot_resets += 1;
+                    self.silent_discoveries = self.silent_after_boot_reset;
+                    reply(0x88, &[0x31])
+                }
                 (6, [slot]) => {
                     self.target = Some(*slot);
                     reply(0x26, &[0])
@@ -1402,7 +1497,7 @@ pub(crate) mod tests {
         }
     }
     /// A freshly opened session over `ModeledBus`.
-    fn modeled() -> (Session, std::rc::Rc<std::cell::RefCell<ModeledBus>>) {
+    pub(crate) fn modeled() -> (Session, std::rc::Rc<std::cell::RefCell<ModeledBus>>) {
         let bus = std::rc::Rc::default();
         let session = session_over(Box::new(ModelPort {
             bus: std::rc::Rc::clone(&bus),
@@ -1905,6 +2000,60 @@ pub(crate) mod tests {
         assert!(session.normal_slot.is_none());
         assert!(!session.normal_is_motor);
         assert!(steps.borrow().is_empty());
+    }
+    /// An initialized session over `ModeledBus` whose motor misses `silent`
+    /// discoveries after the bootloader reset this sends.
+    pub(crate) fn modeled_after_boot_reset(
+        silent: u32,
+    ) -> (Session, std::rc::Rc<std::cell::RefCell<ModeledBus>>) {
+        let (mut session, bus) = modeled();
+        bus.borrow_mut().silent_after_boot_reset = silent;
+        session.initialize().unwrap();
+        session.boot_reset().unwrap();
+        (session, bus)
+    }
+    #[test]
+    fn a_return_after_a_reset_waits_for_the_motor_to_rejoin_discovery() {
+        for silent in 0..APPLICATION_RETURN_DISCOVERIES {
+            for slot in [None, Some(ModeledBus::MOTOR)] {
+                let (mut session, bus) = modeled_after_boot_reset(silent);
+                let returned = session.normal_start_after_reset(slot).unwrap();
+                assert_eq!(returned.identity.slot, ModeledBus::MOTOR);
+                assert_eq!(returned.identity.cargo, "00-CRG");
+                assert_eq!(returned.discoveries, silent + 1);
+                session.normal_stop().unwrap();
+                assert_eq!(bus.borrow().discoveries_since_reset, silent + 1);
+            }
+            let (mut session, _) = modeled_after_boot_reset(silent);
+            let returned = session
+                .normal_start_for_rx_recovery_after_reset(Some(ModeledBus::MOTOR))
+                .unwrap();
+            assert_eq!(returned.discoveries, silent + 1);
+            session.normal_stop().unwrap();
+        }
+    }
+    #[test]
+    fn a_motor_that_never_rejoins_fails_after_bounded_discoveries() {
+        for slot in [None, Some(ModeledBus::MOTOR)] {
+            let (mut session, bus) = modeled_after_boot_reset(APPLICATION_RETURN_DISCOVERIES);
+            let error = format!("{:#}", session.normal_start_after_reset(slot).unwrap_err());
+            assert_eq!(
+                error,
+                "the motor did not answer 4 discoveries over about 24 s after the bootloader reset: no components answered discovery"
+            );
+            assert_eq!(
+                bus.borrow().discoveries_since_reset,
+                APPLICATION_RETURN_DISCOVERIES
+            );
+            assert!(session.normal_slot.is_none());
+        }
+    }
+    #[test]
+    fn an_ordinary_start_discovers_once_and_names_an_empty_bus() {
+        let (mut session, bus) = modeled_after_boot_reset(1);
+        let error = format!("{:#}", session.normal_start(None).unwrap_err());
+        assert_eq!(error, "no components answered discovery");
+        assert_eq!(bus.borrow().discoveries_since_reset, 1);
     }
     #[test]
     fn discovery_and_start_refuse_while_a_pc_link_is_active() {
