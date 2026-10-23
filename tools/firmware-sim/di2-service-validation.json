@@ -1,0 +1,317 @@
+{
+  "scope": "normal/slave GATT-close traffic and separate physical checks; partial firmware service execution",
+  "full_topology_executed": false,
+  "gateway_radio_disconnect_firmware_executed": false,
+  "original_missing_reply_cause_reproduced": false,
+  "current_cli_sha256": "60a4c3d488cf4cde2482691f2eae820baffb45d03e5600a15d5fe1e4ea274c83",
+  "hardware_settings_read_cli_sha256": "5497d7cf321f52c7bdd0f71709db9515d7add92170c61651fe66729db0c60b9d",
+  "hardware_test_cli_scope": "temporary native CLI bypassed protocol stops and called GATT close; inventory used same policy before extending the experimental CLI gate to settings reads; final source uses same normal-session policy",
+  "tested_source_sha256": {
+    "src/ble.rs": "827b9e1709e131075981efdabddfff28be3defbf66bce5d6e238624b4fa274a3",
+    "src/ble/native.rs": "89a7596a291f96c17f2c11f67dba5b1e430ccbd9dd914e036d0c5defb089cd0d",
+    "src/cli.rs": "adb925608f17340f4b09813b03d3d41e855cb30c49b72685fbc2248799017147",
+    "src/device.rs": "ac4498c703bcb37fa0232e4242e35792559f5935b2087fbb6fb52483207d69bb",
+    "src/settings.rs": "b01730c3e70d99d4b52dffa5551c1af714f221fdf3f44effd0063fed65511827",
+    "src/settings/batch.rs": "222abaaf7e3614817b029b85bc3507be2e459b77f8bab7ad19b0fcfea6754529",
+    "src/wasm.rs": "3c18f3ca47b1858ed939a5027c056ae4904cc07c55cfc07e4d8c68c84284d38a",
+    "tools/firmware-sim/fw_sim/mn101.py": "b189604cff65fdeff749e3ead527948555e4654355f6f1ad1ae5c401ab9b33c5",
+    "tools/firmware-sim/fw_sim/mn101_decode.py": "aa6d510bdf546a37acc61e0176cc2e600ee5610feec0e349b5b6b12e9b5f31fc",
+    "tools/firmware-sim/fw_sim/di2_service.py": "d4fbee11ed5e8e521de02bb443c4b71d4f488da2d7f52d15b3ba1f1625396be3",
+    "tools/firmware-sim/fw_sim/di2_gatt.py": "5fb19d312ff4364a1b125f5a24a329c71984a4fa8d7181d5f91ea68e87d5a3dc",
+    "tools/firmware-sim/verify_di2.py": "ca0550b350cd96f03e8ad8685334b4fd24c1b5d6a63b1819d52cf611e1b4ed6a",
+    "web-instrument/src/core/sessionController.ts": "d265d4d430a11a996bff0c7c2aa423e4daded6cd4b5b5586a731faecab0540ce",
+    "web-instrument/src/components/views/ConnectView.tsx": "9219a7585664d3b01315be18b89ce3fb9f099c5b4924df318f3a71ffc01a0291",
+    "web-instrument/src/types.ts": "02bd154e9f4e71c96a340da31f0f432b6868f7ceae4b4648d1eea39da0093326",
+    "web-instrument/simulator.js": "bae1adeff2af641ae3c541f105dd29d9278631895709777d8f6a307f92e23f74",
+    "web-instrument/e2e/instrument.spec.ts": "9e82b524d4a8cc8756cd267a2e6f09077cc3b739cc9f6872295d3f4c00f7ca9d",
+    "web-instrument/instrument.test.ts": "6bd322693a187dba2f5b95f6787017787c5c4b584105895917e30fa18cd31fd9"
+  },
+  "physical_checks": [
+    {
+      "date": "2026-10-23",
+      "gateway": "EW-WU111",
+      "master": "BT-DN110",
+      "operation": "units --stock-only",
+      "gatt_close_only": true,
+      "shifting_and_junction_button_normal": true
+    },
+    {
+      "date": "2026-10-23",
+      "gateway": "SC-EM800",
+      "master": "EP800 family",
+      "operation": "units --stock-only",
+      "gatt_close_only": true,
+      "display_buttons_and_shifting_normal": true
+    },
+    {
+      "date": "2026-10-23",
+      "gateway": "EW-WU111",
+      "target": "RD-RX815",
+      "operation": "settings read derailleur-adjustment",
+      "gatt_close_only": true,
+      "operation_completed": false,
+      "error": "component serial rejected by strict motor parser",
+      "shifting_and_junction_button_normal": true,
+      "component_serial_fix_retested_on_hardware": false
+    }
+  ],
+  "settings_set_or_firmware_sent_on_hardware": false,
+  "rejected_experiments": [
+    "explicit master stop followed by gateway 0C/00: physical failure on both bikes",
+    "1005 ms master-stop receipt to gateway-stop delay: STEPS physical failure",
+    "PCE10 reset: display off while battery remained on; power cycle still required"
+  ],
+  "modeled": [
+    "gateway/authentication, metadata, discovery identities and dropped GET replies",
+    "battery receive ABI and JSRV4 send boundary",
+    "opt-in exact wireless interrupt writes without peripheral effects"
+  ],
+  "not_executed": [
+    "gateway radio-disconnect callback",
+    "battery stop housekeeping after receipt",
+    "complete boot, NVM, bus arbitration and radio firmware",
+    "physical component settings GET after serial fix"
+  ],
+  "current_cli_cases": [
+    {
+      "filename": "BTDN110.4.5.0.dat",
+      "sha256": "65af4a0e68d52b43bc94660ab3e5d14c97021d59f528ac3846c8f221364c9f3b",
+      "cases": {
+        "master": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "metadata": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "component": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "stock": {
+          "passed": true,
+          "exit_code": 0,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        }
+      }
+    },
+    {
+      "filename": "2BTDN110.4.5.0.dat",
+      "sha256": "46d1b37f00f5d9d1b54cb7112c4d8841f996438b05f614b4a9947366781a76ef",
+      "cases": {
+        "master": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "metadata": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "component": {
+          "passed": true,
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        },
+        "stock": {
+          "passed": true,
+          "exit_code": 0,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
+        }
+      }
+    }
+  ],
+  "isolated_wireless_service": {
+    "filename": "EWWU101.4.6.0.dat",
+    "sha256": "1e68ca8b0fc07d2fc8dc831f6564e27e60d57670409829104636a4d4c7183183",
+    "strict": {
+      "start_returned": true,
+      "start_instructions": 30,
+      "stop_returned": false,
+      "stop_error": "unmodeled memory write 0x3ff4/1"
+    },
+    "with_modeled_interrupt_write_acceptance": [
+      {
+        "owner": 3,
+        "start_returned": true,
+        "stop_returned": true,
+        "stop_receipt_reached": true,
+        "stop_instructions": 1199,
+        "modeled_interrupt_writes": [
+          [
+            16372,
+            64,
+            1
+          ],
+          [
+            16373,
+            64,
+            1
+          ],
+          [
+            16374,
+            64,
+            1
+          ],
+          [
+            16363,
+            128,
+            1
+          ],
+          [
+            16372,
+            66,
+            1
+          ],
+          [
+            16373,
+            66,
+            1
+          ],
+          [
+            16374,
+            66,
+            1
+          ],
+          [
+            16363,
+            130,
+            1
+          ]
+        ]
+      },
+      {
+        "owner": 19,
+        "start_returned": true,
+        "stop_returned": true,
+        "stop_receipt_reached": true,
+        "stop_instructions": 1198,
+        "modeled_interrupt_writes": [
+          [
+            16372,
+            64,
+            1
+          ],
+          [
+            16373,
+            64,
+            1
+          ],
+          [
+            16374,
+            64,
+            1
+          ],
+          [
+            16363,
+            128,
+            1
+          ],
+          [
+            16372,
+            66,
+            1
+          ],
+          [
+            16373,
+            66,
+            1
+          ],
+          [
+            16374,
+            66,
+            1
+          ],
+          [
+            16363,
+            130,
+            1
+          ]
+        ]
+      },
+      {
+        "owner": 27,
+        "start_returned": true,
+        "stop_returned": true,
+        "stop_receipt_reached": true,
+        "stop_instructions": 1198,
+        "modeled_interrupt_writes": [
+          [
+            16372,
+            64,
+            1
+          ],
+          [
+            16373,
+            64,
+            1
+          ],
+          [
+            16374,
+            64,
+            1
+          ],
+          [
+            16363,
+            128,
+            1
+          ],
+          [
+            16372,
+            66,
+            1
+          ],
+          [
+            16373,
+            66,
+            1
+          ],
+          [
+            16374,
+            66,
+            1
+          ],
+          [
+            16363,
+            130,
+            1
+          ]
+        ]
+      }
+    ]
+  },
+  "historical_explicit_stop_validation": {
+    "commit": "45d6b3e",
+    "limitation": "passing stop receipts did not restore either physical bike; not the final normal-session cleanup policy"
+  },
+  "checks": {
+    "rust_tests": 355,
+    "web_unit_tests": 127,
+    "simulator_tests": 228,
+    "simulator_skipped": 5,
+    "fresh_wasm_production_smoke": true,
+    "browser_e2e_tests": 25,
+    "independent_review": "no remaining scoped blockers"
+  }
+}

@@ -132,6 +132,22 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
         )}
 
         <Card aria-label="Connect" className="gap-4">
+          {canUseBluetooth && (
+            <OptionSelect
+              label="Bike system"
+              value={state.bluetoothBike}
+              onChange={(bike) => controller.setBluetoothBike(bike as "steps" | "di2")}
+              options={[
+                { id: "steps", label: "STEPS e-bike" },
+                { id: "di2", label: "Di2 shifting only (no STEPS motor)" },
+              ]}
+              isDisabled={isBusy || state.transport !== null}
+              data-testid="bluetooth-bike-select"
+            />
+          )}
+          {canUseBluetooth && (
+            <p className="text-xs text-muted">STEPS e-bikes can also have Di2 components. Choose based on whether your bike has a STEPS motor.</p>
+          )}
           <Button
             size="lg"
             fullWidth

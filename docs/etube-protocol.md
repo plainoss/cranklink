@@ -57,6 +57,7 @@ SM-PCE02 selected explicitly, the command is:
 
 ```sh
 cranklink --port usb units
+cranklink --port usb units --stock-only  # skip optional discriminator queries
 ```
 
 The connection device discovers temporary addresses called **slots**.
@@ -206,6 +207,13 @@ acknowledgment instead of starting twice. It retains the address and ownership
 state across related operations, then releases the motor and restores gateway
 routing during cleanup. The details live beside the
 [wired session](../src/device.rs) and [BLE lifecycle](../src/ble.rs).
+
+Ordinary BLE normal/slave disconnect follows a different path: it closes GATT
+and leaves disconnect handling to gateway firmware. Explicit master stop,
+gateway stop and reset experiments failed physical validation; GATT-only close
+preserved normal operation on both tested bikes. Browser normal sessions retain
+that service state between commands rather than issuing master stops after
+each read. See the [hardware investigation](di2-ble-investigation.md).
 
 Ordinary service requests run one at a time. Their replies have no general
 transaction identifier to distinguish concurrent requests for the same

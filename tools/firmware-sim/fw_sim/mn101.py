@@ -3,6 +3,7 @@
 Unknown instructions, peripheral accesses and firmware calls are never ignored.
 """
 import hashlib
+from copy import deepcopy
 from .mn101_decode import decode
 
 BASE = 0x4000
@@ -14,6 +15,18 @@ def unpack_pc(value, address_bits=18):
 
 
 def pack_pc(value):
+    return (value // 2) | ((value & 1) << 23)
+
+
+def unpack_pc_strict(value):
+    if value < 0 or value & ~0x83ffff:
+        raise RuntimeError("unverified packed PC width")
+    return (value & 0x3ffff) * 2 + ((value >> 23) & 1)
+
+
+def pack_pc_strict(value):
+    if not 0 <= value < 0x80000:
+        raise RuntimeError("unverified PC width")
     return (value // 2) | ((value & 1) << 23)
 
 
@@ -266,23 +279,83 @@ class MN101Machine:
             return
         raise RuntimeError(f'unimplemented decoded operation {op}')
 
-    def run(self, entry, interrupt=False, budget=200):
+    def run(self, entry, interrupt=False, budget=200, until=None):
+        """Synthetic call frame; until pauses execution, never reports a return."""
+        if not 0 < budget <= 100000:
+            raise ValueError('instruction budget must be 1..100000')
+        if not 0 <= entry < (1 << (self.address_bits + 1)):
+            raise RuntimeError('unverified PC width')
+        self.trace = []
         self.pc = entry
-        initial = dict(d=self.d.copy(),a=self.a.copy(),sp=self.sp,psw=self.psw,ha=self.ha)
+        initial = dict(d=self.d.copy(), a=self.a.copy(), sp=self.sp,
+                       psw=self.psw, ha=self.ha)
         if interrupt:
-            self.push(self.ha,2)
-            self.push(pack_pc(STOP),3)
-            self.push(self.psw,1)
-        else: self.push(pack_pc(STOP),3)
-        error = None
+            self.push(self.ha, 2)
+            self.push(pack_pc(STOP), 3)
+            self.push(self.psw, 1)
+        else:
+            self.push(pack_pc(STOP), 3)
+        error, paused = None, False
         try:
             for _ in range(budget):
-                if self.pc==STOP: break
+                if self.pc == STOP:
+                    break
+                if until is not None and until():
+                    paused = True
+                    break
                 self.step()
-            if self.pc!=STOP: raise RuntimeError('instruction budget exhausted')
-        except RuntimeError as exception: error = str(exception)
-        return dict(entry=entry,interrupt=interrupt,instructions=len(self.trace),returned=error is None and self.pc==STOP,
-                    error=error,initial=initial,final=dict(d=self.d,a=self.a,sp=self.sp,psw=self.psw,ha=self.ha),trace=self.trace)
+            if self.pc != STOP and not paused:
+                raise RuntimeError('instruction budget exhausted')
+        except RuntimeError as exception:
+            error = str(exception)
+        return deepcopy(dict(entry=entry, interrupt=interrupt,
+                    instructions=len(self.trace), returned=error is None and self.pc == STOP,
+                    paused=paused, error=error, initial=initial,
+                    final=dict(d=self.d, a=self.a, sp=self.sp,
+                               psw=self.psw, ha=self.ha), trace=self.trace))
+
+
+class CPU(MN101Machine):
+    """Strict Di2 service subset; broader CPU profiles do not expand admission.
+
+    The Di2 experiment intentionally retains its original instruction traps,
+    18-bit program addresses, exact MMIO fixtures and receipt pause boundary.
+    """
+    def __init__(self, image):
+        super().__init__(image, ram_start=0, ram_end=0x2800)
+        self.psw = 0xa5
+        self.fixtures = {}
+        self.allowed_writes = []
+        self.observed_writes = []
+
+    def read(self, address, width=1):
+        if all(address+i in self.fixtures for i in range(width)):
+            return sum(self.fixtures[address+i] << (8*i) for i in range(width))
+        return super().read(address, width)
+
+    def write(self, address, value, width=1):
+        event = (address, value, width)
+        if self.allowed_writes and event == self.allowed_writes[0]:
+            self.observed_writes.append(event)
+            self.allowed_writes.pop(0)
+            return
+        super().write(address, value, width)
+
+    def step(self):
+        pack_pc_strict(self.pc)
+        ins = decode(self.image, BASE, self.pc)
+        op, args = ins['op'], ins['args']
+        if op in ('rep', 'mulu', 'divu', 'asr_d'):
+            self.trace.append(ins)
+            self.pc += ins['size']
+            raise RuntimeError('unverified instruction semantics: ' + op)
+        if op in ('rts', 'rti'):
+            unpack_pc_strict(self.read(self.sp + (op == 'rti'), 3))
+        elif op == 'jsrv':
+            unpack_pc_strict(self.read(args['table_byte'], 3))
+        elif op in ('jsr', 'jmp'):
+            pack_pc_strict(args['target'])
+        super().step()
 
 
 # These are isolated CPU probes, separate from the ARM packet profiles.

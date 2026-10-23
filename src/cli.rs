@@ -277,7 +277,11 @@ enum Command {
         all: bool,
     },
     /// Inventory connected E-TUBE bus components (motor, display, shifter)
-    Units,
+    Units {
+        /// Omit optional part/model queries; report stock identities and candidates
+        #[arg(long)]
+        stock_only: bool,
+    },
     /// Probe the drive unit, or the component chosen with --component/--slot (model, serial, firmware versions)
     Probe,
     /// Persistent interactive JSON-RPC session driver for AI agents & test runners
@@ -738,10 +742,14 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 anyhow::bail!("Bluetooth discovery requires cranklink built with --features ble");
             }
         }
-        Command::Units => {
+        Command::Units { stock_only } => {
             let mut session = Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
             session.initialize()?;
-            let units = session.units()?;
+            let units = if stock_only {
+                session.units_stock_only()?
+            } else {
+                session.units()?
+            };
             if is_json {
                 out_println!(
                     "{}",
@@ -813,7 +821,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 .normal_start_component(slot, component.as_deref())
                 .and_then(|id| {
                     let serial_raw = s.command(id.slot, 1, 0x3c, &[0], 0x3e)?;
-                    let motor_serial = hex::encode(crate::device::serial_bytes(&serial_raw)?);
+                    let motor_serial = hex::encode(serial_bytes_for_identity(&serial_raw, &id)?);
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
 
                     let model = resolve_settings_model(&mut s, &id)?;
@@ -1906,8 +1914,12 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     Ok(None)
                 }
             }
-            Command::Units => {
-                let units = session.units()?;
+            Command::Units { stock_only } => {
+                let units = if stock_only {
+                    session.units_stock_only()?
+                } else {
+                    session.units()?
+                };
                 if is_json {
                     Ok(Some(serde_json::json!({
                         "units": units,
@@ -2012,7 +2024,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     let stopped = session.stop();
     let closed = session.close();
     let cleanup = finish_operation(
-        stopped.context("BLE PC-link stop was not confirmed"),
+        stopped.context("BLE session cleanup failed"),
         closed.context("BLE disconnect failed"),
     );
     finish_reporting(result, cleanup, |value| {
@@ -2497,7 +2509,7 @@ fn ble_checked_serial(
     expected: Option<&str>,
 ) -> Result<(crate::device::Identity, String)> {
     let serial = crate::device::UnitCommands::command(session, id.slot, 1, 0x3c, &[0], 0x3e)?;
-    let serial = hex::encode(crate::device::serial_bytes(&serial)?);
+    let serial = hex::encode(serial_bytes_for_identity(&serial, &id)?);
     if let Some(expected) = expected {
         ensure!(
             serial.eq_ignore_ascii_case(expected),
@@ -2515,6 +2527,24 @@ fn check_motor_serial(actual: &str, expected: Option<&str>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A uniquely selected catalogued component uses the generic unit serial GET;
+/// motor cargo and every firmware/authentication path retain DCAS admission.
+fn serial_bytes_for_identity(
+    parameters: &[u8],
+    identity: &crate::device::Identity,
+) -> Result<[u8; 6]> {
+    if identity.rx_version == "not applicable"
+        && matches!(
+            crate::settings::SettingsModel::from_name(&identity.cargo),
+            Ok(crate::settings::SettingsModel::Component(_))
+        )
+    {
+        crate::device::component_serial_bytes(parameters)
+    } else {
+        crate::device::serial_bytes(parameters)
+    }
 }
 
 fn sanitize_serial(input: &str) -> Result<String> {
@@ -2557,7 +2587,7 @@ fn finish_reporting<T>(
 
 fn read_only_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Scan { .. } | Command::Units | Command::Probe | Command::Session => true,
+        Command::Scan { .. } | Command::Units { .. } | Command::Probe | Command::Session => true,
         // A settings dry run only reads; firmware dry runs enter bootloaders.
         Command::Settings { command } => matches!(
             command,
@@ -2579,7 +2609,7 @@ fn read_only_command_allowed(command: &Command) -> bool {
 /// Commands execute_ble implements; anything else is refused before connecting.
 fn ble_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Probe | Command::Units => true,
+        Command::Probe | Command::Units { .. } => true,
         Command::Settings { .. } => true,
         Command::Firmware { command } => matches!(
             command,
@@ -2864,7 +2894,7 @@ fn execute_settings(
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
     let serial = serial_raw
         .ok()
-        .and_then(|r| crate::device::serial_bytes(&r).ok())
+        .and_then(|r| crate::settings::serial_bytes_for_model(&r, model).ok())
         .map(hex::encode);
     let serial_str = serial.clone().unwrap_or_else(|| format!("slot{}", id.slot));
 
@@ -3756,6 +3786,28 @@ mod cli_tests {
         }
     }
     use super::*;
+
+    #[test]
+    fn component_serial_uses_six_declared_bytes_without_relaxing_motor_padding() {
+        let mut identity = crate::device::Identity {
+            slot: 11,
+            cargo: "RD-RX815".into(),
+            dcas_version: "3.3.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let physical = [1, 2, 3, 4, 5, 6, 0x70];
+        assert_eq!(
+            serial_bytes_for_identity(&physical, &identity).unwrap(),
+            physical[..6]
+        );
+        identity.cargo = "01".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+        identity.cargo = "SM-BMR1".into();
+        identity.rx_version = "1.0.0.0".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+        identity.cargo = "unrecognized component".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+    }
 
     #[test]
     fn serial_sanitization_accepts_clean_and_formatted_serials() {
@@ -5528,9 +5580,21 @@ mod cli_tests {
         // The dry run still refuses --no-auth where the write would.
         assert!(write_requires_unit_auth(&dry_run_cmd, model, false));
         assert_eq!(plan_ble_routing(None, &Command::Probe).route, "normal");
-        assert_eq!(plan_ble_routing(None, &Command::Units).route, "normal");
+        assert_eq!(
+            plan_ble_routing(None, &Command::Units { stock_only: false }).route,
+            "normal"
+        );
     }
 
+    #[test]
+    fn stock_only_units_parse_as_read_only_normal_ble_discovery() {
+        let cli =
+            Cli::try_parse_from(["cranklink", "--read-only", "units", "--stock-only"]).unwrap();
+        assert!(matches!(cli.command, Command::Units { stock_only: true }));
+        assert!(read_only_command_allowed(&cli.command));
+        assert!(ble_command_allowed(&cli.command));
+        assert_eq!(plan_ble_routing(None, &cli.command).route, "normal");
+    }
     #[test]
     fn ble_master_flag_parsing_overrides_and_conflicts() {
         let default_cli = Cli::try_parse_from(["cranklink", "probe"]).unwrap();

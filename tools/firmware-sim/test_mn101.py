@@ -67,6 +67,22 @@ class MN101DecodeTests(unittest.TestCase):
 
 
 class MN101ExecutionTests(unittest.TestCase):
+    def test_memory_fault_after_pc_reaches_stop_is_not_a_return(self):
+        from fw_sim.mn101 import CPU
+        # MOV #40,(ioF4) advances to the synthetic return sentinel before its
+        # unmapped peripheral write fails. PC equality alone is insufficient.
+        image = bytearray(STOP // 2 - BASE)
+        image[-3:] = code("024f04")
+        for machine in (MN101Machine, CPU):
+            with self.subTest(machine=machine.__name__):
+                cpu = machine(bytes(image))
+                result = cpu.run(STOP - 6)
+                self.assertEqual(cpu.pc, STOP)
+                self.assertEqual(result["instructions"], 1)
+                self.assertIn("unmodeled memory write 0x3ff4", result["error"])
+                self.assertFalse(result["returned"])
+                self.assertFalse(result["paused"])
+
     def test_packed_pc_round_trip_including_h_and_reserved_bits(self):
         for pc in [0, 1, 0x1ffff, 0x20000, 0x40000, 0x7fffe, 0x7ffff]:
             with self.subTest(pc=pc):

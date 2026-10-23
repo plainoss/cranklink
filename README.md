@@ -43,7 +43,7 @@ All families support component discovery and identification. Other catalogued dr
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 
-Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md). E6002 D3.3.0/D3.4.0 additionally execute region SET and fresh-CPU storage reload under an explicit resident ROM model; this does not validate protected sessions or physical hardware.
+Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and partial BT-DN110/WU111 PC-link handler execution are described in the [firmware simulator documentation](docs/firmware-simulator.md). E6002 D3.3.0/D3.4.0 additionally execute region SET and fresh-CPU storage reload under an explicit resident ROM model; this does not validate protected sessions or physical hardware. Ordinary BLE disconnect behavior and its hardware validation are described in [Bluetooth recovery](docs/bluetooth.md#disconnect-and-di2-recovery).
 
 ¹ CLI only, with `--allow-unverified-model`. Not run on hardware. D (DCAS) writes have protocol tests; the RX (M) writer is documented for the EP800 family only and is untested for others.
 
@@ -91,6 +91,7 @@ The prebuilt binaries are all built on Linux, and CI runs only the Linux one. Th
 ```sh
 cranklink scan                 # attached USB adapters (add --ble for Bluetooth gateways)
 cranklink --port usb units     # components on the E-TUBE bus
+cranklink --port usb units --stock-only  # stock identities/candidates; skip optional part queries
 cranklink --port usb probe     # drive unit model, serial, firmware versions
 ```
 
@@ -127,6 +128,8 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 -
 ```
 
 See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
+
+Normal/slave BLE sessions close GATT directly so gateway firmware handles disconnect; explicit stop/reset commands left both tested bikes outside normal operation. The web app retains this service session between commands and distinguishes **Di2 shifting only (no STEPS motor)** from a **STEPS e-bike**, which can also use Di2 components. See the [Di2 BLE investigation](docs/di2-ble-investigation.md) for physical validation and remaining limits.
 
 ### Recover a motor stuck in bootloader mode
 
@@ -176,7 +179,7 @@ For bootloader research on a working, powered EP800-CRG, `firmware dump-bootload
 - [JSON-RPC session](docs/session.md): `cranklink session` methods, errors and framing for scripts.
 - [Understanding E-TUBE](docs/etube-protocol.md): discovery, routing and the wire reference.
 - [EP800 hardware recovery](docs/ep800-hardware-recovery.md): temporary bridge recovery and bootloader extraction.
-- [Firmware simulator](docs/firmware-simulator.md): offline application tests and `sim.py resident` bootloader regressions.
+- [Firmware simulator](docs/firmware-simulator.md): offline application tests, `sim.py resident` bootloader regressions, and hash-verified [Di2 firmware acquisition](docs/firmware-simulator.md#di2-research-inputs).
 - [Firmware patcher](docs/ep800-speed-limit-patcher.md): create and check supported motor images offline with `tools/patch_motor_speed.py`.
 - [Web app development](web-instrument/README.md): build, test, deploy.
 

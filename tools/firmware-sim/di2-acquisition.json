@@ -1,0 +1,188 @@
+{
+  "scope": "verified research acquisition, not executable firmware coverage",
+  "executable_profiles_added": 0,
+  "topology_validated": false,
+  "images": [
+    {
+      "filename": "BTDN110.4.5.0.dat",
+      "model": "BT-DN110",
+      "board": 1,
+      "sha256": "65af4a0e68d52b43bc94660ab3e5d14c97021d59f528ac3846c8f221364c9f3b",
+      "bytes": 69809,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "DCAS2i",
+      "series": 17,
+      "unit": 0,
+      "version": "4.5.0.0",
+      "mn101_rti_vector_offsets": [
+        4,
+        12,
+        20,
+        28,
+        36,
+        40,
+        48,
+        52,
+        56,
+        60,
+        64,
+        68,
+        72,
+        76,
+        96,
+        100,
+        104,
+        108,
+        120
+      ],
+      "blocker": "MN101-family mapping corroboration only; no reviewed CPU backend or recovered service handlers",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/BTDN110.4.5.0.dat"
+    },
+    {
+      "filename": "2BTDN110.4.5.0.dat",
+      "model": "BT-DN110",
+      "board": 2,
+      "sha256": "46d1b37f00f5d9d1b54cb7112c4d8841f996438b05f614b4a9947366781a76ef",
+      "bytes": 70123,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "DCAS2i",
+      "series": 17,
+      "unit": 0,
+      "version": "4.5.0.0",
+      "mn101_rti_vector_offsets": [
+        4,
+        20,
+        28,
+        36,
+        40,
+        48,
+        52,
+        56,
+        60,
+        64,
+        68,
+        72,
+        76,
+        96,
+        100,
+        104,
+        108,
+        120
+      ],
+      "blocker": "MN101-family mapping corroboration only; no reviewed CPU backend or recovered service handlers",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/2BTDN110.4.5.0.dat"
+    },
+    {
+      "filename": "EWWU101.4.6.0.dat",
+      "model": "EW-WU101/EW-WU111 main",
+      "board": 1,
+      "sha256": "1e68ca8b0fc07d2fc8dc831f6564e27e60d57670409829104636a4d4c7183183",
+      "bytes": 64777,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "DCAS2i",
+      "series": 17,
+      "unit": 8,
+      "version": "4.6.0.0",
+      "mn101_rti_vector_offsets": [
+        4,
+        8,
+        12,
+        20,
+        28,
+        36,
+        40,
+        48,
+        52,
+        56,
+        60,
+        64,
+        68,
+        72,
+        76,
+        92,
+        96,
+        100,
+        104,
+        108,
+        120
+      ],
+      "blocker": "MN101-family mapping corroboration only; no reviewed CPU backend or recovered service handlers",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/EWWU101.4.6.0.dat"
+    },
+    {
+      "filename": "UPDATENRF-DI2-ap.4.7.1.hex",
+      "model": "first-generation Nordic Di2 application",
+      "sha256": "0a52a9240febce92e2a033122c02aeaa23eadbaf1c8648628974dc257e3b9fa1",
+      "bytes": 125032,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "Intel HEX",
+      "regions": [
+        {
+          "start": 118784,
+          "end": 118979
+        },
+        {
+          "start": 118980,
+          "end": 163210
+        }
+      ],
+      "initial_stack": 536883176,
+      "reset_vector": 162773,
+      "arm_vector_candidate": true,
+      "blocker": "Radio/SoftDevice is separate from the main MCU; no profiled gateway or battery lifecycle execution",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/UPDATENRF-DI2-ap.4.7.1.hex"
+    },
+    {
+      "filename": "UPDATENRF-DI2-bt.1.4.0.hex",
+      "model": "first-generation Nordic Di2 bootloader",
+      "sha256": "78570dc816f26b88eabf91e31c3155ac51affcc46e7f061cef63b3595960fc63",
+      "bytes": 42666,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "Intel HEX",
+      "regions": [
+        {
+          "start": 241664,
+          "end": 256797
+        },
+        {
+          "start": 268439572,
+          "end": 268439576
+        }
+      ],
+      "initial_stack": 536884376,
+      "reset_vector": 256501,
+      "arm_vector_candidate": true,
+      "blocker": "Radio/SoftDevice is separate from the main MCU; no profiled gateway or battery lifecycle execution",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/UPDATENRF-DI2-bt.1.4.0.hex"
+    },
+    {
+      "filename": "UPDATENRF-sd.3.0.0.hex",
+      "model": "first-generation Nordic SoftDevice package",
+      "sha256": "4c76d6f0f27a2ae276f566054b3d1e2adac4ee4d605ae98e80978e4edd834f2f",
+      "bytes": 328187,
+      "execution": "unprofiled",
+      "topology_validated": false,
+      "format": "Intel HEX",
+      "regions": [
+        {
+          "start": 0,
+          "end": 1984
+        },
+        {
+          "start": 4096,
+          "end": 118784
+        }
+      ],
+      "initial_stack": 1984,
+      "reset_vector": 1745,
+      "arm_vector_candidate": false,
+      "blocker": "Radio/SoftDevice is separate from the main MCU; no profiled gateway or battery lifecycle execution",
+      "url": "https://api.shimano.com/etube/public/data/upload/published/UPDATENRF-sd.3.0.0.hex"
+    }
+  ]
+}

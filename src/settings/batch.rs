@@ -242,7 +242,7 @@ pub fn run_bound(
     // Check every static name/value and restore input before the first write.
     // Model-dependent combinations (e.g. speed after region) use live reads at
     // each step, so later operations see changes made earlier in this session.
-    let serial = checked_serial(session, slot, expected_serial)?;
+    let serial = checked_serial(session, slot, expected_serial, model)?;
     let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
         let valid = (|| -> Result<Option<ParsedRestore>> {

@@ -130,6 +130,17 @@ class GattProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'master'):
             write(e,FREE_COMMAND,b'\x0d\x16\xac\1')
 
+    def test_radio_disconnect_never_sends_firmware_cleanup_commands(self):
+        e = self.endpoint
+        e.motor.connected = True
+        e.close()
+        self.assertTrue(e.motor.connected)
+        self.assertIsNone(e.device.active_endpoint)
+        self.assertEqual(e.device.lifecycle[-1]['cleanup_confirmed'], False)
+        e.gateway.restore.assert_called_once()  # Initial device setup only.
+        self.assertFalse(any(event['kind'] == 'coordinator-cleanup-after-client-disconnect'
+                             for event in e.device.lifecycle))
+
 
 class StockGattTests(unittest.TestCase):
     @classmethod
@@ -168,3 +179,47 @@ class StockGattTests(unittest.TestCase):
                 finally:
                     endpoint.close()
                 self.assertTrue(endpoint.closed)
+
+    def test_dropped_radio_retains_stock_pc_link_until_an_explicit_stop(self):
+        for gateway, motor in self.pairs:
+            with self.subTest(gateway=gateway.name, motor=motor.name):
+                endpoint = GattEndpoint(gateway, motor)
+                authenticate(endpoint)
+                for packet in (b'\0\3\0', b'\0\4', b'\0\3\x20',
+                               b'\0\x1d\0', b'\0\x1b', b'\0\x0c\1'):
+                    write(endpoint, PCE_COMMAND, packet)
+                firmware = endpoint.motor
+                self.assertTrue(firmware.connected)
+                endpoint.close()
+                self.assertTrue(firmware.connected)
+                self.assertTrue(endpoint.device.snapshot()['motor_connected'])
+                replacement = endpoint.device.connect()
+                try:
+                    self.assertIs(replacement.motor, firmware)
+                    self.assertTrue(firmware.connected)
+                    authenticate(replacement)
+                    for packet in (b'\0\3\0', b'\0\3\x20', b'\0\x0c\0'):
+                        write(replacement, PCE_COMMAND, packet)
+                    self.assertFalse(firmware.connected)
+                finally:
+                    replacement.close()
+
+    def test_gateway_stop_ack_with_lost_bus_delivery_does_not_release_firmware(self):
+        for gateway, motor in self.pairs:
+            with self.subTest(gateway=gateway.name, motor=motor.name):
+                endpoint = GattEndpoint(gateway, motor)
+                authenticate(endpoint)
+                for packet in (b'\0\3\x20', b'\0\x1d\0', b'\0\x1b', b'\0\x0c\1'):
+                    write(endpoint, PCE_COMMAND, packet)
+                self.assertTrue(endpoint.motor.connected)
+                endpoint.queue.clear()
+                # Drop only delivery at the modeled bus boundary. The stock
+                # gateway still constructs its own acknowledgement normally.
+                with patch.object(endpoint, '_pump'):
+                    write(endpoint, PCE_COMMAND, b'\0\x0c\0')
+                self.assertTrue(any(n['characteristic'] == PCE_RESPONSE
+                                    and n['value'][:2] == [0x2c, 0]
+                                    for n in endpoint.queue))
+                self.assertTrue(endpoint.motor.connected)
+                endpoint.close()
+                self.assertTrue(endpoint.motor.connected)

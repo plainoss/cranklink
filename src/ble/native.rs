@@ -251,26 +251,28 @@ impl Gatt for NativeGatt {
             );
             Ok(())
         });
-        let overflow = self.overflow.load(Ordering::Acquire);
-        if let Some(n) = take_queued(&mut self.rx, overflow, live)? {
+        if let Some(n) = take_queued(&mut self.rx, &self.overflow, live)? {
             return Ok(Some(n));
         }
         if duration.is_zero() {
             return Ok(None);
         }
-        let result = self.rt.block_on(async {
-            match timeout(duration, self.rx.recv()).await {
-                Ok(Some(n)) => Ok(Some(n)),
-                Ok(None) => bail!("Bluetooth notification stream closed"),
-                Err(_) => {
-                    ensure!(
-                        bounded(self.peripheral.is_connected()).await?,
-                        "Bluetooth peripheral disconnected"
-                    );
-                    Ok(None)
+        let result = self.rt.block_on(reject_overflow(
+            async {
+                match timeout(duration, self.rx.recv()).await {
+                    Ok(Some(n)) => Ok(Some(n)),
+                    Ok(None) => bail!("Bluetooth notification stream closed"),
+                    Err(_) => {
+                        ensure!(
+                            bounded(self.peripheral.is_connected()).await?,
+                            "Bluetooth peripheral disconnected"
+                        );
+                        Ok(None)
+                    }
                 }
-            }
-        });
+            },
+            &self.overflow,
+        ));
         self.finish(result)
     }
     fn passkey(&mut self) -> Result<String> {
@@ -312,18 +314,39 @@ fn already_closed(error: anyhow::Error, connected: Result<bool>) -> Result<()> {
 /// overflowed queue is never drained.
 fn take_queued(
     rx: &mut mpsc::Receiver<Notification>,
-    overflow: bool,
+    overflow: &AtomicBool,
     live: Result<()>,
 ) -> Result<Option<Notification>> {
-    ensure!(!overflow, "Bluetooth receive queue overflowed; reconnect");
-    match rx.try_recv() {
+    ensure!(
+        !overflow.load(Ordering::Acquire),
+        "Bluetooth receive queue overflowed; reconnect"
+    );
+    let result = match rx.try_recv() {
         Ok(n) => Ok(Some(n)),
         Err(mpsc::error::TryRecvError::Empty) => live.map(|()| None),
         Err(mpsc::error::TryRecvError::Disconnected) => {
             live?;
             bail!("Bluetooth notification stream closed")
         }
-    }
+    };
+    ensure!(
+        !overflow.load(Ordering::Acquire),
+        "Bluetooth receive queue overflowed; reconnect"
+    );
+    result
+}
+/// The pump can fail while a receiver is suspended. Never accept a final
+/// cleanup acknowledgement from a queue that became incomplete during await.
+async fn reject_overflow<T>(
+    future: impl Future<Output = Result<T>>,
+    overflow: &AtomicBool,
+) -> Result<T> {
+    let result = future.await;
+    ensure!(
+        !overflow.load(Ordering::Acquire),
+        "Bluetooth receive queue overflowed; reconnect"
+    );
+    result
 }
 impl Drop for NativeGatt {
     fn drop(&mut self) {
@@ -343,21 +366,44 @@ mod tests {
     fn queued_replies_outlive_the_link_but_not_a_queue_overflow() {
         let down = || Err(anyhow::anyhow!("Bluetooth peripheral disconnected"));
         let (tx, mut rx) = mpsc::channel(4);
+        let overflow = AtomicBool::new(false);
         tx.try_send(note(1)).unwrap();
         tx.try_send(note(2)).unwrap();
-        assert!(take_queued(&mut rx, true, Ok(())).is_err());
+        overflow.store(true, Ordering::Release);
+        assert!(take_queued(&mut rx, &overflow, Ok(())).is_err());
+        overflow.store(false, Ordering::Release);
         drop(tx);
-        let first = take_queued(&mut rx, false, down()).unwrap().unwrap();
+        let first = take_queued(&mut rx, &overflow, down()).unwrap().unwrap();
         assert_eq!(first.value, [1]);
-        let second = take_queued(&mut rx, false, Ok(())).unwrap().unwrap();
+        let second = take_queued(&mut rx, &overflow, Ok(())).unwrap().unwrap();
         assert_eq!(second.value, [2]);
-        let drained = take_queued(&mut rx, false, down()).unwrap_err();
+        let drained = take_queued(&mut rx, &overflow, down()).unwrap_err();
         assert!(drained.to_string().contains("disconnected"));
-        let ended = take_queued(&mut rx, false, Ok(())).unwrap_err();
+        let ended = take_queued(&mut rx, &overflow, Ok(())).unwrap_err();
         assert!(ended.to_string().contains("stream closed"));
         let (_tx, mut rx) = mpsc::channel(1);
-        assert!(take_queued(&mut rx, false, Ok(())).unwrap().is_none());
-        assert!(take_queued(&mut rx, false, down()).is_err());
+        assert!(take_queued(&mut rx, &overflow, Ok(())).unwrap().is_none());
+        assert!(take_queued(&mut rx, &overflow, down()).is_err());
+    }
+    #[test]
+    fn overflow_during_await_rejects_an_otherwise_valid_final_receipt() {
+        let rt = runtime().unwrap();
+        let overflow = Arc::new(AtomicBool::new(false));
+        let sender_overflow = overflow.clone();
+        let (tx, mut rx) = mpsc::channel(1);
+        let result = rt.block_on(async {
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                sender_overflow.store(true, Ordering::Release);
+                tx.send(note(0)).await.unwrap();
+            });
+            reject_overflow(
+                async { rx.recv().await.context("stream closed") },
+                &overflow,
+            )
+            .await
+        });
+        assert!(result.unwrap_err().to_string().contains("queue overflowed"));
     }
     #[test]
     fn closing_a_link_the_peripheral_dropped_succeeds() {

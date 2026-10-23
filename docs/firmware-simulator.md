@@ -67,6 +67,150 @@ Firmware containers can be auto-pulled directly by profile ID, model name, or Sh
 - `sim.py pull --all --fixtures-output /tmp/firmware-fixtures.json`: Pulls all 18 profiled firmware images and generates a fixture manifest ready for `sim.py matrix`.
 - `sim.py run` and `sim.py serve` accept `--hardware <model>` or profile names directly in `--gateway` / `--motor`, automatically fetching and decoding missing images on demand. Existing local `.decoded.bin` or plaintext `.dat` file paths remain fully supported.
 
+### Di2 research inputs
+
+`acquire_di2.py` downloads six SHA-256-pinned research files from Shimano's
+published firmware endpoint. It verifies DCAS2i main-image headers and Intel HEX
+records without registering any executable profiles or connecting to hardware.
+Downloaded binaries stay outside Git. The default directory is ignored:
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/acquire_di2.py
+
+# Revalidate cached inputs without network access.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/acquire_di2.py --offline
+
+# Include the acquired-input checks in the simulator test suite.
+CRANKLINK_DI2_IMAGES="$PWD/tools/firmware-sim/.cache/di2" \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+  -s tools/firmware-sim -p 'test_di2_images.py'
+```
+
+Use `--output /path/to/cache` to choose a different directory. A missing offline
+file or a mismatched hash fails without replacing the input. The generated
+`di2-acquisition.json` and [recorded assessment](../tools/firmware-sim/di2-acquisition.json)
+describe acquisition only: zero ARM execution profiles and no validated topology.
+The separate experimental service profiles below are not inferred from acquisition.
+
+| Research input | Purpose | Current execution gap |
+| --- | --- | --- |
+| `BTDN110.4.5.0.dat` | BT-DN110 board 1 master application | PC-link start executes; stop runs to its actual receipt, then pauses before housekeeping. |
+| `2BTDN110.4.5.0.dat` | BT-DN110 board 2 master application | Separate hash/entry; the same partial service coverage as board 1. |
+| `EWWU101.4.6.0.dat` | WU101/WU111 main application family | PC-link start executes. Stop returns with an opt-in exact interrupt-control write fixture; strict execution traps at 0x3FF4. Model mapping comes from the E-TUBE application declaration. |
+| `UPDATENRF-DI2-ap.4.7.1.hex` | Separate Nordic radio application | Plausible mapped Thumb reset vector; no recovered gateway handler profile. |
+| `UPDATENRF-DI2-bt.1.4.0.hex` | Nordic bootloader | Acquired and format-checked only. |
+| `UPDATENRF-sd.3.0.0.hex` | Nordic SoftDevice package | Acquired and format-checked only; RF behavior is not emulated. |
+
+### Di2 service execution and timeout regression
+
+The bounded MN101 interpreter executes original instructions from the acquired
+main images. It models initialized RAM and a synthetic function call frame;
+unknown instructions, uncertain REP/MULU/DIVU/ASR semantics, handy memory and
+unmodeled peripherals trap. An opt-in wireless fixture admits only the exact
+ordered interrupt-control writes recovered from the pinned handler. It rejects unsupported PC bank bits rather than
+truncating them. This is a service test harness, not a full-chip emulator.
+Instruction encodings are corroborated against Panasonic's
+[MN101C49 manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf),
+including independent worked examples in the decoder tests.
+
+```sh
+# Execute acquired main-image PC-link handlers without BLE or network access.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/di2_service.py \
+  --output /tmp/di2-services.json
+# Continue the wireless main stop through an explicit interrupt-register fixture.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/di2_service.py \
+  --model-wireless-interrupts --output /tmp/di2-services-with-irq-fixture.json
+
+# Actual CLI regression, with a modeled gateway and battery firmware execution.
+cargo build --locked --features ble --bin cranklink
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --expect radio-close --output /tmp/di2-timeout.json
+# Repeat with 2BTDN110.4.5.0.dat for board 2.
+# Lose metadata after an explicitly modeled local-owner start notification.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case metadata-timeout --expect radio-close --output /tmp/di2-metadata-timeout.json
+# Reproduce the original component part-GET failure class.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case component-timeout --expect radio-close --output /tmp/di2-component-timeout.json
+# The same fixture succeeds without that optional query.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case stock-only --expect stock --output /tmp/di2-stock-only.json
+
+CRANKLINK_DI2_IMAGES="$PWD/tools/firmware-sim/.cache/di2" \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+  -s tools/firmware-sim -p 'test_di2*.py'
+```
+
+`--images` overrides the service tool's image directory. The battery start
+handler returns after 128 original instructions. Its stop path generates a
+mode-zero receipt, where execution deliberately pauses before unsupported
+housekeeping. The WU main start returns. Strict stop traps at peripheral
+`0x3FF4`; with `--model-wireless-interrupts`, the exact eight interrupt-control
+writes are consumed and the stop handler returns after 1,199 original
+instructions. Repeated start/stop calls retain RAM and restore the stack.
+The fixture models write acceptance only; interrupts, timers, RF and physical
+register effects remain unexecuted. A paused or trapped machine cannot accept
+another service call. No result here establishes physical shutdown or shifting.
+
+The battery receive ABI, zero RAM fixture and JSRV4 send/queue boundary are
+modeled. The stop receipt is generated by original packet-building code. It
+echoes the requested owner, so it does not replace the client's prior ownership
+check. Nordic radio execution, PCE gateway firmware, bus delivery and timing,
+boot/NVM initialization and derailleur settings remain unvalidated. The CLI
+regression models gateway acknowledgements, discovery data and metadata. It
+deliberately loses a master identity, metadata or component part GET reply,
+then verifies real start and the exact CLI traffic through radio close. The
+metadata case injects a captured local-owner start
+notification; that asynchronous notification path is not firmware execution.
+The current `--expect radio-close` and `--expect stock` cases require no explicit
+master stop, gateway stop or reset. The partial peer intentionally retains its
+battery mode RAM on socket close: the gateway's radio-disconnect firmware
+callback is NOT executed. Therefore these regressions establish client traffic
+and error propagation, not physical restoration. That restoration was checked
+on the two real bikes separately. `--expect stranded` and `--expect receipt`
+retain the historical explicit-stop experiments, whose receipts did not restore
+the bikes. The [recorded validation](../tools/firmware-sim/di2-service-validation.json)
+contains image/source hashes and execution limits. See the [investigation](di2-ble-investigation.md#firmware-backed-timeout-reproduction).
+
+The public catalogue at `https://api.shimano.com/etube/firmware/5.4.6` supplied
+the filenames, sizes, MD5 values and download URLs. Initial acquisition checked
+those sizes and MD5 values, then pinned the raw SHA-256 values used by the tool.
+The endpoint's `5.4.6` is not an assertion about the app or installed bike version.
+
+The separate mapping evidence is the inspected E-TUBE application constructor
+`com.shimano.etubeproject.sharedcode.domain.model.unit.category.eww.EWWU111Unit`:
+its main firmware declaration selects `EWWU101` and its wireless-chip declaration
+selects the `UPDATENRF-DI2` family. The inspected APK SHA-256 is
+`2b16e03a73d06997ac15962813bffd8a8e95e2a823bfc73a81d5d46a4fbbefe5`.
+This does not identify which board, radio revision or firmware is installed on a
+particular bike. No proprietary firmware or decompiled application is bundled.
+
+Legacy main-image vectors corroborate low-first nibble decoding at byte origin
+`0x4000`: the exact board-1 battery, board-2 battery and WU-family images have
+19, 18 and 21 vectors respectively beginning with MN101-family RTI encoding.
+This is static mapping evidence, not service-handler execution or identification
+of a specific physical MCU. The instruction-family reference is Panasonic's
+[MN101Cx49x manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf).
+The main topology executor is ARM-based. The separate bounded MN101 executor
+admits only its implemented subset for the isolated service profiles above;
+unverified instruction semantics and peripherals trap. It is not a complete
+MN101 processor or full gateway/radio topology.
+
+To obtain topology coverage, first validate a strict MN101 backend, recover the
+exact PC-link/discovery handlers and their RAM/transport context in both main
+images, then connect those stock handlers through explicit modeled bus/radio
+boundaries. Tests must distinguish a gateway acknowledgement from a master
+stop and retain master state over radio disconnects. Executing only the Nordic
+radio cannot establish the battery master's ownership or shifting behavior.
+
 ### Inventory and test a local collection
 
 ```sh
@@ -170,6 +314,8 @@ Start the same server with `--gatt` and a separate socket:
 This native Unix transport works without the `ble` Cargo feature. It runs the actual client authentication/session/routing/notification code against a modeled radio, public synthetic PIN `000000`, and stock SC-EM800 PCE handlers. All six profiled SC-EM800 versions support this endpoint. Other display profiles currently support only the wired packet endpoint. Use `--ble-master`: normal/slave logical-master-zero discovery is explicitly unsupported.
 
 Radio pairing, gateway PIN challenge delivery, notifications, motor logical-address relocation during role handoff and the slave-radio stop acknowledgment are modeled topology boundaries. The actual motor stop handler must confirm disconnection. Passing cleanup does not validate physical role handoff or RF. This socket service remains read-only. Use `--drop-replies`, or `--gatt-fault stale-free|duplicate-free`, to exercise response loss and notification handling. The separate persistent browser peer below enables narrowly scoped writes.
+
+Closing a modeled GATT endpoint does not execute gateway radio-disconnect firmware or reset the powered device. Retained-device tests preserve PC-link RAM across that unmodeled boundary and can exercise explicit stops separately. This is a simulator limit, not evidence that a real normal/slave BLE session requires an explicit stop: physical validation found that GATT-only close restored both bikes while explicit stops did not. Master-routing stock tests remain separate. The complete EW-WU111/BT-DN110 slave topology remains unexecuted. See the [Di2 BLE investigation](di2-ble-investigation.md).
 
 The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
 

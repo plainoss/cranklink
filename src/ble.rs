@@ -203,6 +203,8 @@ pub struct BleSession {
     master_stock: Option<[u8; 2]>,
     linked_slot: Option<u8>,
     gateway_mode: bool,
+    closed: bool,
+    slave_component_links: BTreeMap<u8, [u8; 2]>,
     authenticated: bool,
     poisoned: bool,
     unit_auth_attempted: bool,
@@ -231,6 +233,8 @@ impl BleSession {
             master_stock: None,
             linked_slot: None,
             gateway_mode: false,
+            closed: false,
+            slave_component_links: BTreeMap::new(),
             authenticated: false,
             poisoned: false,
             unit_auth_attempted: false,
@@ -245,7 +249,8 @@ impl BleSession {
     /// This changes bus ownership, not nonvolatile settings or firmware.
     pub fn set_master_routing(&mut self, enabled: bool) -> Result<()> {
         ensure!(
-            !self.gateway_mode
+            !self.closed
+                && !self.gateway_mode
                 && !self.master_routing_active
                 && self.linked_slot.is_none()
                 && !self.firmware_active,
@@ -265,15 +270,21 @@ impl BleSession {
         self.trace = trace;
         Ok(())
     }
-    /// Release component ownership between browser commands without shutting down
-    /// the gateway's Bluetooth radio. Explicit disconnect still calls stop().
+    /// Retain normal/slave service ownership between browser commands. Master
+    /// routing releases the selected component; final disconnect calls stop().
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn pause_browser_command(&mut self) -> Result<()> {
         ensure!(
             !self.poisoned && !self.firmware_active,
             "BLE session cannot be retained after failure or during firmware operations"
         );
-        self.stop_pc_link()?;
+        if !self.master_routing && !self.master_routing_active {
+            // Slave service ownership belongs to the gateway. Keep it intact
+            // between browser commands; final GATT disconnect releases it.
+            self.linked_slot = None;
+        } else {
+            self.stop_pc_link()?;
+        }
         Ok(())
     }
     #[cfg(any(target_arch = "wasm32", test))]
@@ -286,8 +297,8 @@ impl BleSession {
             "BLE session is not ready for another command"
         );
         ensure!(
-            !self.master_routing_active || master,
-            "disconnect before switching an active browser master session to normal routing"
+            (!(self.gateway_mode || self.master_routing_active) || self.master_routing == master),
+            "disconnect before switching an active browser session routing role"
         );
         self.master_routing = master;
         self.unit_auth_attempted = false;
@@ -328,9 +339,13 @@ impl BleSession {
         }
         Ok(())
     }
+    fn poison(&mut self) {
+        self.poisoned = true;
+    }
+
     fn write(&mut self, id: u16, bytes: &[u8]) -> Result<()> {
         ensure!(
-            !self.poisoned,
+            !self.closed && !self.poisoned,
             "BLE session failed; disconnect and reconnect before another command"
         );
         ensure!(
@@ -354,18 +369,23 @@ impl BleSession {
         self.log("tx", id, bytes)?;
         let result = self.io.write(id, bytes, without_response);
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         result.context("BLE write failed; outcome may be uncertain")
     }
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>> {
         let result = self.io.receive(timeout);
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         let n = result?;
         if let Some(n) = &n {
+            if n.value.len() > 20 {
+                self.poison();
+                bail!("unsupported oversized BLE notification");
+            }
             self.log("rx", n.characteristic, &n.value)?;
+
             if n.characteristic == FREE_RESPONSE
                 && (4..=20).contains(&n.value.len())
                 && self.gateway_started_slots.contains(&n.value[0])
@@ -384,7 +404,7 @@ impl BleSession {
                 return Ok(());
             }
         }
-        self.poisoned = true;
+        self.poison();
         bail!("BLE unsolicited notification overflow")
     }
     fn wait(&mut self, check: impl Fn(&Notification) -> bool) -> Result<Notification> {
@@ -395,10 +415,6 @@ impl BleSession {
                 break;
             }
             if let Some(n) = self.receive(remaining)? {
-                if n.value.len() > 20 {
-                    self.poisoned = true;
-                    bail!("unsupported oversized BLE notification");
-                }
                 if check(&n) {
                     return Ok(n);
                 }
@@ -406,7 +422,7 @@ impl BleSession {
                 break;
             }
         }
-        self.poisoned = true;
+        self.poison();
         bail!("BLE response timeout or notification overflow; reconnect before another command")
     }
     pub fn authenticate(&mut self) -> Result<()> {
@@ -423,6 +439,7 @@ impl BleSession {
     /// normal/slave mode. Only PCE 04 readback with high bits 80 confirms this
     /// setup; OS pairing or successful proof writes alone cannot establish it.
     fn authenticate_gateway(&mut self) -> Result<()> {
+        ensure!(!self.closed, "Bluetooth connection is closed; reconnect");
         ensure!(!self.authenticated, "BLE session already authenticated");
         for id in [PCE_COMMAND, FREE_COMMAND, FEATURE] {
             let c = self
@@ -517,8 +534,9 @@ impl BleSession {
         let mut bytes = vec![0, control];
         bytes.extend_from_slice(params);
         self.write(PCE_COMMAND, &bytes)?;
-        let n =
-            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply))?;
+        let response =
+            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply));
+        let n = response?;
         Ok(n.value[1..].to_vec())
     }
     /// Slave discovery enters gateway PC-link (0C/01), reads master information
@@ -533,18 +551,27 @@ impl BleSession {
         if self.master_routing {
             return self.discover_master_units();
         }
-        self.gateway(3, &[0], 0x23)?;
-        sleep(Duration::from_secs(1));
+        let retained = self.gateway_mode;
+        if !retained {
+            self.gateway(3, &[0], 0x23)?;
+            sleep(Duration::from_secs(1));
+        }
         let mode = self.gateway(4, &[], 0x24)?;
         ensure!(
             !mode.is_empty() && mode[0] & 0xe0 == 0x80,
             "BLE gateway did not enter normal slave mode"
         );
+        ensure!(
+            !retained || mode[0] & 31 == self.pc_slot,
+            "retained BLE slave address changed; disconnect before another command"
+        );
         self.pc_slot = mode[0] & 31;
-        // Enters the gateway PC connection mode; always attempt to leave on stop.
+        // Enter gateway service mode once per connection.
         self.gateway_mode = true;
-        // Require the matching 2C receipt; this reply has no USB-style status byte.
-        self.gateway(0x0c, &[1], 0x2c)?;
+        if !retained {
+            // Require the matching gateway startup receipt once.
+            self.gateway(0x0c, &[1], 0x2c)?;
+        }
         // Query the bus master separately as logical slot zero. The slave bitmap can
         // omit this master even when it is the motor we need to read.
         let master = self.gateway(0x0d, &[0], 0x2d)?;
@@ -709,6 +736,11 @@ impl BleSession {
         let slots = self.discover_units()?;
         self.inventory_slots(&slots, true)
     }
+    /// Read current-session stock identities without optional component queries.
+    pub fn units_stock_only(&mut self) -> Result<Vec<crate::device::UnitIdentity>> {
+        let slots = self.discover_units()?;
+        self.inventory_slots(&slots, false)
+    }
     pub fn start(&mut self, selected: Option<u8>) -> Result<Identity> {
         self.start_inner(selected, None, false)
     }
@@ -735,7 +767,16 @@ impl BleSession {
                 Some(slot) => vec![crate::device::select_motor_slot(&slots, Some(slot))?],
                 None => slots.clone(),
             };
-            let units = self.inventory_slots(&named_slots, true)?;
+            let mut units = self.inventory_slots(&named_slots, false)?;
+            for unit in &mut units {
+                if unit
+                    .model_candidates
+                    .iter()
+                    .any(|name| crate::unit_models::name_matches(component, name))
+                {
+                    unit.resolve_name(self)?;
+                }
+            }
             crate::device::select_named_component(&units, component)?
         } else if selected.is_none() && slots.len() > 1 {
             crate::device::select_current_motor(&self.inventory_slots(&slots, false)?)?
@@ -752,6 +793,15 @@ impl BleSession {
                 unit.model
                     .is_some_and(|model| crate::unit_models::name_matches(component, model)),
                 "component {component:?} no longer matches slot {slot}"
+            );
+        }
+        let stock = [unit.model_series, unit.model_unit];
+        if !self.master_routing {
+            ensure!(
+                self.slave_component_links
+                    .get(&slot)
+                    .is_none_or(|old| *old == stock),
+                "retained BLE component identity changed; disconnect before another command"
             );
         }
         self.linked_slot = Some(slot);
@@ -772,7 +822,9 @@ impl BleSession {
                     })?
                 },
             )
-        } else if slot != 0 {
+        } else if slot != 0
+            && (self.master_routing || !self.slave_component_links.contains_key(&slot))
+        {
             self.drain()?;
             // Same logical PC-link start and unit keys as the wired application,
             // routed over FREE_COMMAND rather than serial/USB framing.
@@ -796,7 +848,7 @@ impl BleSession {
             None
         };
         if self.master_routing {
-            if let Some(receipt) = receipt {
+            if let Some(receipt) = &receipt {
                 ensure!(
                     receipt.value.len() >= 7
                         && receipt.value[4] == 0
@@ -804,6 +856,17 @@ impl BleSession {
                     "BLE component did not confirm PC owner zero; privileged routing is unverified"
                 );
             }
+        }
+        if !self.master_routing && slot != 0 {
+            if let Some(receipt) = receipt {
+                if !(receipt.value.len() >= 7
+                    && receipt.value[3..7] == [1, self.pc_slot, 0xff, 0xff])
+                {
+                    self.poison();
+                    bail!("BLE component did not confirm local PC ownership");
+                }
+            }
+            self.slave_component_links.insert(slot, stock);
         }
         self.gateway_started_slots.remove(&slot);
         self.master_pc_start_receipts.remove(&slot);
@@ -831,10 +894,20 @@ impl BleSession {
             rx_version,
         })
     }
-    /// Release motor ownership, restore/confirm slave mode, then stop the
-    /// gateway PC-link before closing GATT. A timeout fences further traffic;
-    /// after that, disconnect cannot stand in for an acknowledged motor stop.
+    /// End normal/slave sessions by disconnecting GATT, allowing gateway-owned
+    /// firmware teardown. Master-routing sessions require explicit component
+    /// stop, routing restoration and gateway stop before the caller closes GATT.
     pub fn stop(&mut self) -> Result<()> {
+        if !self.master_routing && !self.master_routing_active {
+            ensure!(
+                !self.firmware_active,
+                "motor firmware session remains active"
+            );
+            // Normal/slave firmware owns service teardown on radio disconnect.
+            // Explicit master/gateway stops acknowledged successfully on hardware
+            // but left shifting and the pairing button disabled.
+            return self.close();
+        }
         ensure!(
             !self.firmware_active,
             "motor firmware session remains active; inspect journal before recovery"
@@ -851,8 +924,8 @@ impl BleSession {
         // session. Restore and confirm slave routing before that final command.
         // Timeouts still fence all further protocol traffic.
         if !was_master {
-            // A rejected unit stop leaves the session responsive, so the
-            // gateway is still stopped, as on the master path.
+            // A failed master-routing setup can leave the gateway responsive
+            // before master routing becomes active.
             if self.poisoned {
                 return stopped;
             }
@@ -899,7 +972,6 @@ impl BleSession {
             }
             self.gateway_started_slots.remove(&slot);
             self.master_pc_start_receipts.remove(&slot);
-            // The master is stopped by the matching gateway 0C/00 below.
         }
         self.linked_slot = None;
         Ok(())
@@ -936,8 +1008,19 @@ impl BleSession {
         self.linked_slot = None;
         Ok(())
     }
-    /// Close GATT only; use `stop` first to confirm protocol-level cleanup.
+    /// Close GATT and invalidate local session state. Normal/slave firmware
+    /// owns teardown on disconnect; master routing must call `stop` first.
     pub fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        self.authenticated = false;
+        self.gateway_mode = false;
+        self.linked_slot = None;
+        self.target_slot = None;
+        self.master_stock = None;
+        self.slave_component_links.clear();
         self.io.close()
     }
 
@@ -1004,7 +1087,7 @@ impl BleSession {
         if let Some(product) = product {
             let result = self.authenticate_modern(slot, &serial, &product, model[1], &firmware);
             if result.is_err() {
-                self.poisoned = true;
+                self.poison();
             }
             return result;
         }
@@ -1059,7 +1142,7 @@ impl BleSession {
                 "firmware":firmware,"protocol":"legacy","scope":"regulation-setting authentication; per-setting validation still required"}))
         })();
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         result
     }
@@ -1165,13 +1248,15 @@ impl UnitCommands for BleSession {
         // FREE_RESPONSE carries the addressed component slot, independently
         // of the gateway's bus PC-link slot. Local gateway queries use slot 0.
         let pc = slot;
-        let n = self.wait(|n| {
+        let response = self.wait(|n| {
             n.characteristic == FREE_RESPONSE
                 && n.value.len() >= 3
                 && n.value[0] == pc
                 && n.value[1] == group
                 && (n.value[2] == response_cmd || n.value[2] == response_cmd.wrapping_add(1))
-        })?;
+        });
+
+        let n = response?;
         ensure!(
             n.value[2] == response_cmd,
             "unit/gateway rejected BLE group {group:02X} command {command:02X}: reply {}",
@@ -1180,6 +1265,7 @@ impl UnitCommands for BleSession {
         Ok(n.value[3..].to_vec())
     }
 }
+
 fn allowed_unit_command(group: u8, command: u8) -> bool {
     matches!(
         (group, command),
@@ -1222,6 +1308,10 @@ pub(crate) mod tests {
         reject_destination_write: bool,
         reject_lamp: bool,
         timeout_lamp: bool,
+        drop_query: Option<(u8, u8)>,
+        flood_query: bool,
+        fail_receive: bool,
+        drop_master_metadata: bool,
         invalid_nonce: bool,
         bad_mode: bool,
         unit_bitmap: Option<[u8; 4]>,
@@ -1231,6 +1321,10 @@ pub(crate) mod tests {
         component_stock: BTreeMap<u8, [u8; 2]>,
         stock_sequence: VecDeque<[u8; 2]>,
         master_info: Option<Vec<u8>>,
+        slave_master_connected: bool,
+        slave_master_start_receipt: Option<Vec<u8>>,
+        late_slave_master_start: bool,
+        slave_master_stop_reply: Option<Vec<u8>>,
         master_stock_reply: Option<Vec<u8>>,
         motor_params: Option<Vec<u8>>,
         motor_version: Option<Vec<u8>>,
@@ -1250,6 +1344,7 @@ pub(crate) mod tests {
         reject_gateway_pc_stop: bool,
         target: Option<u8>,
         closed: bool,
+        fail_close: bool,
         backup_required: Option<std::path::PathBuf>,
     }
     struct Mock(Rc<RefCell<State>>);
@@ -1369,9 +1464,30 @@ pub(crate) mod tests {
                                 );
                             }
                         }
+                        if data[2] == 1
+                            && !s.master_mode
+                            && s.master_info
+                                .as_ref()
+                                .is_some_and(|v| v.len() >= 3 && v[1] != 0xff)
+                        {
+                            s.slave_master_connected = true;
+                        }
+                        if data[2] == 1 && !s.master_mode {
+                            if let Some(receipt) = s.slave_master_start_receipt.clone() {
+                                s.slave_master_connected = true;
+                                notify(&mut s, FREE_RESPONSE, receipt);
+                            }
+                        }
+                        if data[2] == 0 && !s.master_mode && s.late_slave_master_start {
+                            s.slave_master_connected = true;
+                            notify(&mut s, FREE_RESPONSE, vec![0, 0x32, 0x12, 1, 3, 0xff, 0xff]);
+                        }
                         vec![0x2c, u8::from(data[2] == 0 && s.reject_gateway_pc_stop)]
                     }
                     0x0d => {
+                        if s.drop_master_metadata {
+                            return Ok(());
+                        }
                         let mut reply = vec![0x2d];
                         reply.extend(s.master_info.clone().unwrap_or(vec![1, 0xff, 0xff]));
                         reply
@@ -1387,6 +1503,15 @@ pub(crate) mod tests {
                 notify(&mut s, PCE_RESPONSE, response);
             }
             if id == FREE_COMMAND {
+                if s.drop_query == Some((data[1], data[2])) {
+                    if s.flood_query {
+                        for _ in 0..256 {
+                            notify(&mut s, FREE_RESPONSE, vec![31, 0xff, 0xff]);
+                        }
+                    }
+                    return Ok(());
+                }
+
                 if data[0] == 0 {
                     assert!(
                         s.target.is_none() || s.target == Some(0),
@@ -1401,9 +1526,10 @@ pub(crate) mod tests {
                 }
                 let expected_slot = if matches!((data[1], data[2]), (1 | 2, 0x14))
                     || (data[0] == 0
-                        && s.master_info
-                            .as_ref()
-                            .is_some_and(|info| info.len() >= 3 && info[1] != 0xff))
+                        && (s.slave_master_connected
+                            || s.master_info
+                                .as_ref()
+                                .is_some_and(|info| info.len() >= 3 && info[1] != 0xff)))
                 {
                     0
                 } else {
@@ -1470,6 +1596,18 @@ pub(crate) mod tests {
                 let mut response = vec![data[0], group, cmd + 2];
                 match (group, cmd) {
                     (0x32, 0x10) => {
+                        if data[0] == 0 && data[3] == 0 {
+                            let reply = s
+                                .slave_master_stop_reply
+                                .clone()
+                                .unwrap_or_else(|| vec![0, data[4], 0xff, 0xff]);
+                            if reply.starts_with(&[0, data[4], 0xff, 0xff]) {
+                                s.slave_master_connected = false;
+                            }
+                            response.extend(reply);
+                            notify(&mut s, FREE_RESPONSE, response);
+                            return Ok(());
+                        }
                         response.push(if data[3] == 0 && s.reject_pc_stop {
                             1
                         } else {
@@ -1477,6 +1615,12 @@ pub(crate) mod tests {
                         });
                         if s.master_mode {
                             response.extend([if s.wrong_pc_owner { 19 } else { 0 }, 0xff, 0xff]);
+                        } else {
+                            response.extend([
+                                if s.wrong_pc_owner { 19 } else { data[4] },
+                                0xff,
+                                0xff,
+                            ]);
                         }
                     }
                     (0x16, 0x7c) => {
@@ -1559,10 +1703,18 @@ pub(crate) mod tests {
             Ok(())
         }
         fn receive(&mut self, _: Duration) -> Result<Option<Notification>> {
+            ensure!(
+                !self.0.borrow().fail_receive,
+                "modeled GATT receive failure"
+            );
             Ok(self.0.borrow_mut().pending.pop_front())
         }
         fn close(&mut self) -> Result<()> {
             self.0.borrow_mut().closed = true;
+            ensure!(
+                !self.0.borrow().fail_close,
+                "modeled GATT disconnect failure"
+            );
             Ok(())
         }
     }
@@ -1808,6 +1960,11 @@ pub(crate) mod tests {
             writes.iter().filter(|(id, _)| *id == AUTH_CONTROL).count(),
             2
         );
+        if !master {
+            assert_no_slave_stop(writes);
+            assert!(state.borrow().closed);
+            return;
+        }
         let stop_lever = writes
             .iter()
             .position(|(id, bytes)| *id == FREE_COMMAND && bytes.starts_with(&[4, 0x32, 0x10, 0]))
@@ -2007,13 +2164,14 @@ pub(crate) mod tests {
                 .iter()
                 .filter(|(id, bytes)| *id == PCE_COMMAND && bytes == &[0, 0x0c, 0])
                 .count(),
-            1
+            0
         );
     }
     #[test]
     fn browser_commands_retain_master_routing_until_explicit_stop() {
         let (mut session, state) = mock();
         state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
+        session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
         session.pause_browser_command().unwrap();
@@ -2081,12 +2239,13 @@ pub(crate) mod tests {
     #[test]
     fn browser_command_cleanup_failure_fences_session_without_replay() {
         let (mut session, state) = mock();
+        session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
         state.borrow_mut().timeout_pc_stop = true;
         assert!(session.pause_browser_command().is_err());
         let writes = state.borrow().writes.len();
-        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.resume_browser_command(true).is_err());
         assert_eq!(state.borrow().writes.len(), writes);
         assert!(session.poisoned);
     }
@@ -2380,27 +2539,7 @@ pub(crate) mod tests {
             1
         );
     }
-    #[test]
-    fn rejected_unit_stop_still_stops_a_responsive_slave_gateway() {
-        let gateway_stop = (PCE_COMMAND, vec![0, 0x0c, 0]);
-        let (mut session, state) = mock();
-        session.authenticate().unwrap();
-        session.start(Some(13)).unwrap();
-        state.borrow_mut().reject_pc_stop = true;
-        let error = session.stop().unwrap_err().to_string();
-        assert!(error.contains("BLE cleanup failed; gateway PC-link was stopped"));
-        assert!(error.contains("unit PC-link stop rejected"));
-        assert!(!session.poisoned && !session.gateway_mode);
-        assert_eq!(state.borrow().writes.last(), Some(&gateway_stop));
-        // A unit stop timeout fences the session: no gateway stop follows.
-        let (mut session, state) = mock();
-        session.authenticate().unwrap();
-        session.start(Some(13)).unwrap();
-        state.borrow_mut().timeout_pc_stop = true;
-        assert!(session.stop().is_err());
-        assert!(session.poisoned);
-        assert!(!state.borrow().writes.contains(&gateway_stop));
-    }
+
     #[test]
     fn master_stop_timeout_never_claims_restore_or_dispatches_more_commands() {
         let (mut session, state) = mock();
@@ -2551,11 +2690,8 @@ pub(crate) mod tests {
             .any(|(id, bytes)| *id == FREE_COMMAND
                 && bytes[0] == 0
                 && bytes[1] == 0x32
-                && matches!(bytes[2], 0x10 | 0x30)));
-        assert!(state
-            .borrow()
-            .writes
-            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
+                && (bytes[2] == 0x30 || (bytes[2] == 0x10 && bytes[3] == 1))));
+        assert_no_slave_stop(&state.borrow().writes);
         assert!(session.linked_slot.is_none());
     }
 
@@ -2564,6 +2700,7 @@ pub(crate) mod tests {
         let (mut session, state) = mock();
         session.authenticated = true;
         session.gateway_mode = true;
+        session.pc_slot = 3;
         session.master_stock = Some([0x23, 0]);
         session.gateway(3, &[0], 0x23).unwrap();
         let writes = state.borrow().writes.len();
@@ -2588,6 +2725,8 @@ pub(crate) mod tests {
                 .iter()
                 .any(|(id, _)| *id == FREE_COMMAND));
             session.stop().unwrap();
+            assert!(state.borrow().closed);
+            assert_no_slave_stop(&state.borrow().writes);
         }
     }
 
@@ -2697,7 +2836,7 @@ pub(crate) mod tests {
         let writes = &state.borrow().writes;
         assert!(writes.contains(&(FREE_COMMAND, vec![4, 0x32, 0x10, 1, 3, 0, 0])));
         assert!(writes.contains(&(FREE_COMMAND, vec![4, 1, 0x2c, 0])));
-        assert!(writes.contains(&(FREE_COMMAND, vec![4, 0x32, 0x10, 0, 3, 0, 0])));
+        assert_no_slave_stop(writes);
         assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
             && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
     }
@@ -2736,6 +2875,52 @@ pub(crate) mod tests {
         assert!(part < start);
         assert!(!writes.iter().any(|(id, bytes)| *id == FREE_COMMAND
             && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
+    }
+    #[test]
+    fn named_selection_does_not_query_unrelated_unresponsive_levers() {
+        for (stock, name) in [([0x11, 3], "FD-R9150"), ([0x16, 4], "RD-RX815")] {
+            let (mut session, state) = mock();
+            {
+                let mut s = state.borrow_mut();
+                s.unit_bitmap = Some([24, 32, 0, 0]);
+                s.component_stock = BTreeMap::from([(4, [0x11, 1]), (13, stock)]);
+                s.motor_slots = vec![4, 13];
+                s.component_part = Some(4);
+                s.drop_query = Some((4, 0x0c));
+            }
+            session.authenticate().unwrap();
+            let identity = session.start_component(None, Some(name)).unwrap();
+            assert_eq!(identity.slot, 13);
+            assert_eq!(identity.cargo, name);
+            assert!(!state
+                .borrow()
+                .writes
+                .iter()
+                .any(|(id, bytes)| *id == FREE_COMMAND && bytes.starts_with(&[4, 4, 0x0c])));
+            if name == "RD-RX815" {
+                assert!(state
+                    .borrow()
+                    .writes
+                    .contains(&(FREE_COMMAND, vec![13, 0x32, 0x9c, 0])));
+            }
+            session.stop().unwrap();
+        }
+    }
+    #[test]
+    fn stock_only_inventory_keeps_candidates_without_optional_part_queries() {
+        let (mut session, state) = component_mock(0x16, 4);
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        let units = session.units_stock_only().unwrap();
+        assert_eq!(units.len(), 1);
+        assert!(units[0].model.is_none());
+        assert!(units[0].model_candidates.contains(&"RD-RX815"));
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| *id == FREE_COMMAND
+                && matches!((bytes[1], bytes[2]), (0x32, 0x9c) | (4, 0x0c))));
+        session.stop().unwrap();
     }
     #[test]
     fn named_component_ble_selection_intersects_explicit_slot() {
@@ -2841,14 +3026,8 @@ pub(crate) mod tests {
         assert!(state
             .writes
             .contains(&(FREE_COMMAND, vec![13, 0x32, 0x10, 1, 3, 0, 0])));
-        assert!(state
-            .writes
-            .contains(&(FREE_COMMAND, vec![13, 0x32, 0x10, 0, 3, 0, 0])));
+        assert_no_slave_stop(&state.writes);
         assert!(state.writes.iter().all(|(_, bytes)| bytes.len() <= 20));
-        assert_eq!(
-            state.writes.last().unwrap(),
-            &(PCE_COMMAND, vec![0, 0x0c, 0])
-        );
     }
     #[test]
     fn settings_write_backs_up_before_dispatch_and_restores_original() {
@@ -2897,6 +3076,15 @@ pub(crate) mod tests {
         assert!(crate::settings::read(&mut s, 13, "lamp").is_err());
         assert_eq!(state.borrow().writes.len(), before);
     }
+    fn slave_with_known_master() -> (BleSession, Rc<RefCell<State>>) {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_info = Some(vec![1, 0x11, 1]);
+        state.borrow_mut().master_stock_reply = Some(vec![0x11, 0, 0xff]);
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        (session, state)
+    }
+
     #[test]
     fn firmware_and_mode_switching_are_rejected_before_gatt_dispatch() {
         let (mut s, state) = mock();
@@ -3014,5 +3202,175 @@ pub(crate) mod tests {
         );
         session.stop().unwrap();
         std::fs::remove_file(backup).unwrap();
+    }
+
+    fn assert_no_slave_stop(writes: &[(u16, Vec<u8>)]) {
+        assert!(
+            !writes.iter().any(|(id, bytes)| {
+                (*id == PCE_COMMAND && (bytes == &[0, 0x0c, 0] || bytes == &[0, 0x10]))
+                    || (*id == FREE_COMMAND && bytes.len() >= 4 && bytes[1..4] == [0x32, 0x10, 0])
+            }),
+            "normal/slave teardown must delegate to GATT disconnect"
+        );
+    }
+    #[test]
+    fn slave_final_disconnect_closes_radio_without_protocol_stop_and_prevents_reuse() {
+        let (mut session, state) = slave_with_known_master();
+        let before = state.borrow().writes.len();
+        session.stop().unwrap();
+        assert!(state.borrow().closed);
+        assert_eq!(before, state.borrow().writes.len());
+        assert!(!session.authenticated && !session.gateway_mode);
+        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.authenticate().is_err());
+        assert!(session.command(0, 1, 0x1c, &[0], 0x1e).is_err());
+        session.stop().unwrap();
+        session.close().unwrap();
+        assert_eq!(before, state.borrow().writes.len());
+        assert_no_slave_stop(&state.borrow().writes);
+    }
+    #[test]
+    fn slave_disconnect_failure_propagates_and_still_prevents_reuse() {
+        let (mut session, state) = slave_with_known_master();
+        state.borrow_mut().fail_close = true;
+        let before = state.borrow().writes.len();
+        assert!(session
+            .stop()
+            .unwrap_err()
+            .to_string()
+            .contains("disconnect failure"));
+        assert!(session.closed && !session.authenticated && !session.gateway_mode);
+        assert!(session.write(PCE_COMMAND, &[0, 4]).is_err());
+        assert!(session.authenticate().is_err());
+        assert!(session.resume_browser_command(false).is_err());
+        assert_eq!(before, state.borrow().writes.len());
+        assert_no_slave_stop(&state.borrow().writes);
+    }
+    #[test]
+    fn slave_component_foreign_owner_cannot_be_retained_or_replayed() {
+        let (mut session, state) = component_mock(0x16, 4);
+        state.borrow_mut().component_part = Some(4);
+        state.borrow_mut().wrong_pc_owner = true;
+        assert!(session
+            .start_component(Some(4), Some("RD-RX815"))
+            .unwrap_err()
+            .to_string()
+            .contains("local PC ownership"));
+        assert!(session.slave_component_links.is_empty());
+        assert!(session.poisoned);
+        assert!(session.pause_browser_command().is_err());
+        assert!(session.resume_browser_command(false).is_err());
+        let before = state.borrow().writes.len();
+        session.stop().unwrap();
+        assert!(state.borrow().closed);
+        assert_eq!(before, state.borrow().writes.len());
+        assert_no_slave_stop(&state.borrow().writes);
+    }
+    #[test]
+    fn slave_read_write_transport_and_overflow_failures_still_allow_final_radio_close() {
+        for case in 0..5 {
+            let (mut session, state) = slave_with_known_master();
+            let query = if case == 1 {
+                (0x10, 0x10, vec![1])
+            } else {
+                (0x32, 0x9c, vec![0])
+            };
+            state.borrow_mut().drop_query = Some((query.0, query.1));
+            state.borrow_mut().flood_query = case == 2;
+            state.borrow_mut().fail_receive = case == 3;
+            if case == 4 {
+                notify(&mut state.borrow_mut(), FREE_RESPONSE, vec![0; 21]);
+            }
+            let operation = session.command(13, query.0, query.1, &query.2, query.1 + 2);
+            assert!(operation.is_err());
+            assert!(session.poisoned);
+            let before = state.borrow().writes.len();
+            session.stop().unwrap();
+            assert!(state.borrow().closed);
+            assert_eq!(before, state.borrow().writes.len());
+            assert!(operation.unwrap_err().to_string().contains(if case == 3 {
+                "receive failure"
+            } else if case == 4 {
+                "oversized"
+            } else {
+                "timeout"
+            }));
+            assert_no_slave_stop(&state.borrow().writes);
+        }
+    }
+    #[test]
+    fn slave_browser_commands_revalidate_without_replaying_service_or_component_start() {
+        let (mut session, state) = component_mock(0x16, 4);
+        state.borrow_mut().component_part = Some(4);
+        for _ in 0..3 {
+            session.start_component(Some(4), Some("RD-RX815")).unwrap();
+            let before = state.borrow().writes.len();
+            session.pause_browser_command().unwrap();
+            assert_eq!(before, state.borrow().writes.len());
+            assert!(!state.borrow().closed);
+            assert!(session.resume_browser_command(true).is_err());
+            session.resume_browser_command(false).unwrap();
+        }
+        let writes = state.borrow().writes.clone();
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, b)| *id == PCE_COMMAND && b == &[0, 0x0c, 1])
+                .count(),
+            1
+        );
+        // Authentication and initial discovery negotiate once each; retained
+        // commands never renegotiate the gateway role.
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, b)| *id == PCE_COMMAND && b == &[0, 3, 0])
+                .count(),
+            2
+        );
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, b)| *id == FREE_COMMAND && b.starts_with(&[4, 0x32, 0x10, 1]))
+                .count(),
+            1
+        );
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, b)| *id == FREE_COMMAND && b.starts_with(&[4, 0x32, 0x30]))
+                .count(),
+            5
+        );
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|(id, b)| *id == FREE_COMMAND && b == &[0, 2, 0x14, 4])
+                .count(),
+            6
+        );
+        assert_no_slave_stop(&writes);
+        session.stop().unwrap();
+        assert!(state.borrow().closed);
+    }
+    #[test]
+    fn retained_slave_component_stock_change_requires_reconnect_before_start_replay() {
+        let (mut session, state) = component_mock(0x16, 4);
+        state.borrow_mut().component_part = Some(4);
+        session.start_component(Some(4), Some("RD-RX815")).unwrap();
+        session.pause_browser_command().unwrap();
+        session.resume_browser_command(false).unwrap();
+        state.borrow_mut().component_stock.insert(4, [0x11, 3]);
+        let before = state.borrow().writes.len();
+        assert!(session
+            .start_component(Some(4), Some("FD-R9150"))
+            .unwrap_err()
+            .to_string()
+            .contains("identity changed"));
+        assert!(!state.borrow().writes[before..]
+            .iter()
+            .any(|(id, b)| *id == FREE_COMMAND && b.starts_with(&[4, 0x32, 0x10])));
+        session.stop().unwrap();
+        assert_no_slave_stop(&state.borrow().writes);
     }
 }

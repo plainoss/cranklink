@@ -21,13 +21,36 @@ Release at the indicated signal; holding longer can select another mode. Classic
 ```sh
 cranklink ble scan
 cranklink --port 'ble:DEVICE_ID' ble test-link
+cranklink --port 'ble:DEVICE_ID' units --stock-only
 cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.json
 ```
 
 `DEVICE_ID` is the peripheral ID from the scan; `<SERIAL>` is the target component serial from `probe`, not the Bluetooth ID. Add `--component <MODEL>` to target a catalogued Di2 component. The six-digit bike passkey is prompted for, or read from `--passkey-file` or `CRANKLINK_PASSKEY`.
 
+`units --stock-only` skips optional part-number and model-discriminator GETs. Unresolved models remain candidates. Named component selection resolves only candidates for the requested model, so an unrelated unresponsive lever cannot block another target. Each new connection still discovers its own current slots.
+
 Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
 
+## Disconnect and Di2 recovery
+
+Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware to handle its radio-disconnect event. They do not send an explicit logical-master `32/10` stop, gateway `0C/00` stop or gateway reset. This matches the recovered vendor normal-disconnect path. Explicit stop acknowledgements did not restore either tested bike; closing GATT alone preserved normal operation on both EW-WU111/BT-DN110 Di2 and SC-EM800/EP800 STEPS hardware.
+
+The browser retains its normal/slave service session between commands without stopping the logical master. Final Disconnect closes GATT. Changing routing roles on an active retained session requires disconnect/reconnect. Explicit master-routing sessions keep their acknowledged component stop and routing-restoration sequence.
+
+Read and write errors still fail the operation; closing the link never converts an error into a successful read or write. A failed command is not retried. Link closure and normal physical operation are distinct observations: confirm shifting, display and controls when validating a new gateway. See the [Di2 BLE investigation](di2-ble-investigation.md) for the successful physical checks, rejected experiments and simulator limits.
+
+In the web app choose **Di2 shifting only (no STEPS motor)** or **STEPS e-bike** based on whether the bike has a STEPS motor. STEPS e-bikes can also use Di2 components. This keeps a shifting-only session in ordinary routing while preserving the existing STEPS master-routing workflow for protected motor settings.
+
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
+
+## Staged Di2 read validation
+
+For a bike that previously remained in service mode, validate one connection at
+a time: authentication-only `ble test-link`, then `units --stock-only`, then
+one read from the freshly selected named component. Use `--read-only` and a new
+`--trace` path for every connection. Confirm shifting and the junction button
+with the rider between stages. Do not reuse an old component slot or combine
+the stages into an automatic retry loop. A failed read closes the link and ends
+the test; it is not retried automatically.
 
 E6000/E6001-family writes require no motor authentication; E6002/E6012 use legacy authentication from D3.4.0. E6002 region selection is available from D3.3.0. These additions remain hardware-unvalidated; see [E6000-family settings](settings.md#e6000-family-drive-units).

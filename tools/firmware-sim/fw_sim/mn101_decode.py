@@ -1,6 +1,8 @@
-"""Strict MN101 instruction subset with low-first nibble fetch.
+"""Strict MN101 subset decoder from Panasonic 21449-041E XIX-25..30.
 
-Unknown instructions and unmapped code trap. This is not a complete CPU.
+pc/base are linear nibble addresses/byte origin; fetch is low nibble first.
+Unknown encodings and unmapped code trap. Decoding does not establish execution
+coverage or a complete CPU profile.
 """
 class DecodeError(RuntimeError):
     pass

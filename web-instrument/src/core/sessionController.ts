@@ -104,6 +104,7 @@ export class SessionController {
         initialPreset: "eu_default",
         fault: "none",
       },
+      bluetoothBike: "steps",
       identity: null,
       units: [],
       schema: [],
@@ -130,6 +131,12 @@ export class SessionController {
 
   public getState(): InstrumentState {
     return this.state;
+  }
+  public setBluetoothBike(bike: "steps" | "di2"): void {
+    if (this.state.transport || !["disconnected", "error"].includes(this.state.phase)) {
+      throw new Error("Disconnect before choosing a different bike type.");
+    }
+    this.update({ bluetoothBike: bike });
   }
 
   public subscribe(listener: (state: InstrumentState) => void): () => void {
@@ -507,7 +514,7 @@ export class SessionController {
 
 
   private async readInventory(): Promise<ComponentUnit[]> {
-    const result = await this.exec(`${this.state.transport === "ble" ? "--ble-master=master " : ""}units`);
+    const result = await this.exec(`${this.bluetoothSessionFlags()}units`);
     if (result.code !== 0) throw new Error(result.stderr || "Component discovery failed.");
     const parsed = this.extractLastJsonObject(result.stdout);
     if (!Array.isArray(parsed?.units)) throw new Error("Component discovery returned no valid inventory.");
@@ -572,7 +579,7 @@ export class SessionController {
       // wired reads never needed it, and a failed handshake would hide the motor.
       const unitAuth = (transport === "ble" || transport === "sim")
         && isMotorStock(unit.model_series, unit.model_unit) && [0x30, 0x35, 0x37].includes(unit.model_series);
-      const result = await this.exec(`${transport === "ble" ? "--ble-master=master " : ""}${target}${unitAuth ? "--ble-unit-auth " : ""}settings read`);
+      const result = await this.exec(`${this.bluetoothSessionFlags()}${target}${unitAuth ? "--ble-unit-auth " : ""}settings read`);
       if (result.code !== 0) throw new Error(result.stderr || "Component settings read failed.");
       const snapshot = this.extractLastJsonObject(result.stdout);
       const identity = this.parseIdentity(snapshot?.identity);
@@ -709,11 +716,19 @@ export class SessionController {
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
     const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
-    const target = `--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
+    const target = `${this.state.transport === "ble" && this.state.bluetoothBike === "di2" ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
     }
     return target;
+  }
+
+  private bluetoothSessionFlags(): string {
+    // The motor simulator follows the STEPS gateway workflow from its first
+    // command; protected writes must not switch a retained normal connection.
+    if (this.state.transport === "sim") return "--ble-master=master ";
+    if (this.state.transport !== "ble") return "";
+    return this.state.bluetoothBike === "di2" ? "--ble-master=normal " : "--ble-master=master ";
   }
 
   public async disconnect(): Promise<void> {

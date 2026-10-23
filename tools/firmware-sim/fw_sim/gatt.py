@@ -292,25 +292,11 @@ class GattEndpoint:
     def close(self):
         if self.closed: return
         self.closed = True
-        confirmed = False
-        try:
-            if self.motor.connected:
-                # Coordinator cleanup after failure differs from a client stop.
-                self.events.append(dict(kind='coordinator-cleanup-after-client-disconnect'))
-                self._lifecycle('coordinator-cleanup-after-client-disconnect')
-                self.gateway.call(self.gateway.profile['pce3'],0x20)
-                self.gateway.call(self.gateway.profile['sched'])
-                before = len(self.gateway.notifications)
-                for packet in self.gateway.link_stop(): self.bus.enqueue(packet)
-                self.bus.drain()
-                if '2c00' in self.gateway.notifications[before:]:
-                    self.device.end_connection_mode(self.connection_id,'actual-stock-stop-during-coordinator-cleanup')
-            self.gateway.restore()
-            require(not self.motor.connected, 'GATT endpoint cleanup unconfirmed')
-            confirmed = True
-        finally:
-            self.device.active_endpoint = None
-            self._lifecycle('gatt-disconnect',cleanup_confirmed=confirmed)
+        # A radio disconnect does not transmit E-TUBE stop commands or power
+        # cycle the bike. Preserve firmware RAM, including a stranded PC owner,
+        # so a missing client stop remains observable across reconnects.
+        self.device.active_endpoint = None
+        self._lifecycle('gatt-disconnect',cleanup_confirmed=not self.motor.connected)
 
 
 def read_request_line(connection, timeout=5, idle_timeout=30):
