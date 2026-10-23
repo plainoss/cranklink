@@ -344,10 +344,23 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
 async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false) {
+  // Headless Chromium on Linux (CI) has no Web Bluetooth, and the connect view
+  // decides on first render whether to offer it. Stand in before the app loads;
+  // the simulator's chooser replaces this below.
+  await page.addInitScript(() => {
+    if (!("bluetooth" in navigator)) {
+      Object.defineProperty(navigator, "bluetooth", {
+        configurable: true,
+        value: { requestDevice: async () => { throw new Error("No simulated Bluetooth device yet"); } },
+      });
+    }
+  });
   if (cachePasskey) {
-    await page.addInitScript(() => {
+    // The cached PIN applies only to the gateway it was entered for.
+    await page.addInitScript((device) => {
       sessionStorage.setItem("esteps_ble_passkey", "000000");
-    });
+      sessionStorage.setItem("esteps_ble_passkey_device", device);
+    }, `simulated-etube-${rejectAuthentication ? "ep801" : "ep800-crg"}`);
   }
   await openInstrument(page);
   const setup = await page.evaluate(async ({ reject, defer }) => {
