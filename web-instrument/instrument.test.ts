@@ -1171,8 +1171,62 @@ describe("Disconnect cleanup reporting", () => {
   });
 });
 
+describe("Adapter unplugged between commands", () => {
+  function connected(transport: "usb" | "serial" | "ble", run: (line: string) => Promise<{ code: number }> = async () => ({ code: 0 })) {
+    (globalThis as any).window = globalThis;
+    let unplugged: ((error: string) => void) | null = null;
+    const controller = new SessionController();
+    controller.attachTerminal({
+      run,
+      setPasskeyPrompt: () => {},
+      setAdapterDisconnectHandler: (handler) => { unplugged = handler; },
+      status: () => ({ ready: true, busy: false, usbSelected: true, transport }),
+      files: { list: () => [], bytes: () => new Uint8Array(), initialize: async () => {}, import: async () => {} },
+    });
+    (controller as any).update({ phase: "ready", transport, identity: { serial: "010203040506" }, stagedValues: { "tire-circumference": 2010 } });
+    return { controller, unplug: (error: string) => unplugged!(error) };
+  }
+
+  it("marks the link lost at once and keeps the staged edits", () => {
+    for (const [transport, error] of [["usb", "USB device disconnected"], ["serial", "Serial device disconnected"]] as const) {
+      const { controller, unplug } = connected(transport);
+      unplug(error);
+      const state = controller.getState();
+      assert.equal(state.linkLost, true);
+      assert.deepEqual(state.stagedValues, { "tire-circumference": 2010 });
+      const failure = describeFailure(state.failure!, state.transport, []);
+      assert.equal(failure.title, "USB adapter disconnected");
+      assert.match(failure.message, /USB adapter disconnected.*reconnect/i);
+      assert.equal(failure.linkLost, true);
+    }
+  });
+
+  it("leaves a running command to report the unplug through its own error", async () => {
+    let unplug: (error: string) => void = () => {};
+    let duringCommand: { linkLost: boolean; failure: unknown } | null = null;
+    const session = connected("usb", async () => {
+      unplug("USB device disconnected");
+      duringCommand = { linkLost: session.controller.getState().linkLost, failure: session.controller.getState().failure };
+      return { code: 0 };
+    });
+    unplug = session.unplug;
+    await session.controller.runRawCommand("probe");
+    assert.deepEqual(duringCommand, { linkLost: false, failure: null });
+    (session.controller as any).update({ phase: "committing" });
+    session.unplug("USB device disconnected");
+    assert.equal(session.controller.getState().linkLost, false);
+  });
+
+  it("ignores a wired unplug while a Bluetooth session is selected", () => {
+    const { controller, unplug } = connected("ble");
+    unplug("USB device disconnected");
+    assert.equal(controller.getState().linkLost, false);
+    assert.equal(controller.getState().failure, null);
+  });
+});
+
 describe("Failure outcomes", () => {
-  const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
+  const schema =enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
   const batchError = "error: cleanup also failed: BLE PC-link stop was not confirmed: BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device\n[exit 1]";
 
   it("leads a failed save with what reached the bike", () => {

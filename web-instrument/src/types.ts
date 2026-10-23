@@ -156,7 +156,7 @@ export interface LogEntry {
   text: string;
 }
 
-export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect";
+export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect" | "adapter";
 
 /** The latest failure with enough context to say what happened to the bike. */
 export interface OperationFailure {

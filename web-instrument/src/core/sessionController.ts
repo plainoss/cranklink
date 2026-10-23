@@ -50,6 +50,8 @@ export interface TerminalHost {
   };
   /** Registers how the host asks the operator for the Bluetooth passkey. */
   setPasskeyPrompt: (prompt: (signal: AbortSignal) => Promise<string | null>) => void;
+  /** Registers how the host reports an unplug of the selected USB or serial adapter between commands. */
+  setAdapterDisconnectHandler?: (handler: (error: string) => void) => void;
   simulator?: any;
   configureSimulator?: (opts: any) => void;
 }
@@ -184,6 +186,7 @@ export class SessionController {
   public attachTerminal(term: TerminalHost): void {
     this.terminal = term;
     term.setPasskeyPrompt((signal) => this.requestPasskey(signal));
+    term.setAdapterDisconnectHandler?.((error) => this.adapterDisconnected(error));
     if (typeof window !== "undefined") {
       const prevPrint = (window as any).estepsTerminalPrint;
       (window as any).estepsTerminalPrint = (text: string, stream: "stdout" | "stderr" | "notice" = "stdout") => {
@@ -197,6 +200,17 @@ export class SessionController {
       };
     }
     this.refreshSnapshots();
+  }
+
+  /**
+   * The selected USB or serial adapter was unplugged between commands: mark the
+   * link lost now, not at the next operation. Staged edits are kept for the
+   * reconnect. A running operation reports the unplug through its own error.
+   */
+  public adapterDisconnected(error: string): void {
+    const { phase, transport } = this.state;
+    if (this.activeCapture || phase !== "ready" || (transport !== "usb" && transport !== "serial")) return;
+    this.fail("adapter", error);
   }
 
   /** Ask the operator for the Bluetooth passkey; resolves null when cancelled or aborted. */

@@ -261,6 +261,8 @@ try {
 
 // The UI registers how to ask the operator; the host owns caching and the timeout.
 let passkeyPrompt = null;
+// The UI registers how to show an unplug of the selected adapter between commands.
+let adapterDisconnectHandler = null;
 const PASSKEY_PROMPT_TIMEOUT_MS = 120000;
 
 async function requestBlePasskey(signal) {
@@ -576,6 +578,8 @@ navigator.usb?.addEventListener("disconnect", (event) => {
       "USB disconnected; preserve the journal before recovery.\n",
       "stderr",
     );
+    // A running command reports the unplug through its own error.
+    if (!busy) adapterDisconnectHandler?.("USB device disconnected");
   }
 });
 navigator.serial?.addEventListener("disconnect", (event) => {
@@ -585,6 +589,7 @@ navigator.serial?.addEventListener("disconnect", (event) => {
       "Serial disconnected; preserve the journal before recovery.\n",
       "stderr",
     );
+    if (!busy) adapterDisconnectHandler?.("Serial device disconnected");
   }
 });
 
@@ -601,6 +606,9 @@ window.estepsTerminal = {
   selectGranted,
   setPasskeyPrompt: (prompt) => {
     passkeyPrompt = prompt;
+  },
+  setAdapterDisconnectHandler: (handler) => {
+    adapterDisconnectHandler = handler;
   },
   ...(import.meta.env.DEV ? {
     get simulator() {

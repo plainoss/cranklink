@@ -584,6 +584,37 @@ test("adopting a granted USB adapter after the simulator ends simulated timing",
   expect(state).toEqual({ simulated: true, simulator: false, transport: "usb" });
 });
 
+// Without this the sidebar stayed Connected until the next operation failed.
+test("unplugging the selected USB adapter between commands offers Reconnect at once", async ({ page }) => {
+  await openInstrument(page);
+  await page.getByTestId("btn-connect-sim").click();
+  await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+  await page.getByTestId("stepper-plus-tire-circumference").click();
+  // Swap the session's port for a granted USB adapter; app.js listens on the browser's own navigator.usb.
+  const hasUsb = await page.evaluate(async () => {
+    const usb = (navigator as any).usb as EventTarget | undefined;
+    if (!usb) return false;
+    const adapter = { vendorId: 0x1e44, productId: 0x7151, configurations: [] };
+    Object.defineProperty(navigator, "usb", { configurable: true, value: { getDevices: async () => [adapter] } });
+    await (window as any).estepsTerminal.selectGranted("usb");
+    (window as any).cranklinkInstrumentController.update({ transport: "usb" });
+    const unplug = (device: object) => usb.dispatchEvent(Object.defineProperty(new Event("disconnect"), "device", { value: device }));
+    (window as any).unplugUsb = () => unplug(adapter);
+    unplug({ vendorId: 0x1e44, productId: 0x7151, configurations: [] });
+    return true;
+  });
+  test.skip(!hasUsb, "This browser exposes no WebUSB");
+  await expect(page.getByTestId("link-status")).toHaveText("Connected");
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+
+  await page.evaluate(() => (window as any).unplugUsb());
+  const banner = page.getByTestId("error-banner");
+  await expect(banner).toContainText("USB adapter disconnected");
+  await expect(banner.getByTestId("btn-error-reconnect")).toBeVisible();
+  await expect(page.getByTestId("link-status")).toHaveText("Link closed");
+  await expect(page.getByTestId("tx-item-tire-circumference")).toContainText("2281 mm");
+});
+
 // Windows exposes the SM-PCE02 as an FTDI COM port; WebUSB needs WinUSB there.
 test("Windows offers the SM-PCE02 COM port before WebUSB", async ({ page }) => {
   await page.addInitScript(() => {

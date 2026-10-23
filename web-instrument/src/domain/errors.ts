@@ -128,6 +128,7 @@ const TITLES: Record<OperationFailure["kind"], string> = {
   capture: "Backup failed",
   firmware: "Firmware operation stopped",
   disconnect: "Disconnect not confirmed",
+  adapter: "USB adapter disconnected",
 };
 
 /** Lead with the state of the bike, then the cause, so the next step is clear. */
