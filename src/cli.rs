@@ -934,20 +934,59 @@ fn interrupted_flash_banner(journal: &Path, command: &str, over_ble: bool) -> St
 /// failure before it leaves the application running, and the recovery reset
 /// sends the key sequence, so the read-only probe comes first.
 fn bootloader_guidance(port: Option<&str>, slot: u8, failure: &str) -> String {
-    let mut probe = String::from("cranklink");
+    format!(
+        "{failure}; nothing was erased or written.\n{}",
+        bootloader_return_steps(port, slot)
+    )
+}
+
+/// The read-only application probe, then the recovery reset at the slot the
+/// bootloader keeps.
+fn bootloader_return_steps(port: Option<&str>, slot: u8) -> String {
+    let probe = application_probe_command(port);
+    let mut reset = String::from("cranklink");
     if let Some(port) = port {
-        probe.push_str(&format!(" --port {}", shell_quote(port)));
+        reset.push_str(&format!(" --port {}", shell_quote(port)));
     }
-    let mut reset = probe.clone();
     if slot != 31 {
         reset.push_str(&format!(" --slot {slot}"));
     }
-    probe.push_str(" probe");
     reset.push_str(" firmware probe --target dcas --recovery --reset");
     format!(
-        "{failure}; nothing was erased or written.\n\
-         The motor may remain in its DCAS bootloader. Check whether its application answers with:\n  {probe}\n\
+        "The motor may remain in its DCAS bootloader. Check whether its application answers with:\n  {probe}\n\
          Only if it does not, return it to its application with:\n  {reset}"
+    )
+}
+
+fn application_probe_command(port: Option<&str>) -> String {
+    match port {
+        Some(port) => format!("cranklink --port {} probe", shell_quote(port)),
+        None => "cranklink probe".to_owned(),
+    }
+}
+
+/// A transfer whose finish (with the image checksum) and reset were
+/// acknowledged is complete; an application that has not answered since is
+/// checked before any recovery. `dcas_boot_slot` is the slot a DCAS
+/// bootloader keeps; an RX flash has none.
+fn unreturned_flash_guidance(
+    port: Option<&str>,
+    dcas_boot_slot: Option<u8>,
+    journal: &Path,
+) -> String {
+    let steps = match dcas_boot_slot {
+        Some(slot) => bootloader_return_steps(port, slot),
+        None => format!(
+            "Check whether its application answers with:\n  {}\n\
+             Only if it does not, keep the journal before any further flash attempt.",
+            application_probe_command(port)
+        ),
+    };
+    format!(
+        "The transfer finished and the motor acknowledged its checksum and reset, but its application did not answer discovery in time.\n\
+         {steps}\n\
+         Journal preserved at: {}",
+        journal.display()
     )
 }
 
@@ -1148,7 +1187,18 @@ fn execute_firmware_command(
                     if let Some(application) = &application {
                         verify_application_return(&mut s, port, slot, application, "DCAS probe")?;
                     } else if reset {
+                        // The application's slot after PnP need not be the
+                        // bootloader's, so any one motor counts as returned.
                         s.boot_reset()?;
+                        let returned = s.await_application(None).context(
+                            "the bootloader reset was acknowledged, but the application did not return",
+                        )?;
+                        if !is_json {
+                            out_println!(
+                                "  Status:     Application answered discovery at slot {}",
+                                returned.slot
+                            );
+                        }
                     }
                     // JSON is a success receipt; print it only after the checks pass.
                     if is_json {
@@ -1177,7 +1227,8 @@ fn execute_firmware_command(
                         out_println!("Renesas RX Bootloader Probe:");
                         out_println!("  Capability: {}", boot.capability_sequence);
                     }
-                    let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
+                    let after =
+                        start_rx_session_after_reset(&mut s, Some(before.slot), recovery)?.identity;
                     s.normal_stop()?;
                     ensure!(
                         after.cargo == before.cargo
@@ -1480,18 +1531,20 @@ fn execute_firmware_command(
                 // The transfer has finished: a journal failure must not skip the
                 // application return and verification below.
                 let finished = jnl.record("finish-and-reset", &receipt);
-                let after = match s
-                    .normal_start(if recovery { None } else { slot })
-                    .context("transfer finished, but the application did not return")
-                {
-                    Ok(after) => after,
-                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
-                };
+                let returned = flashed_application_return(
+                    &mut s,
+                    if recovery { None } else { slot },
+                    port,
+                    Some(boot.slot),
+                    &mut jnl,
+                    &journal_path,
+                )?;
+                let after = &returned.identity;
                 verify_flashed_application(
                     &mut s,
                     &mut jnl,
                     finished,
-                    &after,
+                    &returned,
                     &serial,
                     serial_str,
                     || {
@@ -1625,11 +1678,18 @@ fn execute_firmware_command(
                     );
                 }
                 let profile = finish_operation(guard, reset)?;
-                let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
+                let ready = start_rx_session_after_reset(&mut s, Some(before.slot), recovery)
+                    .context("application did not return after the DCAS identity check")
+                    .map_err(|e| journal_failure(&mut jnl, "application-return-failed", e))?;
+                jnl.record("application-returned", &ready)?;
+                let ready = ready.identity;
 
                 if !write {
                     let rx = read_rx_boot_unerased(&mut s, ready.slot, recovery, Some(&mut jnl))?;
-                    let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
+                    let after = start_rx_session_after_reset(&mut s, Some(before.slot), recovery)
+                        .map_err(|e| {
+                        journal_failure(&mut jnl, "application-return-failed", e)
+                    })?;
                     s.normal_stop()?;
                     // Predict the write: it refuses a retry-capable bootloader without the flag.
                     if let Err(e) =
@@ -1728,18 +1788,20 @@ fn execute_firmware_command(
                 // The transfer has finished: a journal failure must not skip the
                 // application return and verification below.
                 let finished = jnl.record("finish-and-reset", &receipt);
-                let after = match s
-                    .normal_start(Some(before.slot))
-                    .context("transfer finished, but the application did not return")
-                {
-                    Ok(after) => after,
-                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
-                };
+                let returned = flashed_application_return(
+                    &mut s,
+                    Some(before.slot),
+                    port,
+                    None,
+                    &mut jnl,
+                    &journal_path,
+                )?;
+                let after = &returned.identity;
                 verify_flashed_application(
                     &mut s,
                     &mut jnl,
                     finished,
-                    &after,
+                    &returned,
                     &serial,
                     serial_str,
                     || {
@@ -2370,6 +2432,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             &JournaledApplication {
                 identity: &after,
                 serial: Some(&after_serial),
+                discoveries: None,
             },
         )?;
         Ok(serde_json::json!({
@@ -3052,11 +3115,11 @@ fn verify_application_return(
     slot: Option<u8>,
     before: &crate::device::Identity,
     step: &str,
-) -> Result<crate::device::Identity> {
+) -> Result<crate::device::ReturnedApplication> {
     let after = session
         .boot_reset()
         .context("bootloader reset not acknowledged")
-        .and_then(|()| session.normal_start(slot))
+        .and_then(|()| session.normal_start_after_reset(slot))
         .with_context(|| format!("application did not return after {step}"));
     let after = match after {
         Ok(after) => after,
@@ -3073,10 +3136,11 @@ fn verify_application_return(
         }
     };
     session.normal_stop()?;
+    let returned = &after.identity;
     ensure!(
-        after.cargo == before.cargo
-            && after.dcas_version == before.dcas_version
-            && after.rx_version == before.rx_version,
+        returned.cargo == before.cargo
+            && returned.dcas_version == before.dcas_version
+            && returned.rx_version == before.rx_version,
         "application changed after {step}"
     );
     Ok(after)
@@ -3159,7 +3223,7 @@ fn return_after_rx_refusal(
         warn_rx_bridge_unconfirmed(recovery);
         return Ok(());
     }
-    let after = start_rx_session(session, Some(slot), recovery)
+    let after = start_rx_session_after_reset(session, Some(slot), recovery)
         .context("RX refused before erase; application restart failed")?;
     session
         .normal_stop()
@@ -3167,8 +3231,9 @@ fn return_after_rx_refusal(
     if let Some(jnl) = jnl {
         // The restarted application's serial is not read here.
         let application = JournaledApplication {
-            identity: &after,
+            identity: &after.identity,
             serial: None,
+            discoveries: Some(after.discoveries),
         };
         jnl.record("application-after", &application)?;
     }
@@ -3184,6 +3249,19 @@ fn start_rx_session(
         session.normal_start_for_rx_recovery(slot)
     } else {
         session.normal_start(slot)
+    }
+}
+
+/// `start_rx_session` once the application returns from a bootloader reset.
+fn start_rx_session_after_reset(
+    session: &mut Session,
+    slot: Option<u8>,
+    recovery: bool,
+) -> Result<crate::device::ReturnedApplication> {
+    if recovery {
+        session.normal_start_for_rx_recovery_after_reset(slot)
+    } else {
+        session.normal_start_after_reset(slot)
     }
 }
 
@@ -3658,6 +3736,32 @@ struct JournaledApplication<'a> {
     #[serde(flatten)]
     identity: &'a crate::device::Identity,
     serial: Option<&'a str>,
+    /// Discoveries until the application answered after its reset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discoveries: Option<u32>,
+}
+
+/// The wired DCAS and RX flashes once finish and reset are acknowledged: wait
+/// for the application, or print the check-then-recover guidance and journal
+/// the failure. `dcas_boot_slot` is as for `unreturned_flash_guidance`.
+fn flashed_application_return(
+    session: &mut Session,
+    slot: Option<u8>,
+    port: Option<&str>,
+    dcas_boot_slot: Option<u8>,
+    jnl: &mut Journal,
+    journal_path: &Path,
+) -> Result<crate::device::ReturnedApplication> {
+    session
+        .normal_start_after_reset(slot)
+        .context("transfer finished, but the application did not return")
+        .map_err(|e| {
+            err_println!(
+                "{}",
+                unreturned_flash_guidance(port, dcas_boot_slot, journal_path)
+            );
+            journal_failure(jnl, "verification-failed", e)
+        })
 }
 
 /// The wired DCAS and RX flashes after the transfer `finished`: check the
@@ -3668,16 +3772,17 @@ fn verify_flashed_application(
     session: &mut Session,
     jnl: &mut Journal,
     finished: Result<()>,
-    after: &crate::device::Identity,
+    after: &crate::device::ReturnedApplication,
     serial: &[u8],
     serial_str: &str,
     checks: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let serial_check = check_application_serial(session, after.slot, serial);
+    let serial_check = check_application_serial(session, after.identity.slot, serial);
     let stop = session.normal_stop();
     let application = JournaledApplication {
-        identity: after,
+        identity: &after.identity,
         serial: serial_check.is_ok().then_some(serial_str),
+        discoveries: Some(after.discoveries),
     };
     let journaled = finished.and_then(|()| jnl.record("application-after", &application));
     let verified = serial_check
@@ -3933,7 +4038,8 @@ mod cli_tests {
         let after =
             verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
                 .unwrap();
-        assert_eq!(after.rx_version, before.rx_version);
+        assert_eq!(after.identity.rx_version, before.rx_version);
+        assert_eq!(after.discoveries, 1);
         assert!(steps.borrow().is_empty());
         // A different M version after the reset is not the same application.
         let (mut session, _) = scripted(application_return_script([0x41, 10, 0]));
@@ -3944,19 +4050,143 @@ mod cli_tests {
             format!("{error:#}").contains("application changed after DCAS dry run"),
             "{error:#}"
         );
-        // No motor answers discovery after the reset: it may still be in boot.
-        let mut script = application_return_script([0x41, 11, 0]);
-        script.truncate(5);
-        script[4].1 = crate::device::tests::frame(0x3b, &[0, 0, 0, 0]);
-        let (mut session, steps) = scripted(script);
-        let error =
-            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+    }
+
+    fn modeled_motor_identity() -> crate::device::Identity {
+        crate::device::Identity {
+            slot: crate::device::tests::ModeledBus::MOTOR,
+            cargo: "00-CRG".into(),
+            dcas_version: "4.2.0.0".into(),
+            rx_version: "4.1.11.0".into(),
+        }
+    }
+
+    /// Read a flash journal back as (stage, data) pairs and remove it.
+    fn journal_stages(path: &Path) -> Vec<(String, serde_json::Value)> {
+        let text = std::fs::read_to_string(path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        text.lines()
+            .map(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                (
+                    record["stage"].as_str().unwrap().into(),
+                    record["data"].clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dcas_probe_and_dry_run_wait_for_the_motor_to_rejoin_after_the_reset() {
+        use crate::device::tests::modeled;
+        let before = modeled_motor_identity();
+        for step in ["DCAS probe", "DCAS dry run"] {
+            for slot in [None, Some(13)] {
+                let (mut session, bus) = modeled();
+                bus.borrow_mut().silent_after_boot_reset = 2;
+                session.initialize().unwrap();
+                let after =
+                    verify_application_return(&mut session, Some("usb"), slot, &before, step)
+                        .unwrap();
+                assert_eq!(after.discoveries, 3);
+                assert_eq!(after.identity.slot, 13);
+                assert_eq!(bus.borrow().boot_resets, 1);
+            }
+            // The motor never rejoins: say the bus stayed empty, not --slot.
+            let (mut session, bus) = modeled();
+            bus.borrow_mut().silent_after_boot_reset =
+                crate::device::APPLICATION_RETURN_DISCOVERIES;
+            session.initialize().unwrap();
+            let error = verify_application_return(&mut session, Some("usb"), None, &before, step)
                 .unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                format!("application did not return after {step}: the motor did not answer 4 discoveries over about 24 s after the bootloader reset: no components answered discovery")
+            );
+        }
+    }
+
+    #[test]
+    fn a_flash_waits_for_the_application_and_journals_its_discoveries() {
+        use crate::device::tests::modeled_after_boot_reset;
+        let path = |name: &str| {
+            std::env::temp_dir().join(format!(
+                "cranklink-{name}-{}-{}",
+                std::process::id(),
+                crate::platform::now_ms()
+            ))
+        };
+        // flash_dcas and the RX flash end with an acknowledged reset; the
+        // modeled motor then misses two discoveries.
+        for slot in [None, Some(13)] {
+            let journal = path("returned");
+            let mut jnl = Journal::new(&journal).unwrap();
+            let (mut session, _) = modeled_after_boot_reset(2);
+            let returned =
+                flashed_application_return(&mut session, slot, None, Some(13), &mut jnl, &journal)
+                    .unwrap();
+            assert_eq!(returned.discoveries, 3);
+            verify_flashed_application(
+                &mut session,
+                &mut jnl,
+                Ok(()),
+                &returned,
+                &[1, 2, 3, 4, 5, 6],
+                "010203040506",
+                || Ok(()),
+            )
+            .unwrap();
+            drop(jnl);
+            let stages = journal_stages(&journal);
+            assert_eq!(stages[0].0, "application-after");
+            assert_eq!(stages[0].1["discoveries"], 3);
+            assert_eq!(stages[1].0, "verified");
+        }
+        // It never rejoins: the failure names the empty bus and is journaled.
+        let journal = path("unreturned");
+        let mut jnl = Journal::new(&journal).unwrap();
+        let (mut session, _) =
+            modeled_after_boot_reset(crate::device::APPLICATION_RETURN_DISCOVERIES);
+        let error =
+            flashed_application_return(&mut session, Some(13), None, Some(13), &mut jnl, &journal)
+                .unwrap_err();
+        let message = "transfer finished, but the application did not return: the motor did not answer 4 discoveries over about 24 s after the bootloader reset: no components answered discovery";
+        assert_eq!(format!("{error:#}"), message);
+        drop(jnl);
+        let stages = journal_stages(&journal);
+        assert_eq!(stages, [("verification-failed".into(), message.into())]);
+    }
+
+    #[test]
+    fn an_unreturned_flash_names_the_acknowledged_transfer_then_checks_before_recovery() {
+        let journal = Path::new("flash.journal.jsonl");
+        let dcas = unreturned_flash_guidance(Some("usb"), Some(13), journal);
         assert!(
-            format!("{error:#}").contains("application did not return after DCAS dry run"),
-            "{error:#}"
+            dcas.starts_with(
+                "The transfer finished and the motor acknowledged its checksum and reset"
+            ),
+            "{dcas}"
         );
-        assert!(steps.borrow().is_empty());
+        let commands: Vec<&str> = dcas
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "cranklink --port usb probe",
+                "cranklink --port usb --slot 13 firmware probe --target dcas --recovery --reset"
+            ]
+        );
+        assert!(!dcas.contains("nothing was erased"), "{dcas}");
+        assert!(
+            dcas.ends_with("Journal preserved at: flash.journal.jsonl"),
+            "{dcas}"
+        );
+        // An RX flash enters no DCAS bootloader, so it suggests no DCAS reset.
+        let rx = unreturned_flash_guidance(None, None, journal);
+        assert!(rx.contains("\n  cranklink probe\n"), "{rx}");
+        assert!(!rx.contains("--recovery"), "{rx}");
     }
 
     #[test]
@@ -4430,11 +4660,14 @@ mod cli_tests {
         use crate::device::tests::{frame, scripted_motor};
         // The flash paths need a live bootloader, so this drives the
         // post-transfer step both wired flashes share.
-        let after = crate::device::Identity {
-            slot: 13,
-            cargo: "00-CRG".into(),
-            dcas_version: "4.2.0.0".into(),
-            rx_version: "4.1.11.0".into(),
+        let after = crate::device::ReturnedApplication {
+            identity: crate::device::Identity {
+                slot: 13,
+                cargo: "00-CRG".into(),
+                dcas_version: "4.2.0.0".into(),
+                rx_version: "4.1.11.0".into(),
+            },
+            discoveries: 2,
         };
         let run = |live: [u8; 6], checks: fn() -> Result<()>| {
             let path = std::env::temp_dir().join(format!(
@@ -4485,7 +4718,8 @@ mod cli_tests {
         let (result, stages) = run([1, 2, 3, 4, 5, 6], || Ok(()));
         result.unwrap();
         let confirmed = serde_json::json!({"slot": 13, "cargo": "00-CRG",
-            "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0", "serial": "010203040506"});
+            "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0", "serial": "010203040506",
+            "discoveries": 2});
         assert_eq!(
             stages,
             [

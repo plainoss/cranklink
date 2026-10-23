@@ -353,6 +353,9 @@ Power state `01` indicates external supply, `02` permits adapter supply, and
 at least 2703 and ready state `01/02`, with a 90 s limit. No voltage unit is
 established for that raw threshold. Reset, protocol change and PnP waits are
 3 s, 1 s and 5 s respectively: host pacing policies, not measured bus minima.
+After a bootloader reset, the first discovery can return an empty bitmap
+before the motor rejoins, so Cranklink repeats discovery up to four times
+before it reports that the application did not return.
 Adapter supply does not establish traction power or assist readiness. The
 [initialization sequence](../src/device.rs) (`Session::initialize`) preserves
 those distinctions.
