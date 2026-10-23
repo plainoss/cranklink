@@ -8,14 +8,14 @@ use anyhow::Result;
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 #[path = "discovery.rs"]
 mod discovery;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 #[path = "native_usb.rs"]
 mod native_usb;
 
-#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[cfg(all(unix, not(target_arch = "wasm32"), not(target_os = "android")))]
 #[path = "simulator_port.rs"]
 mod simulator_port;
 
@@ -54,15 +54,15 @@ pub fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 struct NativePort(Box<dyn serialport::SerialPort>);
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Read for NativePort {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.0.read(bytes)
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Write for NativePort {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.0.write(bytes)
@@ -71,14 +71,14 @@ impl Write for NativePort {
         self.0.flush()
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Port for NativePort {
     fn set_timeout(&mut self, timeout: Duration) -> io::Result<()> {
         self.0.set_timeout(timeout).map_err(Into::into)
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 pub fn open_port(name: &str) -> Result<Box<dyn Port>> {
     if let Some(path) = name.strip_prefix("sim:") {
         #[cfg(unix)]
@@ -131,7 +131,7 @@ pub fn open_port(name: &str) -> Result<Box<dyn Port>> {
     Ok(Box::new(NativePort(port)))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn matching_serial(ports: Vec<serialport::SerialPortInfo>) -> Vec<discovery::SerialCandidate> {
     ports
         .into_iter()
@@ -248,7 +248,7 @@ pub struct PortInfo {
     pub port_name: String,
     pub port_type: String,
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 pub fn available_ports() -> Result<Vec<PortInfo>> {
     let mut ports: Vec<_> = serialport::available_ports()?
         .into_iter()
@@ -286,7 +286,7 @@ pub fn available_ports() -> Result<Vec<PortInfo>> {
     ])
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
 mod discovery_filter_tests {
     use super::*;
     #[test]
@@ -318,4 +318,16 @@ mod discovery_filter_tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].port, "COM3");
     }
+}
+
+/// Android owns Bluetooth through its platform GATT implementation. Wired
+/// transports are unavailable in the Android app.
+#[cfg(target_os = "android")]
+pub fn open_port(_name: &str) -> Result<Box<dyn Port>> {
+    anyhow::bail!("the Android app supports BLE only")
+}
+
+#[cfg(target_os = "android")]
+pub fn available_ports() -> Result<Vec<PortInfo>> {
+    Ok(Vec::new())
 }

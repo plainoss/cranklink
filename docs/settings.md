@@ -2,6 +2,20 @@
 
 `cranklink settings schema --model <model>` lists each family's field names, units, ranges, choices, OEM flags, and read-only fields. Models can be motor family aliases (`ep800-crg`, `ep600`, etc.) or catalogued component names such as `ST-6870-L`. Unknown model names are rejected. `cranklink settings <command> --help` covers options.
 
+## App descriptions and units
+
+The Android and web apps explain what each setting controls beside its value and editor. Peak torque limits motor torque; assist character changes the response to pedaling effort; start response controls how assistance builds when pedaling begins. Character and start response are levels, without an established time or percentage equivalent.
+
+App controls use physical units for values, ranges, increments, pending changes, and backup previews:
+
+| Setting | App units and supported range | Existing CLI / backup representation |
+| --- | --- | --- |
+| Light power allocation | 1.35–27 W, increments of 0.01 W | 135–2700 in hundredths of a watt |
+| Speedometer calibration | −5–5%, increments of 0.5% | −50–50 in tenths of a percent |
+| Service year | 2000–2099 | 0–99, years since 2000 |
+
+The apps convert at the input/display boundary. Protocol values, CLI commands, saved JSON backups, and existing restore behavior retain their established units. Fields already expressed in physical units, such as km/h, Nm, and rpm, are not scaled again. Supported ranges still come from the connected model; converting units does not expand them.
+
 ## Component settings
 
 Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. Named selection uses cached identities to avoid querying unrelated ambiguous components. `units --stock-only` lists stock identities and unresolved candidates without optional part/model queries. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior. As for drive units, `set` and batches containing a `set` require `-s <SERIAL>` (from `probe`); sibling components such as left and right levers share a schema, so a slot or model name alone does not identify the unit.

@@ -262,6 +262,42 @@ impl BleSession {
     pub fn is_master_routing(&self) -> bool {
         self.master_routing
     }
+    /// Retain normal/slave service ownership between settings commands. Master
+    /// routing releases the selected component; final disconnect calls stop().
+    pub fn pause_settings_command(&mut self) -> Result<()> {
+        ensure!(
+            !self.poisoned && !self.firmware_active,
+            "BLE session cannot be retained after failure or during firmware operations"
+        );
+        if !self.master_routing && !self.master_routing_active {
+            // Slave service ownership belongs to the gateway. Keep it intact
+            // between commands; final GATT disconnect releases it.
+            self.linked_slot = None;
+        } else {
+            self.stop_pc_link()?;
+        }
+        Ok(())
+    }
+    /// Resume settings on the retained gateway without changing its active
+    /// routing role. Disconnect before selecting another role.
+    pub fn resume_settings_command(&mut self, master: bool) -> Result<()> {
+        ensure!(
+            self.authenticated
+                && !self.poisoned
+                && !self.firmware_active
+                && self.linked_slot.is_none(),
+            "BLE session is not ready for another command"
+        );
+        ensure!(
+            (!(self.gateway_mode || self.master_routing_active) || self.master_routing == master),
+            "disconnect before switching an active settings session routing role"
+        );
+        self.master_routing = master;
+        self.unit_auth_attempted = false;
+        self.target_slot = None;
+        self.master_stock = None;
+        Ok(())
+    }
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn configure_command_trace(&mut self, path: Option<&Path>) -> Result<()> {
         let trace = path
@@ -274,37 +310,11 @@ impl BleSession {
     /// routing releases the selected component; final disconnect calls stop().
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn pause_browser_command(&mut self) -> Result<()> {
-        ensure!(
-            !self.poisoned && !self.firmware_active,
-            "BLE session cannot be retained after failure or during firmware operations"
-        );
-        if !self.master_routing && !self.master_routing_active {
-            // Slave service ownership belongs to the gateway. Keep it intact
-            // between browser commands; final GATT disconnect releases it.
-            self.linked_slot = None;
-        } else {
-            self.stop_pc_link()?;
-        }
-        Ok(())
+        self.pause_settings_command()
     }
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn resume_browser_command(&mut self, master: bool) -> Result<()> {
-        ensure!(
-            self.authenticated
-                && !self.poisoned
-                && !self.firmware_active
-                && self.linked_slot.is_none(),
-            "BLE session is not ready for another command"
-        );
-        ensure!(
-            (!(self.gateway_mode || self.master_routing_active) || self.master_routing == master),
-            "disconnect before switching an active browser session routing role"
-        );
-        self.master_routing = master;
-        self.unit_auth_attempted = false;
-        self.target_slot = None;
-        self.master_stock = None;
-        Ok(())
+        self.resume_settings_command(master)
     }
     fn log(&mut self, direction: &str, id: u16, bytes: &[u8]) -> Result<()> {
         // Authentication material never enters traces, including nonce/status.

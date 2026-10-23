@@ -12,7 +12,7 @@ import { Alert, Button, Card, Chip, Slider, ToggleButton, ToggleButtonGroup } fr
 import { OptionSelect } from "../ui/OptionSelect.tsx";
 import type { EnrichedSetting, InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
-import { formatValue, settingLabel } from "../../domain/settingFormat.ts";
+import { formatValue, fromDisplayValue, settingDisplayRange, settingDisplayUnit, settingLabel, toDisplayValue } from "../../domain/settingFormat.ts";
 import { settingAcceptsValue } from "../../domain/schema.ts";
 
 interface SettingsContextValue {
@@ -22,6 +22,7 @@ interface SettingsContextValue {
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
+const SettingDescriptionContext = createContext<string | undefined>(undefined);
 
 export function SettingsProvider({ value, children }: { value: SettingsContextValue; children: ReactNode }) {
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
@@ -40,23 +41,36 @@ export interface SettingAccess {
   live: number | string | null | undefined;
   value: number | string | null | undefined;
   numeric: number;
+  /** Physical values are confined to controls; numeric and stage stay canonical. */
+  displayNumeric: number;
+  descriptionId: string | undefined;
   isStaged: boolean;
   isReadOnly: boolean;
   isDisabled: boolean;
   unavailable: string | undefined;
   format: (value: number | string | null | undefined) => string;
   stage: (value: number | string) => void;
+  stageDisplay: (value: number) => void;
   revert: () => void;
 }
 
 export function useSetting(name: string): SettingAccess {
   const { state, controller } = useSettings();
+  const descriptionId = useContext(SettingDescriptionContext);
   const spec = state.schema.find((setting) => setting.name === name);
   const live = state.liveValues[name]?.value;
   const staged = state.stagedValues[name];
   const value = staged ?? live;
   const isReadOnly = Boolean(spec?.read_only);
   const isDisabled = isReadOnly || Boolean(state.unavailableValues[name]) || state.phase !== "ready" || state.linkLost;
+  const stage = (next: number | string) => {
+    if (isDisabled) return;
+    try {
+      controller.stageParameter(name, next);
+    } catch {
+      // The controller records validation failures for the shared banner.
+    }
+  };
   return {
     name,
     spec,
@@ -64,19 +78,15 @@ export function useSetting(name: string): SettingAccess {
     live,
     value,
     numeric: Number(value),
+    displayNumeric: value === null || value === undefined || value === "" ? NaN : toDisplayValue(spec, Number(value)),
+    descriptionId,
     isStaged: staged !== undefined,
     isReadOnly,
     isDisabled,
     unavailable: state.unavailableValues[name],
     format: (next) => formatValue(spec, next),
-    stage: (next) => {
-      if (isDisabled) return;
-      try {
-        controller.stageParameter(name, next);
-      } catch {
-        // The controller records validation failures for the shared banner.
-      }
-    },
+    stage,
+    stageDisplay: (next) => stage(fromDisplayValue(spec, next)),
     revert: () => controller.revertParameter(name),
   };
 }
@@ -118,6 +128,7 @@ export function SettingRow({
   const setting = useSetting(name);
   const query = useSearchQuery();
   const titleId = useId();
+  const descriptionId = `${titleId}-description`;
   const heading = title ?? setting.label;
   const description = hint ?? setting.spec?.description;
   // Older drive units lack some settings; their schema decides what is shown.
@@ -125,19 +136,21 @@ export function SettingRow({
   if (!matchesQuery(query, heading, name, description, setting.label)) return null;
 
   return (
+    <SettingDescriptionContext.Provider value={description ? descriptionId : undefined}>
     <div
       className="px-4 py-4 sm:px-5 flex flex-col gap-3"
       data-setting-row={name}
       data-testid={testId ?? `param-row-${name}`}
       role="group"
       aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-[12rem] flex-1">
           <h3 id={titleId} className="text-sm font-semibold text-stone-900">
             {heading}
           </h3>
-          {description && <p className="text-xs text-stone-500 mt-0.5">{description}</p>}
+          {description && <p id={descriptionId} className="text-xs text-stone-500 mt-0.5">{description}</p>}
           <SettingStatus setting={setting} />
         </div>
         {showValue && (
@@ -150,6 +163,7 @@ export function SettingRow({
       {!setting.isReadOnly && children}
       {footer}
     </div>
+    </SettingDescriptionContext.Provider>
   );
 }
 
@@ -183,6 +197,7 @@ function SettingStatus({ setting }: { setting: SettingAccess }) {
   );
 }
 
+/** Optional bounds and step use the physical units shown by the control. */
 interface SettingSliderProps {
   name: string;
   min?: number;
@@ -200,37 +215,41 @@ const INTL_UNITS: Record<string, string> = {
   minutes: "minute",
   deg: "degree",
   degrees: "degree",
+  "°": "degree",
 };
 
 export function SettingSlider({ name, min, max, step, "data-testid": testId }: SettingSliderProps) {
   const setting = useSetting(name);
   const noteId = useId();
-  const lower = min ?? setting.spec?.userMin ?? 0;
-  const upper = max ?? setting.spec?.userMax ?? 100;
-  const value = Number.isFinite(setting.numeric) ? Math.min(upper, Math.max(lower, setting.numeric)) : lower;
-  // The thumb cannot show a value past either end, e.g. a speed set by other tools.
-  const outside = Number.isFinite(setting.numeric) && value !== setting.numeric;
-  const unit = setting.spec?.displayUnit ?? "";
+  const displayRange = settingDisplayRange(setting.spec);
+  const lower = min ?? displayRange.min;
+  const upper = max ?? displayRange.max;
+  const value = Number.isFinite(setting.displayNumeric) ? Math.min(upper, Math.max(lower, setting.displayNumeric)) : lower;
+  // Keep the actual reading visible when the slider has to stop at its bounds.
+  const outside = Number.isFinite(setting.displayNumeric) && value !== setting.displayNumeric;
+  const unit = settingDisplayUnit(setting.spec);
   const intlUnit = INTL_UNITS[unit];
-  const range = `${setting.format(lower)} to ${setting.format(upper)}`;
+  const formatPhysical = (physical: number) => setting.format(fromDisplayValue(setting.spec, physical));
+  const range = `${formatPhysical(lower)} to ${formatPhysical(upper)}`;
+  const describedBy = [setting.descriptionId, outside ? noteId : undefined].filter(Boolean).join(" ") || undefined;
   return (
     <>
       <Slider
         aria-label={intlUnit || !unit ? setting.label : `${setting.label} (${unit})`}
+        aria-describedby={describedBy}
         value={value}
         minValue={lower}
         maxValue={upper}
-        step={step ?? setting.spec?.userStep ?? 1}
+        step={step ?? displayRange.step}
         formatOptions={intlUnit ? { style: "unit", unit: intlUnit } : undefined}
-        onChange={(next) => typeof next === "number" && setting.stage(next)}
+        onChange={(next) => typeof next === "number" && setting.stageDisplay(next)}
         isDisabled={setting.isDisabled}
         className="w-full"
-        aria-describedby={outside ? noteId : undefined}
         data-testid={testId}
       >
         <Slider.Track>
           <Slider.Fill />
-          <Slider.Thumb />
+          <Slider.Thumb aria-valuetext={formatPhysical(value)} />
         </Slider.Track>
       </Slider>
       {outside && (
@@ -239,7 +258,7 @@ export function SettingSlider({ name, min, max, step, "data-testid": testId }: S
           <span>
             {`The current value, ${setting.format(setting.numeric)}, is outside `}
             {min === undefined && max === undefined ? `the range cranklink can write (${range})` : `this slider’s range (${range})`}
-            {`, so the slider stops at ${setting.format(value)}.`}
+            {`, so the slider stops at ${formatPhysical(value)}.`}
           </span>
         </p>
       )}
@@ -274,6 +293,7 @@ export function SettingSegmented({ name, options, values, "data-testid": testId 
   return (
     <ToggleButtonGroup
       aria-label={setting.label}
+      aria-describedby={setting.descriptionId}
       selectionMode="single"
       disallowEmptySelection
       selectedKeys={Number.isFinite(setting.numeric) ? [String(setting.numeric)] : []}
@@ -300,6 +320,7 @@ export function SettingSelect({ name, options }: SettingChoiceProps) {
   return (
     <OptionSelect
       aria-label={setting.label}
+      aria-describedby={setting.descriptionId}
       value={Number.isFinite(setting.numeric) ? String(setting.numeric) : null}
       options={choiceOptions(setting, options).map((option) => ({ id: String(option.value), label: option.label }))}
       onChange={(id) => setting.stage(Number(id))}

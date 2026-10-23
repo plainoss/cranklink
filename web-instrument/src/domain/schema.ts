@@ -125,20 +125,20 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   "display-brightness": { label: "Display brightness", description: "Cycle-computer screen brightness.", section: "geometry", displayUnit: "%" },
   "tire-circumference": {
     label: "Tire Circumference",
-    description: "Distance per wheel revolution, used for speed and odometer.",
+    description: "Distance the loaded tire travels in one full wheel turn. The motor uses this measurement for speed and distance readings.",
     section: "geometry",
     displayUnit: "mm",
     presets: TIRE_PRESETS,
   },
   "destination": {
     label: "Market Region",
-    description: "Sets the legal assist-speed range for where the bike is ridden.",
+    description: "Selects the market specification and the assist-speed range the motor accepts. Choose the region that applies where you ride.",
     section: "geometry",
     displayUnit: "",
   },
   "speed-limit": {
     label: "Assist Speed Limit",
-    description: "Motor assistance stops above this speed.",
+    description: "Speed above which the motor stops helping. It does not limit how fast you can pedal or coast.",
     section: "geometry",
     displayUnit: "km/h",
     presets: [
@@ -149,64 +149,64 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   },
   "mounting-angle": {
     label: "Motor Mounting Angle",
-    description: "Installation pitch of the drive unit in the frame.",
+    description: "Angle at which the motor is installed in the frame. Use the bike manufacturer's installation specification.",
     section: "geometry",
     displayUnit: "deg",
   },
   "display-speed-adjustment": {
     label: "Speedometer Calibration",
-    description: "Fine offset applied to the displayed speed.",
+    description: "Percentage correction applied to the speedometer reading. This is separate from tire circumference and the assist speed limit.",
     section: "geometry",
     displayUnit: "0.1%",
   },
   "lamp": {
     label: "Wired Light Port",
-    description: "Power to lights wired into the drive unit.",
+    description: "Enables the motor's power connection for wired lights. Auto is available only on motors that report it as a supported option.",
     section: "geometry",
     displayUnit: "",
     choiceLabels: { 0: "Off", 1: "On", 2: "Auto" },
   },
   "light-output": {
     label: "Light Port Power Allocation",
-    description: "Reserved power output budget for wired headlight/taillight",
+    description: "Power budget reserved for a headlight and taillight connected to the motor, in watts. Match the bike's lighting specification.",
     section: "geometry",
     displayUnit: "0.01 W",
   },
   "lighting-time": {
     label: "Lighting Reserve",
-    description: "Minutes the lights stay on after assist cuts out on low battery.",
+    description: "Lighting time reserved after low battery stops motor assistance, in minutes. The motor reserves energy for the wired lights.",
     section: "geometry",
     displayUnit: "min",
   },
   "walk-assist": {
     label: "Walk Assist",
-    description: "Low-speed push while walking beside the bike.",
+    description: "Allows motor support while you walk beside the bike and hold its walk-assist control. This does not set the normal riding assistance level.",
     section: "geometry",
     displayUnit: "",
     choiceLabels: { 0: "Disabled", 2: "Enabled" },
   },
   "assist-pattern": {
     label: "Assist Pattern",
-    description: "Base motor response curve shared by both profiles.",
+    description: "Selects the motor's base assistance pattern. This affects how support is delivered alongside the individual profile settings.",
     section: "profiles",
     displayUnit: "",
     choiceLabels: { 5: "Standard", 6: "Sport" },
   },
   "torque-minimum": {
     label: "Minimum Profile Torque",
-    description: "Lowest peak torque any assist mode may be set to.",
+    description: "Factory lower bound for the peak torque you can select in an assist profile. Torque is the motor's turning force, measured in newton-metres.",
     section: "oem",
     displayUnit: "Nm",
   },
   "torque-maximum": {
     label: "Maximum Profile Torque",
-    description: "Highest peak torque any assist mode may be set to.",
+    description: "Factory upper bound for the peak torque you can select in an assist profile. Each mode's torque setting must stay within this limit.",
     section: "oem",
     displayUnit: "Nm",
   },
   "shifting-system": {
     label: "Shifting System",
-    description: "Mechanical, or the Di2 derailleur or hub fitted to the bike.",
+    description: "Identifies the mechanical or Di2 gear system installed on the bike. Select the system actually fitted so motor and shifting functions agree.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: {
@@ -220,102 +220,102 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   },
   "rear-max-gear": {
     label: "Rear Gears",
-    description: "Number of sprockets on the cassette or gears in the hub.",
+    description: "Number of available rear gears: sprockets on a cassette or gears inside the hub. Match the installed drivetrain.",
     section: "drivetrain",
     displayUnit: "gears",
   },
   "front-teeth": {
     label: "Front Chainring",
-    description: "Teeth on the front chainring.",
+    description: "Number of teeth on the front chainring. This describes the gearing fitted to the bike.",
     section: "drivetrain",
     displayUnit: "T",
   },
   "rear-teeth": {
     label: "Smallest Rear Cog",
-    description: "Teeth on the smallest rear sprocket.",
+    description: "Number of teeth on the smallest rear sprocket. Use the tooth count of the installed cassette.",
     section: "drivetrain",
     displayUnit: "T",
   },
   "rear-teeth-pattern": {
     label: "Cassette Progression Pattern",
-    description: "Shimano cassette sprocket combination index",
+    description: "Identifies the cassette's sequence of sprocket sizes. The numbered patterns are Shimano drivetrain options, not tooth counts.",
     section: "drivetrain",
     displayUnit: "",
   },
   "auto-gear-mode": {
     label: "Automatic Shifting Mode",
-    description: "Default electronic auto-shift state",
+    description: "Selects whether a compatible electronic drivetrain starts in manual or automatic shifting mode.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: { 0: "Manual", 1: "Auto" },
   },
   "auto-gear-cadence": {
     label: "Auto-Shift Target Cadence",
-    description: "Pedaling cadence Di2 automatic shifting aims for.",
+    description: "Pedaling rate that compatible Di2 automatic shifting aims to maintain, in crank revolutions per minute.",
     section: "drivetrain",
     displayUnit: "rpm",
   },
   "shifting-advice": {
     label: "Shift Timing Indicator",
-    description: "Display recommended gear shift prompts on cycle computer",
+    description: "Shows suggested gear changes on a compatible cycle computer. The prompts advise you when to shift; they do not shift the gears.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: { 0: "Off", 1: "On" },
   },
   "start-mode": {
     label: "Start Gear After Stopping",
-    description: "Di2 shifts to this gear when you stop. Off keeps the current gear.",
+    description: "Gear a compatible Di2 system selects after you stop, ready for the next start. Off leaves the current gear selected.",
     section: "drivetrain",
     displayUnit: "gear",
   },
   "shift-limit-up": {
     label: "Multi-Shift Upshift Limit",
-    description: "Maximum gears shifted when holding upshift switch",
+    description: "Maximum number of gear changes made while you hold the upshift switch. No Limit allows shifting to continue through the available gears.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: { 2: "2 Gears", 3: "3 Gears", 255: "No Limit" },
   },
   "shift-limit-down": {
     label: "Multi-Shift Downshift Limit",
-    description: "Maximum gears shifted when holding downshift switch",
+    description: "Maximum number of gear changes made while you hold the downshift switch. No Limit allows shifting to continue through the available gears.",
     section: "drivetrain",
     displayUnit: "",
     choiceLabels: { 2: "2 Gears", 3: "3 Gears", 255: "No Limit" },
   },
   "maintenance-alert": {
     label: "Service Reminder",
-    description: "Shows a wrench on the display when service is due.",
+    description: "Enables the service reminder on the cycle computer. Its distance and date settings determine when the reminder is due.",
     section: "maintenance",
     displayUnit: "",
     choiceLabels: { 0: "Disabled", 1: "Enabled" },
   },
   "maintenance-distance": {
     label: "Distance Until Service",
-    description: "Riding distance before the service reminder appears.",
+    description: "Distance to the next service reminder, in kilometres. This sets a reminder; it does not perform or record a service.",
     section: "maintenance",
     displayUnit: "km",
   },
   "maintenance-date": {
     label: "Scheduled Service Date",
-    description: "Calendar date for next scheduled inspection (YYYY-MM-DD or unset)",
+    description: "Date for the next service reminder. Enter YYYY-MM-DD, or unset to clear the scheduled date.",
     section: "maintenance",
     displayUnit: "",
   },
   "maintenance-year": {
-    label: "Service Year (2000+)",
-    description: "Raw calendar year offset from 2000",
+    label: "Service Year",
+    description: "Calendar year for the next service reminder. It forms the scheduled date together with the service month and day.",
     section: "maintenance",
-    displayUnit: "yr",
+    displayUnit: "",
   },
   "maintenance-month": {
     label: "Service Month",
-    description: "Calendar month (1–12)",
+    description: "Month for the next service reminder, from 1 for January to 12 for December. It is part of the scheduled service date.",
     section: "maintenance",
     displayUnit: "mo",
   },
   "maintenance-day": {
     label: "Service Day",
-    description: "Calendar day of month (1–31)",
+    description: "Day of the month for the next service reminder. Combine it with the service month and year to form a valid date.",
     section: "maintenance",
     displayUnit: "day",
   },
@@ -344,9 +344,9 @@ function formatProfileSetting(name: string): {
     const p = name.startsWith("profile1") ? 1 : 2;
     return {
       label: `Profile ${p} Label`,
-      description: `ASCII display name for Assist Profile ${p} (max 10 chars)`,
+      description: `Name shown for assist profile ${p}. Use up to 10 basic Latin letters, numbers, or supported punctuation.`,
       section: "profiles",
-      displayUnit: "ASCII",
+      displayUnit: "",
     };
   }
 
@@ -356,7 +356,7 @@ function formatProfileSetting(name: string): {
     const isOem = !!displayMatch[2];
     return {
       label: `Profile ${p} Mode Names${isOem ? " (OEM)" : ""}`,
-      description: "Display mode nomenclature on cycle computer",
+      description: isOem ? "Factory setting for the assist-mode names available on the cycle computer. This changes the labels, not the mode's torque or response." : "Names used for the assist modes on the cycle computer. This changes the labels, not the mode's torque or response.",
       section: isOem ? "oem" : "profiles",
       displayUnit: "",
       choiceLabels: { 0: "Eco / Normal / High", 1: "Eco / Trail / Boost" },
@@ -371,24 +371,24 @@ function formatProfileSetting(name: string): {
     const fieldMap: Record<string, { title: string; desc: string; unit: string }> = {
       torque: {
         title: "Peak Torque",
-        desc: `Peak motor torque ceiling in ${modeTitle} mode`,
+        desc: `Maximum turning force the motor may provide in ${modeTitle} mode, measured in newton-metres. Actual support also depends on your pedaling and the assist character.`,
         unit: "Nm",
       },
       character: {
         title: "Assist Character",
-        desc: `Support curve aggressiveness in ${modeTitle} mode`,
+        desc: `How much assistance the motor provides for your pedaling effort in ${modeTitle} mode. This adjusts the support response within the mode's torque limit.`,
         unit: "lvl",
       },
       start: {
         title: "Start Response",
-        desc: `Initial pedal engagement responsiveness in ${modeTitle} mode`,
+        desc: `Controls how quickly assistance builds when you start pedaling in ${modeTitle} mode. It affects the initial response rather than the mode's maximum torque.`,
         unit: "lvl",
       },
     };
     const f = fieldMap[field];
     return {
       label: `Profile ${p} ${modeTitle} ${f.title}${isOem ? " (OEM)" : ""}`,
-      description: f.desc,
+      description: isOem ? `Factory setting for ${modeTitle} ${f.title.toLowerCase()}. ${f.desc}` : f.desc,
       section: isOem ? "oem" : "profiles",
       displayUnit: f.unit,
     };
@@ -400,13 +400,18 @@ function formatProfileSetting(name: string): {
     const modeTitle = mode.charAt(0).toUpperCase() + mode.slice(1);
     return {
       label: `${modeTitle} Maximum Electrical Power`,
-      description: `OEM peak power output cap in ${modeTitle} mode`,
+      description: `Factory limit for electrical power supplied to the motor in ${modeTitle} mode, in watts. This is separate from the mode's torque limit.`,
       section: "oem",
       displayUnit: "W",
     };
   }
 
   return null;
+}
+
+/** Known presentation metadata is also available when inspecting backups without a live schema. */
+export function settingAnnotation(name: string): SettingAnnotation | null {
+  return ANNOTATIONS[name] ?? formatProfileSetting(name);
 }
 
 function enrichSetting(
@@ -423,7 +428,10 @@ function enrichSetting(
 
   let section: SettingSectionId = "geometry";
   let label = spec.name;
-  let description = "";
+  const words = spec.name.replace(/[.-]/g, " ");
+  let description = spec.read_only
+    ? `Current ${words} reported by the connected component.`
+    : `Vendor-specific ${words} setting. Refer to this component's documentation for its effect.`;
   let displayUnit = spec.unit === "enum" || spec.unit === "bool" || spec.unit === "raw index" ? "" : spec.unit;
   let choiceLabels: Record<number, string> | null = null;
   let presets: SettingPreset[] | null = null;

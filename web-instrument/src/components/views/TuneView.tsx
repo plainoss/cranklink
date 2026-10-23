@@ -183,6 +183,7 @@ function TireField() {
   return (
     <NumberField
       aria-label={tire.label}
+      aria-describedby={tire.descriptionId}
       value={Number.isFinite(tire.numeric) ? tire.numeric : spec.userMin}
       minValue={spec.userMin}
       maxValue={spec.userMax}

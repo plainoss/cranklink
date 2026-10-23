@@ -2,12 +2,13 @@
  * AllSettingsList.tsx - Every setting the active component reports, with a generic editor.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button, Card, Chip, Input, NumberField, TextField } from "@heroui/react";
 import { RotateCcw } from "lucide-react";
 import { OptionSelect } from "../ui/OptionSelect.tsx";
 import type { EnrichedSetting, InstrumentState } from "../../types.ts";
 import { matchesQuery, useSearchQuery, useSetting } from "./SettingRow.tsx";
+import { settingDisplayRange, settingDisplayUnit } from "../../domain/settingFormat.ts";
 
 interface AllSettingsListProps {
   state: InstrumentState;
@@ -56,6 +57,7 @@ export function allSettingNames(state: InstrumentState): string[] {
 
 function SettingListItem({ name }: { name: string }) {
   const setting = useSetting(name);
+  const descriptionId = useId();
   return (
     <li
       className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_14rem] items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5"
@@ -64,7 +66,7 @@ function SettingListItem({ name }: { name: string }) {
     >
       <div className="min-w-0">
         <p className="text-sm font-medium text-stone-900">{setting.label}</p>
-        {setting.spec?.description && <p className="text-xs text-muted mt-0.5">{setting.spec.description}</p>}
+        {setting.spec?.description && <p id={descriptionId} className="text-xs text-muted mt-0.5">{setting.spec.description}</p>}
         <p className="text-[11px] font-mono text-stone-500 [overflow-wrap:anywhere]">
           {name}
           {setting.unavailable ? (
@@ -87,12 +89,12 @@ function SettingListItem({ name }: { name: string }) {
       </div>
       {setting.isReadOnly ? (
         <Chip variant="soft" size="sm" data-testid={`readonly-${name}`} className="justify-self-start sm:justify-self-end">Read only</Chip>
-      ) : !setting.unavailable && setting.spec ? <GenericEditor spec={setting.spec} /> : null}
+      ) : !setting.unavailable && setting.spec ? <GenericEditor spec={setting.spec} descriptionId={setting.spec.description ? descriptionId : undefined} /> : null}
     </li>
   );
 }
 
-function GenericEditor({ spec }: { spec: EnrichedSetting }) {
+function GenericEditor({ spec, descriptionId }: { spec: EnrichedSetting; descriptionId?: string }) {
   const setting = useSetting(spec.name);
   const current = setting.value === null || setting.value === undefined ? "" : String(setting.value);
   const [draft, setDraft] = useState(current);
@@ -103,6 +105,7 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
     return (
       <OptionSelect
         aria-label={setting.label}
+        aria-describedby={descriptionId}
         value={current === "" ? null : current}
         options={choices.map((choice) => ({ id: String(choice), label: setting.format(choice) }))}
         onChange={(id) => setting.stage(Number(id))}
@@ -113,20 +116,25 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
   }
 
   if (spec.value_type === "number") {
+    const range = settingDisplayRange(spec);
+    const unit = settingDisplayUnit(spec);
     return (
       <NumberField
-        aria-label={setting.label}
-        value={Number.isFinite(setting.numeric) ? setting.numeric : NaN}
-        minValue={spec.userMin}
-        maxValue={spec.userMax}
-        step={spec.userStep}
-        onChange={(next) => Number.isFinite(next) && setting.stage(next)}
+        aria-label={unit ? `${setting.label} (${unit})` : setting.label}
+        aria-describedby={descriptionId}
+        value={Number.isFinite(setting.displayNumeric) ? setting.displayNumeric : NaN}
+        minValue={range.min}
+        maxValue={range.max}
+        step={range.step}
+        formatOptions={{ useGrouping: false, maximumFractionDigits: 10 }}
+        onChange={(next) => Number.isFinite(next) && setting.stageDisplay(next)}
         isDisabled={setting.isDisabled}
         data-testid={`setting-input-${spec.name}`}
         fullWidth
       >
         <NumberField.Group>
           <NumberField.Input className="font-mono" />
+          {unit && <span className="pr-3 text-xs text-muted" aria-hidden="true">{unit}</span>}
         </NumberField.Group>
       </NumberField>
     );
@@ -138,7 +146,7 @@ function GenericEditor({ spec }: { spec: EnrichedSetting }) {
     if (trimmed !== current) setting.stage(trimmed);
   };
   return (
-    <TextField aria-label={setting.label} value={draft} onChange={setDraft} onBlur={commit} isDisabled={setting.isDisabled} fullWidth>
+    <TextField aria-label={setting.label} aria-describedby={descriptionId} value={draft} onChange={setDraft} onBlur={commit} isDisabled={setting.isDisabled} fullWidth>
       <Input className="font-mono" data-testid={`setting-input-${spec.name}`} onKeyDown={(event) => event.key === "Enter" && !event.nativeEvent.isComposing && commit()} />
     </TextField>
   );
