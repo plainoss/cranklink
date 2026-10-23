@@ -6,7 +6,7 @@
  */
 
 import type { EnrichedSetting } from "../types.ts";
-import { settingAcceptsValue } from "./schema.ts";
+import { destinationSpeedRange, settingAcceptsValue } from "./schema.ts";
 
 type Value = number | string | null | undefined;
 
@@ -60,12 +60,39 @@ export function isRegulatedSetting(spec: EnrichedSetting | undefined, name: stri
   return name === "destination" || spec?.oem === true || spec?.section === "oem";
 }
 
+/** The bike's model and live settings, which a write back is checked against. */
+export interface WriteBackRegion {
+  model: string | undefined;
+  live: Record<string, { value: Value } | undefined>;
+}
+
+/**
+ * Whether the core's destination limits (validate_destination_limit in
+ * src/settings.rs) admit `value`. Only a destination with a known speed range
+ * is judged.
+ */
+function fitsDestination(model: string | undefined, name: string, value: number, destination: number): boolean {
+  if (name === "speed-limit") {
+    const range = destinationSpeedRange(model, destination);
+    return !range || (value >= range.min && value <= range.max);
+  }
+  return !name.startsWith("max-power.") || destination !== 3 || value <= 400;
+}
+
 /**
  * "Label (value)" for each value cranklink could not write back, as a restore
  * would: outside the setting's range, step or choices, or unset where the
- * setting cannot be unset. The core also checks region limits when writing.
+ * setting cannot be unset. With `region`, also outside the speed and power
+ * limits of the bike's destination, and a destination that a setting left
+ * unchanged would exceed: the core refuses those writes too.
  */
-export function unwritableValues(schema: EnrichedSetting[], values: ReadonlyArray<readonly [string, Value]>): string[] {
+export function unwritableValues(schema: EnrichedSetting[], values: ReadonlyArray<readonly [string, Value]>, region?: WriteBackRegion): string[] {
+  const number = (value: Value) => (value === null || value === undefined || value === "" ? NaN : Number(value));
+  const fits = (name: string, value: number, destination: number) =>
+    !Number.isFinite(value) || !Number.isFinite(destination) || fitsDestination(region?.model, name, value, destination);
+  const live = Object.entries(region?.live ?? {});
+  const destination = number(region?.live.destination?.value);
+  const changed = new Set(values.map(([name]) => name));
   return values.flatMap(([name, value]) => {
     const spec = schema.find((setting) => setting.name === name);
     // Without a schema entry or a value read from the bike there is nothing to judge.
@@ -73,7 +100,10 @@ export function unwritableValues(schema: EnrichedSetting[], values: ReadonlyArra
     const writable = value === null || value === ""
       ? spec.nullable
       : (spec.value_type !== "number" && spec.value_type !== "enum") || settingAcceptsValue(spec, Number(value));
-    return writable ? [] : [`${settingLabel(schema, name)} (${formatValue(spec, value)})`];
+    const inRegion = !region || (name === "destination"
+      ? live.every(([other, entry]) => changed.has(other) || fits(other, number(entry?.value), number(value)))
+      : fits(name, number(value), destination));
+    return writable && inRegion ? [] : [`${settingLabel(schema, name)} (${formatValue(spec, value)})`];
   });
 }
 

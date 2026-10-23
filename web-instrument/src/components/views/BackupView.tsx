@@ -77,7 +77,8 @@ export function BackupView({ state, controller }: BackupViewProps) {
   const points = restorePoints(state);
   // Undoing the restore writes these current values back.
   const unwritable = unwritableValues(state.schema, (pending?.restorable ?? [])
-    .map((file) => [file.setting ?? "", state.liveValues[file.setting ?? ""]?.value] as const));
+    .map((file) => [file.setting ?? "", state.liveValues[file.setting ?? ""]?.value] as const),
+    { model: state.identity?.modelSlug, live: state.liveValues });
   const busy = state.phase !== "ready" || state.linkLost || !state.identity;
   const hasStaged = Object.keys(state.stagedValues).length > 0;
 

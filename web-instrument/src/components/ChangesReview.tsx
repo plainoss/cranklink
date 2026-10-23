@@ -116,7 +116,8 @@ export function ReviewDialog({ state, controller, open, onOpenChange, disconnect
   const count = changes.length;
   const regulated = changes.filter((change) => change.regulated);
   // A backup of a value cranklink cannot write is not a way back.
-  const unwritable = unwritableValues(state.schema, changes.map((change) => [change.name, state.liveValues[change.name]?.value]));
+  const unwritable = unwritableValues(state.schema, changes.map((change) => [change.name, state.liveValues[change.name]?.value]),
+    { model: state.identity?.modelSlug, live: state.liveValues });
   const [acknowledged, setAcknowledged] = useState(false);
   const saving = state.phase === "committing";
 

@@ -832,6 +832,10 @@ describe("Speed and destination staging", () => {
       "Saved 1 setting to the bike. A backup of the previous values was created, but cranklink cannot write back the previous Assist Speed Limit (35 km/h).");
     controller.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 25, after: 30 }]);
     assert.deepEqual(controller.getState().mcpApproval?.unwritable, []);
+    // 28 km/h is writable, but not under destination 0.
+    const regional = connected("ep800-crg", 0, 28);
+    regional.requestMcpApproval("cranklink_set_setting", {}, [{ name: "speed-limit", before: 28, after: 25 }]);
+    assert.deepEqual(regional.getState().mcpApproval?.unwritable, ["Assist Speed Limit (28 km/h)"]);
   });
 
   it("rejects another save while a transaction is committing", async () => {
@@ -1257,7 +1261,7 @@ describe("Disconnect cleanup reporting", () => {
   });
 });
 
-describe("Adapter unplugged between commands", () => {
+describe("Adapter unplugged", () => {
   function connected(transport: "usb" | "serial" | "ble", run: (line: string) => Promise<{ code: number }> = async () => ({ code: 0 })) {
     (globalThis as any).window = globalThis;
     let unplugged: ((error: string) => void) | null = null;
@@ -1287,7 +1291,7 @@ describe("Adapter unplugged between commands", () => {
     }
   });
 
-  it("leaves a running command to report the unplug through its own error", async () => {
+  it("shows an unplug during a command that succeeds once the command ends", async () => {
     let unplug: (error: string) => void = () => {};
     let duringCommand: { linkLost: boolean; failure: unknown } | null = null;
     const session = connected("usb", async () => {
@@ -1298,9 +1302,49 @@ describe("Adapter unplugged between commands", () => {
     unplug = session.unplug;
     await session.controller.runRawCommand("probe");
     assert.deepEqual(duringCommand, { linkLost: false, failure: null });
-    (session.controller as any).update({ phase: "committing" });
-    session.unplug("USB device disconnected");
-    assert.equal(session.controller.getState().linkLost, false);
+    let state = session.controller.getState();
+    assert.equal(state.linkLost, true);
+    assert.equal(state.failure?.kind, "adapter");
+    assert.deepEqual(state.stagedValues, { "tire-circumference": 2010 });
+    // A save that ends without a failure of its own.
+    const { controller, unplug: unplugDuringSave } = connected("serial");
+    (controller as any).update({ phase: "committing" });
+    unplugDuringSave("Serial device disconnected");
+    assert.equal(controller.getState().linkLost, false);
+    (controller as any).update({ phase: "ready" });
+    await Promise.resolve();
+    state = controller.getState();
+    assert.equal(state.linkLost, true);
+    assert.equal(state.failure?.kind, "adapter");
+  });
+
+  it("keeps the failure of the operation the unplug interrupted", async () => {
+    const { controller, unplug } = connected("usb");
+    (controller as any).update({ phase: "committing" });
+    unplug("USB device disconnected");
+    const error = "error: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting readback did not match";
+    (controller as any).fail("save", error, { phase: "ready", settings: ["destination", "speed-limit"] });
+    await Promise.resolve();
+    const state = controller.getState();
+    assert.equal(state.failure?.kind, "save");
+    assert.equal(state.failure?.error, error);
+    assert.equal(state.linkLost, true);
+  });
+
+  it("never replaces the recovery steps of an interrupted flash", async () => {
+    const { controller, unplug } = connected("usb");
+    const error = "CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.";
+    (controller as any).update({ phase: "flashing" });
+    unplug("USB device disconnected");
+    (controller as any).fail("firmware", error, { phase: "ready" });
+    await Promise.resolve();
+    // Unplugged again later, while idle.
+    unplug("USB device disconnected");
+    await Promise.resolve();
+    const state = controller.getState();
+    assert.equal(state.failure?.error, error);
+    assert.equal(describeFailure(state.failure!, state.transport, []).critical, true);
+    assert.equal(state.linkLost, false);
   });
 
   it("ignores a wired unplug while a Bluetooth session is selected", () => {
@@ -1312,7 +1356,7 @@ describe("Adapter unplugged between commands", () => {
 });
 
 describe("Failure outcomes", () => {
-  const schema =enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
+  const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
   const batchError = "error: cleanup also failed: BLE PC-link stop was not confirmed: BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state: batch stopped at operation 2; 1 completed operations remain applied; inspect tx_1.journal.jsonl: setting write failed; outcome may be uncertain, inspect backup and read device\n[exit 1]";
 
   it("leads a failed save with what reached the bike", () => {
@@ -1359,6 +1403,21 @@ describe("Setting value formatting", () => {
       ["Assist Speed Limit (35 km/h)", "Assist Speed Limit (14 km/h)", "Market Region (2)", "Market Region (—)"]);
     // Unset is writable where the setting is nullable; text and unread values are not judged here.
     assert.deepEqual(unwritableValues(schema, [["maintenance-date", null], ["profile1.name", "CARGO"], ["speed-limit", undefined], ["unknown", 5]]), []);
+    // The core also limits speed and power by the bike's destination.
+    const region = (destination: number, speed: number, power = 300) => ({
+      model: "ep800-crg",
+      live: { destination: { value: destination }, "speed-limit": { value: speed }, "max-power.eco": { value: power } },
+    });
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 28]], region(0, 28)), ["Assist Speed Limit (28 km/h)"]);
+    assert.deepEqual(unwritableValues(schema, [["speed-limit", 28]], region(1, 28)), []);
+    assert.deepEqual(unwritableValues(schema, [["max-power.eco", 500]], region(3, 25, 500)), ["Eco Maximum Electrical Power (500 W)"]);
+    assert.deepEqual(unwritableValues(schema, [["max-power.eco", 400]], region(3, 25, 400)), []);
+    // Destination 0 is refused while a speed left unchanged exceeds it.
+    const destination = unwritableValues(schema, [["destination", 0]], region(0, 28));
+    assert.equal(destination.length, 1);
+    assert.match(destination[0], /^Market Region \(/);
+    assert.deepEqual(unwritableValues(schema, [["destination", 0], ["speed-limit", 28]], region(0, 28)), ["Assist Speed Limit (28 km/h)"]);
+    assert.deepEqual(unwritableValues(schema, [["destination", 1]], region(1, 28)), []);
     assert.deepEqual([listText(["A"]), listText(["A", "B"]), listText(["A", "B", "C"])], ["A", "A and B", "A, B and C"]);
   });
 

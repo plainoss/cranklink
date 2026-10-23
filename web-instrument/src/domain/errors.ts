@@ -94,7 +94,7 @@ export function userFacingError(error: string, transport: TransportType | null =
  * any firmware failure after the write started also counts, in case the
  * warning never reached us (e.g. the worker died first).
  */
-function isFlashCritical(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
+export function isFlashCritical(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
   return FLASH_INTERRUPTED.test(error)
     || (kind === "firmware" && (transport === "ble" || transport === "sim") && FLASH_STARTED.test(error));
 }

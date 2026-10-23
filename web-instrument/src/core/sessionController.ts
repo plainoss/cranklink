@@ -21,7 +21,7 @@ import type {
 } from "../types.ts";
 import { enrichSchema, destinationForSpeed, destinationSpeedRange, settingAcceptsValue } from "../domain/schema.ts";
 import { formatValue, formatSetting, isRegulatedSetting, listText, settingLabel, unwritableValues } from "../domain/settingFormat.ts";
-import { isLinkLost } from "../domain/errors.ts";
+import { isFlashCritical, isLinkLost } from "../domain/errors.ts";
 import { CATALOG_NAME, detectDeviceIdentity, isMotorStock, isModernModel } from "../domain/motorIdentity.ts";
 import {
   classifyFirmwareRole,
@@ -51,7 +51,7 @@ export interface TerminalHost {
   };
   /** Registers how the host asks the operator for the Bluetooth passkey. */
   setPasskeyPrompt: (prompt: (signal: AbortSignal) => Promise<string | null>) => void;
-  /** Registers how the host reports an unplug of the selected USB or serial adapter between commands. */
+  /** Registers how the host reports an unplug of the selected USB or serial adapter. */
   setAdapterDisconnectHandler?: (handler: (error: string) => void) => void;
   simulator?: any;
   configureSimulator?: (opts: any) => void;
@@ -78,6 +78,8 @@ export class SessionController {
   private pendingPasskey: ((value: string | null) => void) | null = null;
   private syncInProgress: Promise<DeviceIdentity | null> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
+  /** An unplug of the selected adapter during an operation, and the failure shown when it came. */
+  private adapterLoss: { error: string; failure: OperationFailure | null } | null = null;
   /** True while disconnect() runs; agent reviews are refused until it settles. */
   private disconnecting = false;
   /** The chip the latest flash progress line belongs to. */
@@ -87,7 +89,7 @@ export class SessionController {
    * keeps them for the next connect, which restores them only when the same
    * component answers.
    */
-  private held: { identity: DeviceIdentity; staged: Array<[string, number | string]> } | null = null;
+  private held: { identity: DeviceIdentity; staged: Array<[string, number | string]>; afterFailure?: boolean } | null = null;
 
   constructor() {
     this.state = {
@@ -146,6 +148,8 @@ export class SessionController {
     for (const listener of this.listeners) {
       listener(this.state);
     }
+    // After the operation's current step, which may still change the state.
+    if (this.adapterLoss) queueMicrotask(() => this.showAdapterLoss());
   }
 
   /**
@@ -212,14 +216,31 @@ export class SessionController {
   }
 
   /**
-   * The selected USB or serial adapter was unplugged between commands: mark the
-   * link lost now, not at the next operation. Staged edits are kept for the
-   * reconnect. A running operation reports the unplug through its own error.
+   * The selected USB or serial adapter was unplugged: mark the link lost as
+   * soon as no operation runs, not at the next operation. Staged edits are
+   * kept for the reconnect.
    */
   public adapterDisconnected(error: string): void {
-    const { phase, transport } = this.state;
-    if (this.activeCapture || phase !== "ready" || (transport !== "usb" && transport !== "serial")) return;
-    this.fail("adapter", error);
+    const { transport, failure } = this.state;
+    if (transport !== "usb" && transport !== "serial") return;
+    this.adapterLoss = { error, failure };
+    this.showAdapterLoss();
+  }
+
+  /**
+   * Show a recorded unplug once the session is idle. An operation that failed
+   * meanwhile keeps its own failure, which says what reached the bike, and an
+   * interrupted flash keeps its recovery steps: a reconnect cannot find a
+   * motor in its bootloader.
+   */
+  private showAdapterLoss(): void {
+    const loss = this.adapterLoss;
+    if (!loss || this.activeCapture || this.syncInProgress || this.disconnecting || this.state.phase !== "ready") return;
+    this.adapterLoss = null;
+    const { failure, linkLost, transport } = this.state;
+    if (linkLost || (failure && isFlashCritical(failure.error, failure.kind, transport))) return;
+    if (failure && failure !== loss.failure) this.update({ linkLost: true });
+    else this.fail("adapter", loss.error);
   }
 
   /** Ask the operator for the Bluetooth passkey; resolves null when cancelled or aborted. */
@@ -332,6 +353,7 @@ export class SessionController {
       if (this.syncInProgress === task) {
         this.syncInProgress = null;
       }
+      this.showAdapterLoss();
     }
   }
 
@@ -345,6 +367,8 @@ export class SessionController {
     };
 
     this.state.mcpApproval?.resolve(false);
+    // An unplug of the previous port says nothing about this connection.
+    this.adapterLoss = null;
     this.startOperation({
       phase: "connecting",
       transport,
@@ -395,6 +419,7 @@ export class SessionController {
       // connect to the same component restores the held edits.
       const held = this.held;
       if (held && held.staged.length > 0) {
+        held.afterFailure = true;
         const { model, serial } = held.identity;
         this.update({ failure: { ...this.state.failure!, stagedHeld: { model, serial } } });
       } else {
@@ -423,7 +448,7 @@ export class SessionController {
     const held = this.held;
     this.held = null;
     if (!held) return next;
-    const { identity, staged } = held;
+    const { identity, staged, afterFailure } = held;
     // A failed read of the previous component is the cause worth showing; say the edits went with it.
     const discarded = () => {
       const failure = this.state.failure;
@@ -433,6 +458,7 @@ export class SessionController {
       && candidate.serial === identity.serial && candidate.modelSlug === identity.modelSlug
       && candidate.modelSeries === identity.modelSeries && candidate.modelUnit === identity.modelUnit;
     if (!samePrevious(next)) {
+      const chosen = next;
       const candidates = this.state.units.filter((unit) => unit.model_series === identity.modelSeries && unit.model_unit === identity.modelUnit
         && (identity.isMotor || unit.model === identity.model || unit.model_candidates.includes(identity.model)))
         .sort((a, b) => Number(b.slot === identity.slot) - Number(a.slot === identity.slot));
@@ -445,6 +471,15 @@ export class SessionController {
           continue;
         }
         if (samePrevious(next)) break;
+      }
+      // A connect after a failed attempt may reach another bike. Without the
+      // previous component, the one this connect chose stays selected.
+      if (afterFailure && chosen && next !== chosen && !samePrevious(next)) {
+        try {
+          next = await this.selectComponent(chosen.slot);
+        } catch {
+          // Its read failure is shown with the discarded edits.
+        }
       }
     }
     if (staged.length === 0) return next;
@@ -518,9 +553,14 @@ export class SessionController {
     const unit = this.state.units.find((entry) => entry.slot === slot);
     if (!unit || (!unit.model && !unit.model_candidates.length)) throw new Error("Select a catalogued component from the current inventory.");
     const task = this.doSelectComponent(unit);
+    // A connect that restores held edits selects through here and still runs.
+    const outer = this.syncInProgress;
     this.syncInProgress = task;
     try { return await task; }
-    finally { if (this.syncInProgress === task) this.syncInProgress = null; }
+    finally {
+      if (this.syncInProgress === task) this.syncInProgress = outer;
+      this.showAdapterLoss();
+    }
   }
 
   private async doSelectComponent(unit: ComponentUnit): Promise<DeviceIdentity> {
@@ -695,6 +735,7 @@ export class SessionController {
     } finally {
       this.disconnecting = false;
       this.speedDestinationBeforeAuto = null;
+      this.adapterLoss = null;
       // A review shown for this session must not authorize a write in the next one.
       this.state.mcpApproval?.resolve(false);
       this.update({
@@ -816,7 +857,8 @@ export class SessionController {
     });
     const plural = entries.length > 1 ? "s" : "";
     // Their backups cannot be written back, so the confirmation must not imply they can.
-    const unwritable = unwritableValues(this.state.schema, entries.map(([name]) => [name, this.state.liveValues[name]?.value]));
+    const unwritable = unwritableValues(this.state.schema, entries.map(([name]) => [name, this.state.liveValues[name]?.value]),
+      { model: identity.modelSlug, live: this.state.liveValues });
 
     this.startOperation({
       phase: "committing",
@@ -1285,7 +1327,7 @@ export class SessionController {
           params,
           diff: enrichedDiff,
           target: { model: identity.model, slot: identity.slot, serial: identity.serial },
-          unwritable: unwritableValues(this.state.schema, diff.map((d) => [d.name, d.before])),
+          unwritable: unwritableValues(this.state.schema, diff.map((d) => [d.name, d.before]), { model: identity.modelSlug, live: this.state.liveValues }),
           resolve: (ok: boolean) => {
             this.update({ mcpApproval: null });
             resolve(ok);

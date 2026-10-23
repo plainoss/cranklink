@@ -461,21 +461,52 @@ describe("Component staging and restore boundaries", () => {
   it("discards held edits when the next connect reaches another component", async () => {
     const h = harness();
     await h.controller.connectAndSync("ble");
-    h.controller.stageParameter("switch-a-function", 0);
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
     const chooser = cancellableChooser(h);
     await assert.rejects(h.controller.reconnect(), /No device selected/);
     chooser.failing = false;
-    h.replies.get(4)!.identity.serial = "111213141516";
+    // Another bike, whose SM-BMR1 has another serial.
+    h.replies.get(13)!.identity.serial = "111213141516";
+    const connectStart = h.commands.length;
     await h.controller.connectAndSync("ble");
     const state = h.controller.getState();
-    assert.equal(state.identity?.serial, "111213141516");
+    // The search reads that SM-BMR1, then the component the connect chose is selected again.
+    const reads = h.commands.slice(connectStart).filter((line) => line.includes("settings read"));
+    assert.deepEqual(reads.map((line) => Number(line.match(/--slot (\d+)/)?.[1])), [4, 13, 4]);
+    assert.equal(state.identity?.model, LEVER);
     assert.deepEqual(state.stagedValues, {});
-    assert.equal(state.failure?.error, "ST-6870-L (serial 010203040506) did not answer this connection, so your unsaved changes were discarded.");
+    assert.equal(state.failure?.error, "SM-BMR1 (serial 0A0B0C0D0E0F) did not answer this connection, so your unsaved changes were discarded.");
     // Nothing stays held for a later connect.
-    h.replies.get(4)!.identity.serial = "010203040506";
+    h.replies.get(13)!.identity.serial = "0A0B0C0D0E0F";
     await h.controller.disconnect();
     await h.controller.connectAndSync("ble");
+    assert.equal(h.controller.getState().identity?.model, LEVER);
     assert.deepEqual(h.controller.getState().stagedValues, {});
+  });
+
+  it("restores held edits before it shows an adapter unplugged during the reconnect", async () => {
+    const h = harness();
+    const terminal = (h.controller as any).terminal;
+    const run = terminal.run;
+    let unplugAt = "";
+    // The harness answers for Bluetooth; the commands are the same over USB.
+    terminal.run = async (line: string) => {
+      const reply = await run(line.replace(/^connect usb$/, "connect ble").replace(/^units$/, "--ble-master=master units"));
+      if (unplugAt && line.includes(unplugAt)) h.controller.adapterDisconnected("USB device disconnected");
+      return reply;
+    };
+    await h.controller.connectAndSync("usb");
+    await h.controller.selectComponent(13);
+    h.controller.stageParameter("multi-shift-limit.up", 3);
+    // The reconnect's search reads the component, then the adapter is pulled.
+    unplugAt = "--slot 13 ";
+    await h.controller.reconnect();
+    const state = h.controller.getState();
+    assert.equal(state.identity?.serial, "0A0B0C0D0E0F");
+    assert.deepEqual(state.stagedValues, { "multi-shift-limit.up": 3 });
+    assert.equal(state.failure?.kind, "adapter");
+    assert.equal(state.linkLost, true);
   });
 
   it("restores no edits when one of them can no longer be staged", async () => {
