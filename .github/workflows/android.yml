@@ -1,0 +1,86 @@
+name: Validate Android App
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test and build Android BLE app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ANDROID_NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check changed paths
+        id: filter
+        run: python3 .github/scripts/check-changed-paths.py android
+      - uses: actions/setup-java@v5
+        if: steps.filter.outputs.has_changes == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        if: steps.filter.outputs.has_changes == 'true'
+        with:
+          packages: platform-tools
+      - name: Install Android SDK and NDK
+        if: steps.filter.outputs.has_changes == 'true'
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.filter.outputs.has_changes == 'true'
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: steps.filter.outputs.has_changes == 'true'
+        with:
+          workspaces: android-app/native -> target
+          key: android-ndk-28.2
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.filter.outputs.has_changes == 'true'
+      - name: Test native bridge
+        if: steps.filter.outputs.has_changes == 'true'
+        run: |
+          cargo fmt --manifest-path android-app/native/Cargo.toml --check
+          cargo test --locked --manifest-path android-app/native/Cargo.toml
+      - name: Test shared sessions, lint Android, and build APK
+        if: steps.filter.outputs.has_changes == 'true'
+        working-directory: android-app
+        run: ./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug --console=plain
+      - name: Upload Android debug APK
+        if: steps.filter.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cranklink-android-debug
+          path: android-app/androidApp/build/outputs/apk/debug/androidApp-debug.apk
+          if-no-files-found: error
+      - name: Upload test and lint reports
+        if: always() && steps.filter.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cranklink-android-reports
+          path: |
+            android-app/shared/build/reports/tests/jvmTest/
+            android-app/androidApp/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+      - name: Log skip summary
+        if: steps.filter.outputs.has_changes != 'true'
+        run: echo "No Android or Rust core changes detected; skipped Android tests and APK build." >> "$GITHUB_STEP_SUMMARY"

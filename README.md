@@ -30,6 +30,12 @@ After connecting, use **Active component** to choose a drive unit, lever, derail
 
 Firmware images are not bundled.
 
+## Android app
+
+The [Android app](android-app/README.md) provides a native Kotlin interface with a Kotlin Multiplatform session layer and the same Rust tuning engine as the web app. It connects to **Shimano STEPS e-bikes over Bluetooth LE only**, with staged edits, verified saves, and local backup import/export. Di2 component configuration and firmware flashing are outside the Android app's scope.
+
+Requires Android 8.0 or later. Build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. The Android BLE path has automated protocol and session tests; it has not been tested on a physical bike.
+
 ## Supported motors
 
 | Drive unit | Settings | Firmware recovery | Hardware-tested |
@@ -186,6 +192,7 @@ For bootloader research on a working, powered EP800-CRG, `firmware dump-bootload
 - [Firmware simulator](docs/firmware-simulator.md): offline application tests, `sim.py resident` bootloader regressions, and hash-verified [Di2 firmware acquisition](docs/firmware-simulator.md#di2-research-inputs).
 - [Firmware patcher](docs/ep800-speed-limit-patcher.md): create and check supported motor images offline with `tools/patch_motor_speed.py`.
 - [Web app development](web-instrument/README.md): build, test, deploy.
+- [Android app development](android-app/README.md): BLE tuning app, native libraries, APK builds, and tests.
 
 ## License
 

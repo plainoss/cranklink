@@ -21,6 +21,8 @@ npm run dev                # dev server, includes a hardware simulator
 
 The UI inventories the bus and loads the selected component's schema from the Rust core. Motor schemas retain their curated tuning views; nonmotor components use schema-based controls with read-only guards. Saves and restores carry the selected slot, model and serial. Inventory refresh and target changes are blocked while edits are staged or operations are running. Bluetooth connection help covers both STEPS power/button windows and Di2 function/Junction A buttons. Before Bluetooth connect, choose **Di2 shifting only (no STEPS motor)** or **STEPS e-bike** based on the motor, since a STEPS bike can also have Di2 components. Normal shifting-only sessions remain open between commands and Disconnect closes GATT without explicit bus-master stop/reset commands; routing roles cannot change on that retained connection.
 
+Setting descriptions explain the effect of each control. Numeric editors, sliders, current values, pending changes, and backup previews use readable units: watts for light power, percent for speedometer calibration, and full calendar years. Conversion stays in the presentation layer so CLI values and saved backups remain compatible. See [app units](../docs/settings.md#app-descriptions-and-units).
+
 ## Test
 
 ```sh

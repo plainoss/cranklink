@@ -35,7 +35,7 @@ else
 fi
 
 if [ -d "web-instrument" ]; then
-  echo "==> [6/6] Verifying Web Instrument (types + unit tests)..."
+  echo "==> [6/6] Verifying Web App (types + unit tests)..."
   cd web-instrument
   if [ ! -d "node_modules" ]; then
     echo "    Missing node_modules; installing with npm ci..."
@@ -43,6 +43,16 @@ if [ -d "web-instrument" ]; then
   fi
   npm run typecheck
   npm test
+fi
+
+if [ "${CRANKLINK_VERIFY_ANDROID:-0}" = "1" ]; then
+  echo "==> Verifying Android App (native + shared tests + lint + APK)..."
+  cargo fmt --manifest-path "$REPO_ROOT/android-app/native/Cargo.toml" --check
+  cargo test --locked --manifest-path "$REPO_ROOT/android-app/native/Cargo.toml"
+  (
+    cd "$REPO_ROOT/android-app"
+    ./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug --console=plain
+  )
 fi
 
 echo ""

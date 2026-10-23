@@ -56,7 +56,8 @@ impl SettingsModel {
             Self::Component(name) => name,
         }
     }
-    pub(crate) fn slug(self) -> &'static str {
+    /// Stable identity persisted in settings backups.
+    pub fn slug(self) -> &'static str {
         match self {
             Self::Ep800Crg => "ep800-crg",
             Self::Ep600 => "ep600",
@@ -240,6 +241,18 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
     specs
 }
 
+/// The drive-unit tuning surface used by the BLE Android app. Transmission
+/// settings and standalone components are intentionally excluded.
+pub fn ebike_schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
+    if matches!(model, SettingsModel::Component(_)) {
+        return Vec::new();
+    }
+    schema_for_model(model)
+        .into_iter()
+        .filter(|spec| !matches!(spec.group, 0x0a | 0x0b))
+        .collect()
+}
+
 pub fn capabilities_for_model(model: SettingsModel) -> Value {
     if let SettingsModel::Component(name) = model {
         let specs = schema_for_model(model);
@@ -312,6 +325,11 @@ pub struct SettingSpec {
     selector_len: usize,
 }
 impl SettingSpec {
+    /// Validate one staged input before authentication or any settings write.
+    pub fn validate(&self, value: &str) -> Result<()> {
+        validate_input(self, value)
+    }
+
     // Explicit wire layout columns make the auditable command table readable.
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -991,12 +1009,30 @@ pub fn read_all_for_model(
     slot: u8,
     model: SettingsModel,
 ) -> SettingsSnapshot {
+    read_schema(session, slot, model, schema_for_model(model))
+}
+
+/// Read only drive-unit tuning fields, without querying transmission settings.
+pub fn read_ebike_for_model(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    model: SettingsModel,
+) -> SettingsSnapshot {
+    read_schema(session, slot, model, ebike_schema_for_model(model))
+}
+
+fn read_schema(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    model: SettingsModel,
+    specs: Vec<SettingSpec>,
+) -> SettingsSnapshot {
     let mut values = BTreeMap::new();
     let mut unavailable = BTreeMap::new();
     // Cache by command/query so shared profile fields do not trigger duplicate requests.
     type ReadCache = BTreeMap<(u8, u8, Vec<u8>), std::result::Result<Vec<u8>, String>>;
     let mut cache: ReadCache = BTreeMap::new();
-    for s in schema_for_model(model) {
+    for s in specs {
         if s.width == 0 {
             match read_for_model(session, slot, &s.name, model) {
                 Ok(value) => {
@@ -1856,7 +1892,7 @@ fn restore_date(
         .context("create new restore backup")?;
     serde_json::to_writer_pretty(
         &mut file,
-        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"setting":s.name,"before":before,"original_parameters":hex::encode(&current),"planned_parameters":hex::encode(original)}),
+        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"settings_model":model.slug(),"setting":s.name,"before":before,"original_parameters":hex::encode(&current),"planned_parameters":hex::encode(original)}),
     )?;
     file.write_all(b"\n")?;
     file.sync_all()?;
@@ -1940,7 +1976,7 @@ fn set_name(
         .context("create settings backup (choose a new filename)")?;
     serde_json::to_writer_pretty(
         &mut backup,
-        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"setting":s.name,"before":before,"original_parameters":hex::encode(&original)}),
+        &json!({"format":"cranklink-setting-backup-v1","serial":serial,"slot":slot,"settings_model":model.slug(),"setting":s.name,"before":before,"original_parameters":hex::encode(&original)}),
     )?;
     backup.write_all(b"\n")?;
     backup.sync_all()?;

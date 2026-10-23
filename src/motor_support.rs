@@ -5,20 +5,20 @@ use crate::settings::SettingsModel;
 use anyhow::{bail, ensure, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuthProtocol {
+pub enum AuthProtocol {
     NotRequired,
     Legacy,
     Modern,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MotorSupport {
+pub struct MotorSupport {
     pub auth: AuthProtocol,
     pub settings: Option<SettingsModel>,
 }
 
 /// Match exact known seven-byte product attributes, including their padding.
-pub(crate) fn for_motor_params(series: u8, unit: u8, params: &[u8]) -> Result<MotorSupport> {
+pub fn for_motor_params(series: u8, unit: u8, params: &[u8]) -> Result<MotorSupport> {
     ensure!(unit == 0, "unsupported motor identity");
     if matches!(series, 0x08 | 0x0a) {
         ensure!(params.is_empty(), "invalid motor product attributes");
@@ -56,7 +56,7 @@ pub(crate) fn for_motor_params(series: u8, unit: u8, params: &[u8]) -> Result<Mo
 
 /// These stock identities have no supported product discriminator query.
 /// Do not send an optional opcode merely to select its common schema.
-pub(crate) fn read_params(
+pub fn read_params(
     session: &mut dyn crate::device::UnitCommands,
     slot: u8,
     series: u8,
@@ -89,7 +89,8 @@ pub(crate) fn authorization_for_motor(
     })
 }
 
-pub(crate) fn settings_for_motor(
+/// Select the live motor's settings model, including firmware-dependent fields.
+pub fn settings_for_motor(
     series: u8,
     unit: u8,
     params: &[u8],
