@@ -10,6 +10,8 @@
     "stock_only_cli_succeeded": true,
     "master_and_gateway_stop_receipts_received": true,
     "post_inventory_physical_check_passed": false,
+    "shifting_and_junction_button_both_failed": true,
+    "battery_replug_restored_both": true,
     "component_settings_read_attempted": false,
     "original_missing_reply_required_for_failure": false
   },

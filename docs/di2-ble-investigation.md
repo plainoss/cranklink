@@ -10,6 +10,8 @@ button operation. Subsequent `units --stock-only` completed without a read
 timeout, settings operation or optional part/model query, but the rider then
 reported that shifting or the junction button was no longer working. Further
 BLE testing was stopped before a component settings read.
+The rider then confirmed that both shifting and the junction button had failed,
+and that disconnecting/reconnecting the battery restored both.
 
 The trace contains master stop `00 32 10 00 11 00 00`, matching receipt
 `00 32 12 00 11 ff ff ...`, followed by gateway stop `00 0c 00` and its
