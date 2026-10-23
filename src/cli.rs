@@ -1442,7 +1442,12 @@ fn execute_firmware_command(
                 };
                 let serial_check = check_application_serial(&mut s, after.slot, &serial);
                 let stop = s.normal_stop();
-                let journaled = finished.and_then(|()| jnl.record("application-after", &after));
+                let application = JournaledApplication {
+                    identity: &after,
+                    serial: serial_check.is_ok().then_some(serial_str),
+                };
+                let journaled =
+                    finished.and_then(|()| jnl.record("application-after", &application));
                 let verified = serial_check.and_then(|()| {
                     ensure!(
                         after.dcas_version == fw.metadata.version.to_string(),
@@ -1469,7 +1474,7 @@ fn execute_firmware_command(
                         )
                     });
                 finish_operation(verified, stop)?;
-                jnl.record("verified", &after)
+                jnl.record("verified", &application)
                     .context("flash verified, but the flash journal is incomplete")?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
@@ -1695,7 +1700,12 @@ fn execute_firmware_command(
                 };
                 let serial_check = check_application_serial(&mut s, after.slot, &serial);
                 let stop = s.normal_stop();
-                let journaled = finished.and_then(|()| jnl.record("application-after", &after));
+                let application = JournaledApplication {
+                    identity: &after,
+                    serial: serial_check.is_ok().then_some(serial_str),
+                };
+                let journaled =
+                    finished.and_then(|()| jnl.record("application-after", &application));
                 let verified = serial_check.and_then(|()| {
                     ensure!(
                         after.cargo == before.cargo
@@ -1716,7 +1726,7 @@ fn execute_firmware_command(
                         )
                     });
                 finish_operation(verified, stop)?;
-                jnl.record("verified", &after)
+                jnl.record("verified", &application)
                     .context("flash verified, but the flash journal is incomplete")?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
@@ -3568,6 +3578,15 @@ impl Journal {
     }
 }
 
+/// A post-flash application identity as journaled, with the serial it
+/// reported in the same session; `None` when that serial was not confirmed.
+#[derive(serde::Serialize)]
+struct JournaledApplication<'a> {
+    #[serde(flatten)]
+    identity: &'a crate::device::Identity,
+    serial: Option<&'a str>,
+}
+
 /// Journal a failed step; a journal error must never replace it.
 fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyhow::Error {
     match jnl.record(stage, &format!("{error:#}")) {
@@ -4149,6 +4168,43 @@ mod cli_tests {
             "{error}"
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn post_flash_journal_stages_record_the_confirmed_serial() {
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-after-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let after = crate::device::Identity {
+            slot: 13,
+            cargo: "00-CRG".into(),
+            dcas_version: "4.2.0.0".into(),
+            rx_version: "4.1.11.0".into(),
+        };
+        let mut jnl = Journal::new(&path).unwrap();
+        for serial in [Some("010203040506"), None] {
+            let application = JournaledApplication {
+                identity: &after,
+                serial,
+            };
+            jnl.record("verified", &application).unwrap();
+        }
+        drop(jnl);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let data: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["data"].clone())
+            .collect();
+        assert_eq!(
+            data[0],
+            serde_json::json!({"slot": 13, "cargo": "00-CRG", "dcas_version": "4.2.0.0",
+                "rx_version": "4.1.11.0", "serial": "010203040506"})
+        );
+        // An unconfirmed serial is recorded as such, never as the expected one.
+        assert!(data[1]["serial"].is_null() && data[1]["slot"] == 13);
     }
 
     #[test]
