@@ -344,6 +344,18 @@ impl BleSession {
         self.poisoned = true;
         self.read_timeout_cleanup = false;
     }
+    fn can_cleanup_read_timeout(&self) -> bool {
+        self.wait_timed_out
+            && self.authenticated
+            && self.gateway_mode
+            && !self.cleanup_in_progress
+            && !self.master_routing
+            && !self.firmware_active
+            && self.slave_master_link
+                == (SlaveMasterLink::Active {
+                    owner: self.pc_slot,
+                })
+    }
     fn cleanup_write_allowed(&self, id: u16, bytes: &[u8]) -> bool {
         if !self.cleanup_in_progress || self.master_routing || !self.gateway_mode {
             return false;
@@ -570,8 +582,20 @@ impl BleSession {
         let mut bytes = vec![0, control];
         bytes.extend_from_slice(params);
         self.write(PCE_COMMAND, &bytes)?;
-        let n =
-            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply))?;
+        let response =
+            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply));
+        // This read has a distinct reply opcode from target selection and stop.
+        // A start receipt must already establish our master ownership; a missing
+        // metadata reply alone cannot grant cleanup for a pending start.
+        if response.is_err()
+            && control == 0x0d
+            && params == [0]
+            && reply == 0x2d
+            && self.can_cleanup_read_timeout()
+        {
+            self.read_timeout_cleanup = true;
+        }
+        let n = response?;
         Ok(n.value[1..].to_vec())
     }
     /// Slave discovery enters gateway PC-link (0C/01), reads master information
@@ -775,6 +799,11 @@ impl BleSession {
         let slots = self.discover_units()?;
         self.inventory_slots(&slots, true)
     }
+    /// Read current-session stock identities without optional component queries.
+    pub fn units_stock_only(&mut self) -> Result<Vec<crate::device::UnitIdentity>> {
+        let slots = self.discover_units()?;
+        self.inventory_slots(&slots, false)
+    }
     pub fn start(&mut self, selected: Option<u8>) -> Result<Identity> {
         self.start_inner(selected, None, false)
     }
@@ -801,7 +830,16 @@ impl BleSession {
                 Some(slot) => vec![crate::device::select_motor_slot(&slots, Some(slot))?],
                 None => slots.clone(),
             };
-            let units = self.inventory_slots(&named_slots, true)?;
+            let mut units = self.inventory_slots(&named_slots, false)?;
+            for unit in &mut units {
+                if unit
+                    .model_candidates
+                    .iter()
+                    .any(|name| crate::unit_models::name_matches(component, name))
+                {
+                    unit.resolve_name(self)?;
+                }
+            }
             crate::device::select_named_component(&units, component)?
         } else if selected.is_none() && slots.len() > 1 {
             crate::device::select_current_motor(&self.inventory_slots(&slots, false)?)?
@@ -898,7 +936,7 @@ impl BleSession {
         })
     }
     /// Release motor ownership, restore/confirm slave mode, then stop the
-    /// gateway PC-link before closing GATT. Identity GET timeouts may permit
+    /// gateway PC-link before closing GATT. Verified GET timeouts may permit
     /// one cleanup-only attempt; ordinary commands remain fenced. Disconnect
     /// cannot stand in for an acknowledged component/master stop.
     pub fn stop(&mut self) -> Result<()> {
@@ -908,7 +946,7 @@ impl BleSession {
         );
         if self.poisoned {
             if self.read_timeout_cleanup {
-                // A missing identity GET reply cannot be confused with the
+                // A missing verified GET reply cannot be confused with the
                 // distinct, owner-checked PC stop receipt. Keep ordinary traffic
                 // poisoned; grant one cleanup-only attempt, never a read retry.
                 self.read_timeout_cleanup = false;
@@ -917,7 +955,7 @@ impl BleSession {
                     .stop_pc_link()
                     .and_then(|_| self.stop_gateway_pc_link());
                 self.cleanup_in_progress = false;
-                return result.context("BLE cleanup after identity read timeout failed");
+                return result.context("BLE cleanup after read timeout failed");
             }
             bail!("BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state");
         }
@@ -1276,20 +1314,10 @@ impl UnitCommands for BleSession {
                 && (n.value[2] == response_cmd || n.value[2] == response_cmd.wrapping_add(1))
         });
         if response.is_err()
-            && self.wait_timed_out
-            && !self.cleanup_in_progress
-            && !self.master_routing
-            && !self.firmware_active
-            && self.slave_master_link
-                == (SlaveMasterLink::Active {
-                    owner: self.pc_slot,
-                })
-            && params == [0]
+            && self.can_cleanup_read_timeout()
             && response_cmd == command.wrapping_add(2)
-            && matches!(
-                (group, command),
-                (1, 0x14 | 0x1c | 0x2c | 0x84 | 0x3c | 0xa4 | 0xac) | (0x32, 0x9c)
-            )
+            && (identity_read_query(slot, group, command, params, self.pc_slot)
+                || crate::settings::supports_read_query(group, command, params))
         {
             self.read_timeout_cleanup = true;
         }
@@ -1300,6 +1328,18 @@ impl UnitCommands for BleSession {
             hex::encode(&n.value)
         );
         Ok(n.value[3..].to_vec())
+    }
+}
+fn identity_read_query(slot: u8, group: u8, command: u8, params: &[u8], pc_slot: u8) -> bool {
+    match (group, command) {
+        (2, 0x14) => {
+            slot == 0 && params.len() == 1 && (1..32).contains(&params[0]) && params[0] != pc_slot
+        }
+        (1, 0x84) => params == [0] || params == [1],
+        (1, 0x14 | 0x1c | 0x2c | 0x3c | 0xa4 | 0xac) | (4, 0x0c) | (0x16, 0x7c) | (0x32, 0x9c) => {
+            params == [0]
+        }
+        _ => false,
     }
 }
 fn allowed_unit_command(group: u8, command: u8) -> bool {
@@ -1347,6 +1387,7 @@ mod tests {
         drop_query: Option<(u8, u8)>,
         flood_query: bool,
         fail_receive: bool,
+        drop_master_metadata: bool,
         invalid_nonce: bool,
         bad_mode: bool,
         unit_bitmap: Option<[u8; 4]>,
@@ -1519,6 +1560,9 @@ mod tests {
                         vec![0x2c, u8::from(data[2] == 0 && s.reject_gateway_pc_stop)]
                     }
                     0x0d => {
+                        if s.drop_master_metadata {
+                            return Ok(());
+                        }
                         let mut reply = vec![0x2d];
                         reply.extend(s.master_info.clone().unwrap_or(vec![1, 0xff, 0xff]));
                         reply
@@ -3038,6 +3082,52 @@ mod tests {
             && matches!((bytes[1], bytes[2]), (0x16, 0x7c) | (1, 0x84))));
     }
     #[test]
+    fn named_selection_does_not_query_unrelated_unresponsive_levers() {
+        for (stock, name) in [([0x11, 3], "FD-R9150"), ([0x16, 4], "RD-RX815")] {
+            let (mut session, state) = mock();
+            {
+                let mut s = state.borrow_mut();
+                s.unit_bitmap = Some([24, 32, 0, 0]);
+                s.component_stock = BTreeMap::from([(4, [0x11, 1]), (13, stock)]);
+                s.motor_slots = vec![4, 13];
+                s.component_part = Some(4);
+                s.drop_query = Some((4, 0x0c));
+            }
+            session.authenticate().unwrap();
+            let identity = session.start_component(None, Some(name)).unwrap();
+            assert_eq!(identity.slot, 13);
+            assert_eq!(identity.cargo, name);
+            assert!(!state
+                .borrow()
+                .writes
+                .iter()
+                .any(|(id, bytes)| *id == FREE_COMMAND && bytes.starts_with(&[4, 4, 0x0c])));
+            if name == "RD-RX815" {
+                assert!(state
+                    .borrow()
+                    .writes
+                    .contains(&(FREE_COMMAND, vec![13, 0x32, 0x9c, 0])));
+            }
+            session.stop().unwrap();
+        }
+    }
+    #[test]
+    fn stock_only_inventory_keeps_candidates_without_optional_part_queries() {
+        let (mut session, state) = component_mock(0x16, 4);
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        let units = session.units_stock_only().unwrap();
+        assert_eq!(units.len(), 1);
+        assert!(units[0].model.is_none());
+        assert!(units[0].model_candidates.contains(&"RD-RX815"));
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| *id == FREE_COMMAND
+                && matches!((bytes[1], bytes[2]), (0x32, 0x9c) | (4, 0x0c))));
+        session.stop().unwrap();
+    }
+    #[test]
     fn named_component_ble_selection_intersects_explicit_slot() {
         let (mut session, state) = component_mock(0x23, 2);
         state.borrow_mut().unit_bitmap = Some([24, 32, 0, 0]);
@@ -3204,6 +3294,50 @@ mod tests {
         session.authenticate().unwrap();
         session.discover_units().unwrap();
         (session, state)
+    }
+    #[test]
+    fn master_metadata_timeout_requires_observed_local_start_before_cleanup() {
+        for receipt_owner in [Some(3), Some(19), None] {
+            let (mut session, state) = mock();
+            {
+                let mut s = state.borrow_mut();
+                s.master_info = Some(vec![1, 0x11, 1]);
+                s.drop_master_metadata = true;
+                s.slave_master_start_receipt =
+                    receipt_owner.map(|owner| vec![0, 0x32, 0x12, 1, owner, 0xff, 0xff]);
+            }
+            session.authenticate().unwrap();
+            assert!(session.discover_units().is_err());
+            let before = state.borrow().writes.len();
+            if receipt_owner == Some(3) {
+                session.stop().unwrap();
+                assert!(!state.borrow().slave_master_connected);
+            } else {
+                assert!(session.stop().is_err());
+                assert_eq!(before, state.borrow().writes.len());
+            }
+        }
+    }
+    #[test]
+    fn verified_identity_and_setting_read_timeouts_still_release_known_master() {
+        for (slot, group, command, query) in [
+            (13, 4, 0x0c, vec![0]),
+            (13, 0x16, 0x7c, vec![0]),
+            (0, 2, 0x14, vec![13]),
+            (13, 1, 0x84, vec![1]),
+            (13, 0x0b, 0x14, vec![0]),
+            (13, 0x17, 0x24, vec![0x51]),
+        ] {
+            let (mut session, state) = slave_with_known_master();
+            state.borrow_mut().drop_query = Some((group, command));
+            assert!(session
+                .command(slot, group, command, &query, command + 2)
+                .is_err());
+            assert!(session.read_timeout_cleanup, "{group:02x}/{command:02x}");
+            session.stop().unwrap();
+            assert!(!state.borrow().slave_master_connected);
+            assert!(session.poisoned);
+        }
     }
     #[test]
     fn identity_timeout_permits_one_owner_checked_cleanup_but_no_further_queries() {

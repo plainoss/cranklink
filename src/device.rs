@@ -465,6 +465,11 @@ impl Session {
         }
         Ok(units)
     }
+    /// Stock identities only; omit optional part/model discriminator queries.
+    pub fn units_stock_only(&mut self) -> Result<Vec<UnitIdentity>> {
+        let slots = self.discover()?;
+        self.inventory_slots(&slots)
+    }
     fn inventory_slots(&mut self, slots: &[u8]) -> Result<Vec<UnitIdentity>> {
         let mut units = Vec::new();
         for &slot in slots {

@@ -57,6 +57,7 @@ SM-PCE02 selected explicitly, the command is:
 
 ```sh
 cranklink --port usb units
+cranklink --port usb units --stock-only  # skip optional discriminator queries
 ```
 
 The connection device discovers temporary addresses called **slots**.

@@ -11,8 +11,8 @@ from fw_sim.di2_gatt import Di2TimeoutEndpoint
 from fw_sim.gatt import read_request_line
 
 
-def reproduce(binary, image):
-    endpoint = Di2TimeoutEndpoint(image)
+def reproduce(binary, image, case="identity-timeout"):
+    endpoint = Di2TimeoutEndpoint(image, case=case)
     failures = []
     with tempfile.TemporaryDirectory(prefix='di2-offline-') as folder:
         path = Path(folder) / 'peer.sock'
@@ -37,7 +37,8 @@ def reproduce(binary, image):
         worker.start()
         try:
             process = subprocess.run([str(binary.resolve()), '--port', 'ble-sim:' + str(path),
-                                      '--json', 'units'], capture_output=True, text=True, timeout=25)
+                                      '--json', 'units'] + (['--stock-only'] if case == 'stock-only' else []),
+                                     capture_output=True, text=True, timeout=25)
             worker.join(8)
             if worker.is_alive():
                 raise RuntimeError('offline peer did not terminate')
@@ -45,7 +46,8 @@ def reproduce(binary, image):
             listener.close()
         if failures:
             raise RuntimeError('; '.join(failures))
-    return dict(exit_code=process.returncode, diagnostic=process.stderr.strip(),
+    return dict(case=case, exit_code=process.returncode, diagnostic=process.stderr.strip(),
+                output=process.stdout,
                 battery_connected=endpoint.battery.connected, events=endpoint.events,
                 firmware_sha256=endpoint.battery.assessment['sha256'],
                 firmware_executions=endpoint.executions,
@@ -56,28 +58,43 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--image', type=Path, required=True)
-    parser.add_argument('--expect', choices=['stranded', 'receipt'], required=True)
+    parser.add_argument('--expect', choices=['stranded', 'receipt', 'stock'], required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--case', choices=['identity-timeout', 'metadata-timeout', 'component-timeout', 'stock-only'],
+                        default='identity-timeout')
     args = parser.parse_args()
-    result = reproduce(args.binary, args.image)
+    if (args.expect == 'stock') != (args.case == 'stock-only'):
+        parser.error('stock-only requires --expect stock; other cases require stranded or receipt')
+    result = reproduce(args.binary, args.image, case=args.case)
     executions = result['firmware_executions']
     started = bool(executions and executions[0]['returned'] and executions[0]['connected'])
     free = [event['bytes'] for event in result['events'] if event['kind'] == 'free']
     pce = [event['bytes'] for event in result['events'] if event['kind'] == 'modeled-pce']
-    if args.expect == 'receipt':
+    expected_free = [] if args.case == 'metadata-timeout' else ['00011c00']
+    if args.case in ('component-timeout', 'stock-only'):
+        expected_free += ['00011400', '0002140d']
+    if args.case == 'component-timeout':
+        expected_free += ['0d329c00']
+    successful_stock = args.expect == 'stock' and args.case == 'stock-only'
+    if args.expect in ('receipt', 'stock'):
         lifecycle = (len(executions) == 2 and executions[1]['receipt_boundary']
                      and not executions[1]['returned'] and executions[1]['error'] is None
                      and not result['battery_connected']
-                     and free == ['00011c00', '00321000130000'] and pce[-1] == '000c00'
+                     and free == expected_free + ['00321000130000'] and pce[-1] == '000c00'
                      and next(i for i, e in enumerate(result['events'])
                               if e.get('bytes') == '00321000130000')
                      < next(i for i, e in enumerate(result['events'])
                             if e.get('bytes') == '000c00'))
     else:
         lifecycle = (len(executions) == 1 and result['battery_connected']
-                     and free == ['00011c00'] and '000c00' not in pce)
-    result['passed'] = (result['exit_code'] != 0 and 'BLE response timeout' in result['diagnostic']
-                        and started and lifecycle)
+                     and free == expected_free and '000c00' not in pce)
+    if successful_stock:
+        output = json.loads(result['output'])
+        outcome = result['exit_code'] == 0 and [u['slot'] for u in output['units']] == [0, 13]
+        outcome = outcome and output['units'][1]['model'] is None and 'RD-RX815' in output['units'][1]['model_candidates']
+    else:
+        outcome = result['exit_code'] != 0 and 'BLE response timeout' in result['diagnostic']
+    result['passed'] = outcome and started and lifecycle
     args.output.write_text(json.dumps(result, indent=2) + '\n')
     print('PASS' if result['passed'] else 'FAIL', args.image.name,
           'battery session active after timeout:', result['battery_connected'])

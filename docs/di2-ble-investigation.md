@@ -58,7 +58,7 @@ sessions with no selected component. Missing, rejected or mismatched stop
 receipts cannot report successful cleanup.
 A subsequent offline reproduction found that unconditional timeout fencing
 prevented this stop sequence from running after the observed identity-read
-failures. Identity GET timeouts now allow one cleanup-only attempt, provided
+failures. Verified identity/schema GET timeouts now allow one cleanup-only attempt, provided
 normal/slave discovery established a master owned by the local PC. Ordinary
 commands remain poisoned. Write/auth/firmware failures, unknown/foreign owners,
 transport errors and notification overflow do not receive this exception. A
@@ -116,8 +116,11 @@ actual directed `32/12 00 <requester> FF FF` packet. Execution pauses at that
 receipt, BEFORE the remaining battery housekeeping; it is not a completed stop
 handler or proof of restored shifting. The receipt echoes the requester's byte,
 even if it differs from the stored owner, so the client's observed-owner
-precondition is essential. The WU-family start handler returns, but its stop
-traps at an unmodeled `0x3FF4` peripheral write. RF, Nordic firmware, bus timing,
+precondition is essential. The WU-family start handler returns. Its strict stop
+traps at peripheral `0x3FF4`. With an opt-in exact eight-write interrupt-control
+fixture, the original stop handler returns after 1,199 instructions; repeated
+start/stop cycles retain RAM, emit receipts and balance the stack. No interrupt
+timing or physical register effects are simulated. RF, Nordic firmware, bus timing,
 complete boot, derailleurs and shifting remain outside this execution scope.
 
 `verify_di2.py` runs the actual CLI against this battery service and a narrowly
@@ -129,3 +132,28 @@ original read still reports an error and is not retried. This establishes an
 offline reproduction and regression check for the cleanup omission. It does
 not establish why the bike's component reads stopped responding or validate
 the complete WU111/BT-DN110 topology.
+
+
+## Follow-up before hardware validation
+
+Named BLE selection previously queried every ambiguous component before finding
+the requested model. It now follows the wired selection approach: inspect the
+current stock cache, resolve only matching model candidates, and revalidate the
+selected identity. A regression selects FD-R9150 and RD-RX815 while an unrelated
+lever's part GET would time out. This is a separate, reproducible client bug;
+it does not explain the original rear derailleur's own missing reply.
+
+`units --stock-only` omits optional component part/model queries while retaining
+stock identities and unresolved candidates. The offline CLI fixture now models
+a responding stock cache plus a lost RD part GET. Ordinary inventory reproduces
+the timeout; stock-only inventory succeeds and both paths execute explicit
+battery cleanup. A schema GET timeout also permits one cleanup-only sequence,
+using exact declared query selectors and excluding every opcode used by a SET.
+A missing gateway master-metadata reply also qualifies only after an observed local-owner master start; start-acknowledgement timeouts stay excluded. Transport/ownership checks and all failure revocations remain in force.
+
+The physical checks should proceed one connection at a time: link test, stock-only
+inventory, then one named-component identity/settings read. After every service
+session, require both protocol cleanup receipts and manual confirmation that
+shifting and the junction button still work. Do not carry a slot address across
+connections, retry a failed query automatically, or infer normal operation from
+LEDs alone. No settings SET or firmware operation is part of this validation.

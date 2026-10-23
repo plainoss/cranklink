@@ -4,7 +4,7 @@
 
 ## Component settings
 
-Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior.
+Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. Named selection uses cached identities to avoid querying unrelated ambiguous components. `units --stock-only` lists stock identities and unresolved candidates without optional part/model queries. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior.
 
 Component sessions use the stock identity and, where necessary, a part discriminator to select an exact catalog model. They read the component application version without issuing motor cargo/RX queries. Unknown or unresolved identities are rejected. A catalog entry does not automatically grant a settings layout: components without an implemented schema return no fields and `capabilities.settings_available: false` in full snapshots.
 

@@ -277,7 +277,11 @@ enum Command {
         all: bool,
     },
     /// Inventory connected E-TUBE bus components (motor, display, shifter)
-    Units,
+    Units {
+        /// Omit optional part/model queries; report stock identities and candidates
+        #[arg(long)]
+        stock_only: bool,
+    },
     /// Probe active drive unit (model, serial, MCU firmware versions)
     Probe,
     /// Persistent interactive JSON-RPC session driver for AI agents & test runners
@@ -702,10 +706,14 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 anyhow::bail!("Bluetooth discovery requires cranklink built with --features ble");
             }
         }
-        Command::Units => {
+        Command::Units { stock_only } => {
             let mut session = Session::open(port.as_deref().unwrap_or("auto"), trace.as_deref())?;
             session.initialize()?;
-            let units = session.units()?;
+            let units = if stock_only {
+                session.units_stock_only()?
+            } else {
+                session.units()?
+            };
             if is_json {
                 out_println!(
                     "{}",
@@ -1475,8 +1483,12 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     Ok(None)
                 }
             }
-            Command::Units => {
-                let units = session.units()?;
+            Command::Units { stock_only } => {
+                let units = if stock_only {
+                    session.units_stock_only()?
+                } else {
+                    session.units()?
+                };
                 if is_json {
                     Ok(Some(serde_json::json!({
                         "units": units,
@@ -2003,7 +2015,7 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
 
 fn read_only_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Scan { .. } | Command::Units | Command::Probe | Command::Session => true,
+        Command::Scan { .. } | Command::Units { .. } | Command::Probe | Command::Session => true,
         Command::Settings { command } => matches!(
             command,
             SettingsCommand::Read { .. } | SettingsCommand::Schema { .. }
@@ -2021,7 +2033,7 @@ fn read_only_command_allowed(command: &Command) -> bool {
 
 fn ble_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Probe | Command::Units | Command::Session => true,
+        Command::Probe | Command::Units { .. } | Command::Session => true,
         Command::Settings { .. } => true,
         Command::Firmware { command } => matches!(
             command,
@@ -3636,9 +3648,21 @@ mod cli_tests {
         assert!(dry_decision.reason.contains("dry-run"));
         assert!(!command_requires_unit_auth(&dry_run_cmd, model, true));
         assert_eq!(plan_ble_routing(None, &Command::Probe).route, "normal");
-        assert_eq!(plan_ble_routing(None, &Command::Units).route, "normal");
+        assert_eq!(
+            plan_ble_routing(None, &Command::Units { stock_only: false }).route,
+            "normal"
+        );
     }
 
+    #[test]
+    fn stock_only_units_parse_as_read_only_normal_ble_discovery() {
+        let cli =
+            Cli::try_parse_from(["cranklink", "--read-only", "units", "--stock-only"]).unwrap();
+        assert!(matches!(cli.command, Command::Units { stock_only: true }));
+        assert!(read_only_command_allowed(&cli.command));
+        assert!(ble_command_allowed(&cli.command));
+        assert_eq!(plan_ble_routing(None, &cli.command).route, "normal");
+    }
     #[test]
     fn ble_master_flag_parsing_overrides_and_conflicts() {
         let default_cli = Cli::try_parse_from(["cranklink", "probe"]).unwrap();

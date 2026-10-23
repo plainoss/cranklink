@@ -905,7 +905,7 @@ pub fn read_for_model(
         raw: hex::encode(raw),
     })
 }
-pub(crate) fn supports_command(group: u8, command: u8) -> bool {
+fn command_models() -> impl Iterator<Item = SettingsModel> {
     [
         SettingsModel::Ep800Crg,
         SettingsModel::Ep600,
@@ -924,11 +924,35 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
             .filter(|entry| !entry.name.starts_with("DU-"))
             .map(|entry| SettingsModel::Component(entry.name)),
     )
-    .any(|model| {
+}
+pub(crate) fn supports_command(group: u8, command: u8) -> bool {
+    command_models().any(|model| {
         schema_for_model(model)
             .iter()
             .any(|s| s.group == group && (s.get == command || (!s.read_only && s.set == command)))
     })
+}
+/// Admit only declared GET queries; reject any opcode also used as a SET.
+pub(crate) fn supports_read_query(group: u8, command: u8, params: &[u8]) -> bool {
+    let mut read = false;
+    for model in command_models() {
+        for spec in schema_for_model(model) {
+            if spec.group != group {
+                continue;
+            }
+            if !spec.read_only && spec.set == command {
+                return false;
+            }
+            if spec.get == command {
+                read |= params == spec.query
+                    || (spec.width == 0
+                        && spec.value_type != "date"
+                        && spec.query.len() == 1
+                        && params == [spec.query[0] | 1]);
+            }
+        }
+    }
+    read
 }
 /// Profile names use two five-byte text chunks, selected by hex `50/51` or
 /// `60/61`. GET `17/24 [selector]` returns `[selector, ASCII5, ...]`; only the
@@ -1735,6 +1759,24 @@ fn set_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cleanup_read_queries_require_declared_selectors_and_exclude_all_setters() {
+        assert!(supports_read_query(0x0b, 0x14, &[0]));
+        assert!(!supports_read_query(0x0b, 0x14, &[0, 1]));
+        assert!(supports_read_query(0x17, 0x24, &[0x50]));
+        assert!(supports_read_query(0x17, 0x24, &[0x51]));
+        assert!(!supports_read_query(0x17, 0x24, &[0xff]));
+        let setters: std::collections::BTreeSet<_> = command_models()
+            .flat_map(schema_for_model)
+            .filter(|s| !s.read_only)
+            .map(|s| (s.group, s.set))
+            .collect();
+        for (group, command) in setters {
+            assert!(!supports_read_query(group, command, &[0]));
+        }
+        assert!(!supports_read_query(0x32, 0x10, &[0]));
+        assert!(!supports_read_query(0x16, 0xd8, &[0]));
+    }
     #[test]
     fn older_schemas_expose_only_common_fields_with_their_own_ranges_and_layouts() {
         for model in [

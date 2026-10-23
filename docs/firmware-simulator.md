@@ -96,7 +96,7 @@ The separate experimental service profiles below are not inferred from acquisiti
 | --- | --- | --- |
 | `BTDN110.4.5.0.dat` | BT-DN110 board 1 master application | PC-link start executes; stop runs to its actual receipt, then pauses before housekeeping. |
 | `2BTDN110.4.5.0.dat` | BT-DN110 board 2 master application | Separate hash/entry; the same partial service coverage as board 1. |
-| `EWWU101.4.6.0.dat` | WU101/WU111 main application family | PC-link start executes; stop traps at unmodeled peripheral 0x3FF4. Model mapping comes from the E-TUBE application declaration. |
+| `EWWU101.4.6.0.dat` | WU101/WU111 main application family | PC-link start executes. Stop returns with an opt-in exact interrupt-control write fixture; strict execution traps at 0x3FF4. Model mapping comes from the E-TUBE application declaration. |
 | `UPDATENRF-DI2-ap.4.7.1.hex` | Separate Nordic radio application | Plausible mapped Thumb reset vector; no recovered gateway handler profile. |
 | `UPDATENRF-DI2-bt.1.4.0.hex` | Nordic bootloader | Acquired and format-checked only. |
 | `UPDATENRF-sd.3.0.0.hex` | Nordic SoftDevice package | Acquired and format-checked only; RF behavior is not emulated. |
@@ -106,7 +106,8 @@ The separate experimental service profiles below are not inferred from acquisiti
 The bounded MN101 interpreter executes original instructions from the acquired
 main images. It models initialized RAM and a synthetic function call frame;
 unknown instructions, uncertain REP/MULU/DIVU/ASR semantics, handy memory and
-unmodeled peripherals trap. It rejects unsupported PC bank bits rather than
+unmodeled peripherals trap. An opt-in wireless fixture admits only the exact
+ordered interrupt-control writes recovered from the pinned handler. It rejects unsupported PC bank bits rather than
 truncating them. This is a service test harness, not a full-chip emulator.
 Instruction encodings are corroborated against Panasonic's
 [MN101C49 manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf),
@@ -116,6 +117,9 @@ including independent worked examples in the decoder tests.
 # Execute acquired main-image PC-link handlers without BLE or network access.
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/di2_service.py \
   --output /tmp/di2-services.json
+# Continue the wireless main stop through an explicit interrupt-register fixture.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/di2_service.py \
+  --model-wireless-interrupts --output /tmp/di2-services-with-irq-fixture.json
 
 # Actual CLI regression, with a modeled gateway and battery firmware execution.
 cargo build --locked --features ble --bin cranklink
@@ -124,6 +128,21 @@ cargo build --locked --features ble --bin cranklink
   --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
   --expect receipt --output /tmp/di2-timeout.json
 # Repeat with 2BTDN110.4.5.0.dat for board 2.
+# Lose metadata after an explicitly modeled local-owner start notification.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case metadata-timeout --expect receipt --output /tmp/di2-metadata-timeout.json
+# Reproduce the original component part-GET failure class.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case component-timeout --expect receipt --output /tmp/di2-component-timeout.json
+# The same fixture succeeds without that optional query.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
+  --binary target/debug/cranklink \
+  --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
+  --case stock-only --expect stock --output /tmp/di2-stock-only.json
 
 CRANKLINK_DI2_IMAGES="$PWD/tools/firmware-sim/.cache/di2" \
   /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
@@ -133,18 +152,25 @@ CRANKLINK_DI2_IMAGES="$PWD/tools/firmware-sim/.cache/di2" \
 `--images` overrides the service tool's image directory. The battery start
 handler returns after 128 original instructions. Its stop path generates a
 mode-zero receipt, where execution deliberately pauses before unsupported
-housekeeping. The WU main start returns, while stop traps at peripheral
-`0x3FF4`. A paused or trapped machine cannot accept another service call.
-No result here establishes completed shutdown or normal shifting.
+housekeeping. The WU main start returns. Strict stop traps at peripheral
+`0x3FF4`; with `--model-wireless-interrupts`, the exact eight interrupt-control
+writes are consumed and the stop handler returns after 1,199 original
+instructions. Repeated start/stop calls retain RAM and restore the stack.
+The fixture models write acceptance only; interrupts, timers, RF and physical
+register effects remain unexecuted. A paused or trapped machine cannot accept
+another service call. No result here establishes physical shutdown or shifting.
 
 The battery receive ABI, zero RAM fixture and JSRV4 send/queue boundary are
 modeled. The stop receipt is generated by original packet-building code. It
 echoes the requested owner, so it does not replace the client's prior ownership
 check. Nordic radio execution, PCE gateway firmware, bus delivery and timing,
 boot/NVM initialization and derailleur settings remain unvalidated. The CLI
-regression models gateway acknowledgements/metadata, loses one identity GET
-reply, and verifies real start, retained mode or actual stop receipt, and
-explicit stop ordering. Use `--expect stranded` with the old CLI to reproduce
+regression models gateway acknowledgements, discovery data and metadata. It
+deliberately loses a master identity, metadata or component part GET reply,
+then verifies real start, retained mode or actual stop receipt, and explicit
+stop ordering. The metadata case injects a captured local-owner start
+notification; that asynchronous notification path is not firmware execution.
+Use `--expect stranded` with the old CLI to reproduce
 the pre-fix cleanup omission. The [recorded validation](../tools/firmware-sim/di2-service-validation.json) contains image/source hashes, before/after results and execution limits. See the [investigation](di2-ble-investigation.md#firmware-backed-timeout-reproduction).
 
 The public catalogue at `https://api.shimano.com/etube/firmware/5.4.6` supplied

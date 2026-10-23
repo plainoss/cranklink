@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import unittest
 from fw_sim.mn101 import CPU, BASE, pack_pc, unpack_pc
-from fw_sim.di2_service import Di2Service, PROFILES
+from fw_sim.di2_service import Di2Service, PROFILES, WIRELESS_INTERRUPT_WRITES
 
 
 def encoded(nibbles):
@@ -101,6 +101,28 @@ class StockDi2ServiceTests(unittest.TestCase):
         self.assertFalse(stop['connected'])
         self.assertEqual(stop['owner'], 19)
         self.assertEqual(stop['packets'][-1], dict(target=3, payload='32120003ffff'))
+
+    def test_wireless_stop_returns_and_restarts_with_explicit_interrupt_fixture(self):
+        root = Path(os.environ['CRANKLINK_DI2_IMAGES'])
+        peer = Di2Service(root / 'EWWU101.4.6.0.dat', model_wireless_interrupts=True)
+        for owner in (3, 19, 27):
+            self.assertTrue(peer.link(1, owner)['returned'])
+            stop = peer.link(0, owner, complete=True)
+            self.assertIsNone(stop['error'])
+            self.assertTrue(stop['returned'])
+            self.assertFalse(stop['paused_at_receipt'])
+            self.assertTrue(stop['receipt_boundary'])
+            self.assertFalse(stop['connected'])
+            self.assertEqual(stop['modeled_interrupt_writes'], list(WIRELESS_INTERRUPT_WRITES))
+            self.assertEqual(stop['final']['sp'], stop['initial']['sp'])
+            self.assertFalse(stop['full_topology_validated'])
+            self.assertEqual(stop['packets'], [dict(target=owner,
+                payload=bytes([0x32, 0x12, 0, owner, 0xff, 0xff]).hex())])
+
+    def test_wireless_interrupt_fixture_is_not_allowed_on_battery_images(self):
+        with self.assertRaisesRegex(ValueError, 'wireless main image'):
+            Di2Service(Path(os.environ['CRANKLINK_DI2_IMAGES']) / 'BTDN110.4.5.0.dat',
+                       model_wireless_interrupts=True)
 
     def test_wireless_main_start_executes_but_stop_traps_at_unmodeled_peripheral(self):
         peer = Di2Service(Path(os.environ['CRANKLINK_DI2_IMAGES']) / 'EWWU101.4.6.0.dat')
