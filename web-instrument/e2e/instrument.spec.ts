@@ -439,7 +439,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
-async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false) {
+async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false, di2Bike = false) {
   // Headless Chromium on Linux (CI) has no Web Bluetooth, and the connect view
   // decides on first render whether to offer it. Stand in before the app loads;
   // the simulator's chooser replaces this below.
@@ -459,12 +459,13 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     }, `simulated-etube-${rejectAuthentication ? "ep801" : "ep800-crg"}`);
   }
   await openInstrument(page);
-  const setup = await page.evaluate(async ({ reject, defer }) => {
+  const setup = await page.evaluate(async ({ reject, defer, di2 }) => {
     const simulatorModule = "/simulator.js";
     const { DeviceSimulator } = await import(simulatorModule);
     const device = new DeviceSimulator({
       model: reject ? "ep801" : "ep800-crg",
       fault: reject && !defer ? "auth_reject" : "none",
+      components: di2,
     });
     const connect = device.gatt.connect;
     let radioShutdown = false;
@@ -491,8 +492,12 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
     return { hasSimulator: Boolean(device) };
-  }, { reject: rejectAuthentication, defer: deferAuthenticationFailure });
+  }, { reject: rejectAuthentication, defer: deferAuthenticationFailure, di2: di2Bike });
   expect(setup).toEqual({ hasSimulator: true });
+  if (di2Bike) {
+    await page.getByTestId("bluetooth-bike-select").getByRole("button").click();
+    await page.getByRole("option", { name: "Di2 shifting only (no STEPS motor)", exact: true }).click();
+  }
   await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
   await page.getByTestId("btn-connect-ble").click();
 }
@@ -579,6 +584,38 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   await page.evaluate(() => (window as any).cranklinkInstrumentController.disconnect());
   expect(await page.evaluate(() => (window as any).testBluetoothDevice.gatt.connected)).toBe(false);
   expect(await unloadIsGuarded(), "Confirmed disconnect releases the unload guard").toBe(false);
+});
+
+test("Di2 Bluetooth retains ordinary service mode across reads and closes without stop or reset", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page, false, true, false, true);
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
+  await page.evaluate(async () => {
+    const device = (window as any).testBluetoothDevice;
+    // A fixed-width notification can carry one byte beyond the six-byte unit serial.
+    device.components.get(5).serial = [...device.components.get(5).serial.slice(0, 6), 0x70];
+    await (window as any).cranklinkInstrumentController.selectComponent(5);
+    await (window as any).cranklinkInstrumentController.readAllParameters();
+  });
+  const retained = await page.evaluate(() => {
+    const device = (window as any).testBluetoothDevice;
+    const writes = device.writes;
+    return {
+      connected: device.gatt.connected,
+      connections: device.connections,
+      model: (window as any).cranklinkInstrumentController.getState().identity.model,
+      masterModes: writes.filter((w: any) => w.id === 0x2afa && w.bytes[1] === 3 && w.bytes[2] === 0x20).length,
+      stops: writes.filter((w: any) => (w.id === 0x2afa && [0x10, 0x0c].includes(w.bytes[1]) && w.bytes[2] !== 1) || (w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 0)).length,
+      componentStarts: writes.filter((w: any) => w.id === 0x2afe && w.bytes[0] === 5 && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 1).length,
+    };
+  });
+  expect(retained).toEqual({ connected: true, connections: 1, model: "RD-R9150", masterModes: 0, stops: 0, componentStarts: 1 });
+  await page.evaluate(() => (window as any).cranklinkInstrumentController.disconnect());
+  expect(await page.evaluate(() => ({
+    connected: (window as any).testBluetoothDevice.gatt.connected,
+    stopWrites: (window as any).testBluetoothDevice.writes.filter((w: any) =>
+      (w.id === 0x2afa && ((w.bytes[1] === 0x0c && w.bytes[2] === 0) || w.bytes[1] === 0x10)) ||
+      (w.id === 0x2afe && w.bytes[1] === 0x32 && w.bytes[2] === 0x10 && w.bytes[3] === 0)).length,
+  }))).toEqual({ connected: false, stopWrites: 0 });
 });
 
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {

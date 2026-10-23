@@ -553,7 +553,7 @@ export class DeviceSimulator extends EventTarget {
       let response = [slot, group, command + 2];
 
       if (group === 0x32 && command === 0x10) {
-        response.push(params[0] !== undefined ? params[0] : b[3], 0, 0xff, 0xff);
+        response.push(params[0] !== undefined ? params[0] : b[3], params[1] ?? 0, 0xff, 0xff);
       } else if (group === 0x16 && command === 0x7c) {
         response.push(
           ...new TextEncoder().encode(

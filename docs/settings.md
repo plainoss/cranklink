@@ -8,6 +8,11 @@ Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`,
 
 Component sessions use the stock identity and, where necessary, a part discriminator to select an exact catalog model. They read the component application version without issuing motor cargo/RX queries. Unknown or unresolved identities are rejected. A catalog entry does not automatically grant a settings layout: components without an implemented schema return no fields and `capabilities.settings_available: false` in full snapshots.
 
+Generic component serial replies declare six identity bytes. A fixed-width BLE
+notification may include a seventh trailing byte; component identity and backup
+checks use the six declared bytes. Motor firmware and authentication keep their
+strict DCAS serial-padding checks.
+
 | Components | Fields |
 | --- | --- |
 | Classic wired ST/SW Di2 controls, including 6770, 6870, 9070, R785, R8050/R8070, R9150/R9170 and RX815 variants | `switch-a-function`, `switch-b-function`; extended C/S wire channels are read-only |

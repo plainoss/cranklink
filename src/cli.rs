@@ -821,7 +821,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 .normal_start_component(slot, component.as_deref())
                 .and_then(|id| {
                     let serial_raw = s.command(id.slot, 1, 0x3c, &[0], 0x3e)?;
-                    let motor_serial = hex::encode(crate::device::serial_bytes(&serial_raw)?);
+                    let motor_serial = hex::encode(serial_bytes_for_identity(&serial_raw, &id)?);
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
 
                     let model = resolve_settings_model(&mut s, &id)?;
@@ -2024,7 +2024,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     let stopped = session.stop();
     let closed = session.close();
     let cleanup = finish_operation(
-        stopped.context("BLE PC-link stop was not confirmed"),
+        stopped.context("BLE session cleanup failed"),
         closed.context("BLE disconnect failed"),
     );
     finish_reporting(result, cleanup, |value| {
@@ -2509,7 +2509,7 @@ fn ble_checked_serial(
     expected: Option<&str>,
 ) -> Result<(crate::device::Identity, String)> {
     let serial = crate::device::UnitCommands::command(session, id.slot, 1, 0x3c, &[0], 0x3e)?;
-    let serial = hex::encode(crate::device::serial_bytes(&serial)?);
+    let serial = hex::encode(serial_bytes_for_identity(&serial, &id)?);
     if let Some(expected) = expected {
         ensure!(
             serial.eq_ignore_ascii_case(expected),
@@ -2527,6 +2527,24 @@ fn check_motor_serial(actual: &str, expected: Option<&str>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A uniquely selected catalogued component uses the generic unit serial GET;
+/// motor cargo and every firmware/authentication path retain DCAS admission.
+fn serial_bytes_for_identity(
+    parameters: &[u8],
+    identity: &crate::device::Identity,
+) -> Result<[u8; 6]> {
+    if identity.rx_version == "not applicable"
+        && matches!(
+            crate::settings::SettingsModel::from_name(&identity.cargo),
+            Ok(crate::settings::SettingsModel::Component(_))
+        )
+    {
+        crate::device::component_serial_bytes(parameters)
+    } else {
+        crate::device::serial_bytes(parameters)
+    }
 }
 
 fn sanitize_serial(input: &str) -> Result<String> {
@@ -2873,7 +2891,7 @@ fn execute_settings(
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
     let serial = serial_raw
         .ok()
-        .and_then(|r| crate::device::serial_bytes(&r).ok())
+        .and_then(|r| crate::settings::serial_bytes_for_model(&r, model).ok())
         .map(hex::encode);
     let serial_str = serial.clone().unwrap_or_else(|| format!("slot{}", id.slot));
 
@@ -3687,6 +3705,28 @@ fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyh
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+
+    #[test]
+    fn component_serial_uses_six_declared_bytes_without_relaxing_motor_padding() {
+        let mut identity = crate::device::Identity {
+            slot: 11,
+            cargo: "RD-RX815".into(),
+            dcas_version: "3.3.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let physical = [1, 2, 3, 4, 5, 6, 0x70];
+        assert_eq!(
+            serial_bytes_for_identity(&physical, &identity).unwrap(),
+            physical[..6]
+        );
+        identity.cargo = "01".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+        identity.cargo = "SM-BMR1".into();
+        identity.rx_version = "1.0.0.0".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+        identity.cargo = "unrecognized component".into();
+        assert!(serial_bytes_for_identity(&physical, &identity).is_err());
+    }
 
     #[test]
     fn serial_sanitization_accepts_clean_and_formatted_serials() {

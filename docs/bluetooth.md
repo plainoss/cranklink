@@ -33,11 +33,13 @@ Writes that need gateway master routing (destination, wheel circumference, lamp,
 
 ## Disconnect and Di2 recovery
 
-Discovery itself can open a PC-link session on the logical bus master, including a BT-DN110 battery. Normal/slave cleanup sends that master an explicit `32/10` stop and requires its matching `32/12` receipt before the gateway's `0C/00` stop. This also applies to inventory sessions that never selected a component. A missing, rejected or mismatched master receipt is a cleanup failure, even if Bluetooth closes successfully.
+Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware to handle its radio-disconnect event. They do not send an explicit logical-master `32/10` stop, gateway `0C/00` stop or gateway reset. This matches the recovered vendor normal-disconnect path. Explicit stop acknowledgements did not restore either tested bike; closing GATT alone preserved normal operation on both EW-WU111/BT-DN110 Di2 and SC-EM800/EP800 STEPS hardware.
 
-The pending start is tracked before gateway startup. A malformed discovery reply cannot erase an observed master start. If the start outcome or PC owner is unresolved, cleanup reports that uncertainty instead of claiming normal operation was restored. A verified identity or schema GET timeout permits one cleanup-only attempt when normal/slave discovery has established the logical master and its local PC owner. Ordinary reads and writes remain fenced. A missing gateway master-metadata reply also qualifies only if a local-owner start receipt was already observed; a missing start acknowledgement does not. Schema queries must match declared selectors, and an opcode used by any supported setter is excluded. That exception sends only target selection and explicit PC-link stops, requires matching stop receipts, and never retries the failed read. Write/authentication/firmware timeouts, foreign or unknown ownership, transport failures, oversized notifications and notification floods do not grant it; a later transport failure or flood revokes it.
+The browser retains its normal/slave service session between commands without stopping the logical master. Final Disconnect closes GATT. Changing routing roles on an active retained session requires disconnect/reconnect. Explicit master-routing sessions keep their acknowledged component stop and routing-restoration sequence.
 
-Gateway acknowledgement and extinguished LEDs do not establish that the entire bike has returned to normal shifting. The observed EW-WU111/BT-DN110 failure and the limits of offline verification are recorded in the [Di2 BLE investigation](di2-ble-investigation.md). The explicit battery-master stop still needs validation on that hardware; simulator success does not establish it.
+Read and write errors still fail the operation; closing the link never converts an error into a successful read or write. A failed command is not retried. Link closure and normal physical operation are distinct observations: confirm shifting, display and controls when validating a new gateway. See the [Di2 BLE investigation](di2-ble-investigation.md) for the successful physical checks, rejected experiments and simulator limits.
+
+In the web app choose **Di2 shifting only (no STEPS motor)** or **STEPS e-bike** based on whether the bike has a STEPS motor. STEPS e-bikes can also use Di2 components. This keeps a shifting-only session in ordinary routing while preserving the existing STEPS master-routing workflow for protected motor settings.
 
 Firmware recovery is not available over Bluetooth; use the SM-PCE02. `firmware flash ble-pair` is experimental and has not been run on hardware. Without `--allow-unverified-model` it accepts only EP800 board 1 motors running D 4.1.10, 4.1.11 or 4.2.0, and D 4.1.11 or 4.2.0 targets. With `--write`, each plaintext image (such as the EP800 M file) also needs its hash in `--expect-dcas-sha256` or `--expect-rx-sha256`.
 
@@ -48,5 +50,5 @@ a time: authentication-only `ble test-link`, then `units --stock-only`, then
 one read from the freshly selected named component. Use `--read-only` and a new
 `--trace` path for every connection. Confirm shifting and the junction button
 with the rider between stages. Do not reuse an old component slot or combine
-the stages into an automatic retry loop. A failed read may receive one bounded
-cleanup attempt; unconfirmed cleanup ends the test.
+the stages into an automatic retry loop. A failed read closes the link and ends
+the test; it is not retried automatically.

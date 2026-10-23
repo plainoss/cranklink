@@ -1,8 +1,10 @@
 """Read-timeout reproduction: modeled BLE gateway, actual battery service code.
 
-Only gateway setup, master metadata and target selection are modeled. The master
-stock query deliberately loses its reply. PC start/stop run acquired firmware.
-This peer does not claim to execute WU111 PCE/radio firmware or settings reads.
+Gateway setup, metadata, target selection and discovery data are modeled. A
+selected reply is deliberately lost. PC start/stop run acquired firmware.
+This peer does not execute the gateway's radio-disconnect firmware callback.
+Closing its socket intentionally leaves the battery service RAM unchanged;
+physical normal-mode restoration is separate hardware evidence.
 """
 from collections import deque
 from .di2_service import Di2Service

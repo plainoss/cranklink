@@ -171,7 +171,7 @@ describe("SessionController Finite State Machine & Staging", () => {
         if (line.startsWith("connect")) {
           return { code: 0 };
         }
-        if (line === "units") {
+        if (line === "--ble-master=master units") {
           const out = JSON.stringify({ units: [{ slot: 13, model_series: 0x23, model_unit: 0, model: "DU-EP800-CRG", model_candidates: ["DU-EP800-CRG"] }] });
           print?.(out, "stdout");
           return { code: 0 };

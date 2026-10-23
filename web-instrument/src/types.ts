@@ -3,6 +3,7 @@
  */
 
 export type TransportType = "usb" | "serial" | "ble" | "sim";
+export type BluetoothBike = "steps" | "di2";
 
 export type SimulatedModel = "ep800-crg" | "ep600" | "ep801";
 export type MotorModel = SimulatedModel | "ep500" | "e5100" | "e8000" | "e7000" | "e6100" | "e6000";
@@ -214,6 +215,7 @@ export interface InstrumentState {
   toast: Toast | null;
   transport: TransportType | null;
   simulatorOptions: SimulatorOptions;
+  bluetoothBike: BluetoothBike;
   identity: DeviceIdentity | null;
   units: ComponentUnit[];
   schema: EnrichedSetting[];

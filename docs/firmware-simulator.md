@@ -126,18 +126,18 @@ cargo build --locked --features ble --bin cranklink
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
   --binary target/debug/cranklink \
   --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
-  --expect receipt --output /tmp/di2-timeout.json
+  --expect radio-close --output /tmp/di2-timeout.json
 # Repeat with 2BTDN110.4.5.0.dat for board 2.
 # Lose metadata after an explicitly modeled local-owner start notification.
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
   --binary target/debug/cranklink \
   --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
-  --case metadata-timeout --expect receipt --output /tmp/di2-metadata-timeout.json
+  --case metadata-timeout --expect radio-close --output /tmp/di2-metadata-timeout.json
 # Reproduce the original component part-GET failure class.
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
   --binary target/debug/cranklink \
   --image tools/firmware-sim/.cache/di2/BTDN110.4.5.0.dat \
-  --case component-timeout --expect receipt --output /tmp/di2-component-timeout.json
+  --case component-timeout --expect radio-close --output /tmp/di2-component-timeout.json
 # The same fixture succeeds without that optional query.
 /tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_di2.py \
   --binary target/debug/cranklink \
@@ -167,11 +167,18 @@ check. Nordic radio execution, PCE gateway firmware, bus delivery and timing,
 boot/NVM initialization and derailleur settings remain unvalidated. The CLI
 regression models gateway acknowledgements, discovery data and metadata. It
 deliberately loses a master identity, metadata or component part GET reply,
-then verifies real start, retained mode or actual stop receipt, and explicit
-stop ordering. The metadata case injects a captured local-owner start
+then verifies real start and the exact CLI traffic through radio close. The
+metadata case injects a captured local-owner start
 notification; that asynchronous notification path is not firmware execution.
-Use `--expect stranded` with the old CLI to reproduce
-the pre-fix cleanup omission. The [recorded validation](../tools/firmware-sim/di2-service-validation.json) contains image/source hashes, before/after results and execution limits. See the [investigation](di2-ble-investigation.md#firmware-backed-timeout-reproduction).
+The current `--expect radio-close` and `--expect stock` cases require no explicit
+master stop, gateway stop or reset. The partial peer intentionally retains its
+battery mode RAM on socket close: the gateway's radio-disconnect firmware
+callback is NOT executed. Therefore these regressions establish client traffic
+and error propagation, not physical restoration. That restoration was checked
+on the two real bikes separately. `--expect stranded` and `--expect receipt`
+retain the historical explicit-stop experiments, whose receipts did not restore
+the bikes. The [recorded validation](../tools/firmware-sim/di2-service-validation.json)
+contains image/source hashes and execution limits. See the [investigation](di2-ble-investigation.md#firmware-backed-timeout-reproduction).
 
 The public catalogue at `https://api.shimano.com/etube/firmware/5.4.6` supplied
 the filenames, sizes, MD5 values and download URLs. Initial acquisition checked
@@ -192,9 +199,10 @@ Legacy main-image vectors corroborate low-first nibble decoding at byte origin
 This is static mapping evidence, not service-handler execution or identification
 of a specific physical MCU. The instruction-family reference is Panasonic's
 [MN101Cx49x manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf).
-The current public execution backend is ARM-only. A separate experimental
-decoder/executor can return isolated interrupt stubs but has unresolved ISA
-semantics and is not admitted as a verified protocol backend.
+The main topology executor is ARM-based. The separate bounded MN101 executor
+admits only its implemented subset for the isolated service profiles above;
+unverified instruction semantics and peripherals trap. It is not a complete
+MN101 processor or full gateway/radio topology.
 
 To obtain topology coverage, first validate a strict MN101 backend, recover the
 exact PC-link/discovery handlers and their RAM/transport context in both main
@@ -260,7 +268,7 @@ This native Unix transport works without the `ble` Cargo feature. It runs the ac
 
 Radio pairing, gateway PIN challenge delivery, notifications, motor logical-address relocation during role handoff and the slave-radio stop acknowledgment are modeled topology boundaries. The actual motor stop handler must confirm disconnection. Passing cleanup does not validate physical role handoff or RF. This socket service remains read-only. Use `--drop-replies`, or `--gatt-fault stale-free|duplicate-free`, to exercise response loss and notification handling. The separate persistent browser peer below enables narrowly scoped writes.
 
-Closing a GATT endpoint does not send firmware stop commands or reset the powered device. Retained-device tests preserve a stranded PC-link owner across disconnect/reconnect, then require an explicit protocol stop to clear it. The former coordinator cleanup on radio close masked this class of client failure. These stock tests cover SC-EM800/motor ownership. Separate Di2 service profiles execute battery/WU main handlers, with the partial scope below; the complete EW-WU111/BT-DN110 slave topology remains unvalidated. See the [Di2 BLE investigation](di2-ble-investigation.md).
+Closing a modeled GATT endpoint does not execute gateway radio-disconnect firmware or reset the powered device. Retained-device tests preserve PC-link RAM across that unmodeled boundary and can exercise explicit stops separately. This is a simulator limit, not evidence that a real normal/slave BLE session requires an explicit stop: physical validation found that GATT-only close restored both bikes while explicit stops did not. Master-routing stock tests remain separate. The complete EW-WU111/BT-DN110 slave topology remains unexecuted. See the [Di2 BLE investigation](di2-ble-investigation.md).
 
 The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
 

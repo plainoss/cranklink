@@ -128,7 +128,7 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 -
 
 See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
 
-BLE slave-session cleanup explicitly checks the logical bus master's PC-link stop before stopping the gateway. A Bluetooth disconnect or gateway acknowledgement alone does not establish that normal shifting has resumed; see the [Di2 BLE investigation](docs/di2-ble-investigation.md).
+Normal/slave BLE sessions close GATT directly so gateway firmware handles disconnect; explicit stop/reset commands left both tested bikes outside normal operation. The web app retains this service session between commands and distinguishes **Di2 shifting only (no STEPS motor)** from a **STEPS e-bike**, which can also use Di2 components. See the [Di2 BLE investigation](docs/di2-ble-investigation.md) for physical validation and remaining limits.
 
 ### Recover a motor stuck in bootloader mode
 

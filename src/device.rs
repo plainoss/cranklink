@@ -164,6 +164,16 @@ pub fn serial_bytes(parameters: &[u8]) -> Result<[u8; 6]> {
     );
     Ok(parameters[..6].try_into().unwrap())
 }
+/// Generic unit serial GET declares six identity bytes. Classic components may
+/// return an additional transport byte whose value is not reserved FF.
+/// Motor authentication and firmware identity must keep using `serial_bytes`.
+pub fn component_serial_bytes(parameters: &[u8]) -> Result<[u8; 6]> {
+    ensure!(
+        matches!(parameters.len(), 6 | 7),
+        "invalid component serial reply length"
+    );
+    Ok(parameters[..6].try_into().unwrap())
+}
 /// Logical settings commands; transports own their framing and session setup.
 pub trait UnitCommands {
     /// Slot-stock query goes to the gateway in BLE slave mode.
@@ -578,8 +588,13 @@ impl Session {
         let identity = self.normal_start_component(slot, component)?;
         let serial = self.command(identity.slot, 1, 0x3c, &[0], 0x3e)?;
         let model = UnitIdentity::from_reply(identity.slot, self.model_identity(identity.slot)?)?;
+        let serial = if model.is_motor() {
+            serial_bytes(&serial)?
+        } else {
+            component_serial_bytes(&serial)?
+        };
         Ok(ProbeIdentity {
-            serial: hex::encode(serial_bytes(&serial)?),
+            serial: hex::encode(serial),
             model_series: model.model_series,
             model_unit: model.model_unit,
             identity,
@@ -1952,6 +1967,17 @@ pub(crate) mod tests {
             &[1, 2, 3, 4, 5, 6, 0xff, 0xff][..],
         ] {
             assert!(serial_bytes(invalid).is_err());
+        }
+    }
+    #[test]
+    fn component_serial_uses_six_identity_bytes_with_non_ff_transport_tail() {
+        let expected = [1, 2, 3, 4, 5, 6];
+        let physical = [1, 2, 3, 4, 5, 6, 0x70];
+        assert_eq!(component_serial_bytes(&expected).unwrap(), expected);
+        assert_eq!(component_serial_bytes(&physical).unwrap(), expected);
+        assert!(serial_bytes(&physical).is_err());
+        for invalid in [&physical[..5], &[0u8; 8][..]] {
+            assert!(component_serial_bytes(invalid).is_err());
         }
     }
     #[test]

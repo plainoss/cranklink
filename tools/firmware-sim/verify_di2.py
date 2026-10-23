@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the real CLI against the offline battery-firmware timeout reproduction."""
+"""Check CLI traffic against partial battery firmware, without modeling radio teardown."""
 import argparse
 import json
 from pathlib import Path
@@ -51,20 +51,20 @@ def reproduce(binary, image, case="identity-timeout"):
                 battery_connected=endpoint.battery.connected, events=endpoint.events,
                 firmware_sha256=endpoint.battery.assessment['sha256'],
                 firmware_executions=endpoint.executions,
-                full_topology_validated=False)
+                full_topology_validated=False, radio_disconnect_firmware_executed=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--image', type=Path, required=True)
-    parser.add_argument('--expect', choices=['stranded', 'receipt', 'stock'], required=True)
+    parser.add_argument('--expect', choices=['stranded', 'receipt', 'radio-close', 'stock'], required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--case', choices=['identity-timeout', 'metadata-timeout', 'component-timeout', 'stock-only'],
                         default='identity-timeout')
     args = parser.parse_args()
     if (args.expect == 'stock') != (args.case == 'stock-only'):
-        parser.error('stock-only requires --expect stock; other cases require stranded or receipt')
+        parser.error('stock-only requires --expect stock; other cases require stranded, receipt or radio-close')
     result = reproduce(args.binary, args.image, case=args.case)
     executions = result['firmware_executions']
     started = bool(executions and executions[0]['returned'] and executions[0]['connected'])
@@ -76,7 +76,7 @@ def main():
     if args.case == 'component-timeout':
         expected_free += ['0d329c00']
     successful_stock = args.expect == 'stock' and args.case == 'stock-only'
-    if args.expect in ('receipt', 'stock'):
+    if args.expect == 'receipt':
         lifecycle = (len(executions) == 2 and executions[1]['receipt_boundary']
                      and not executions[1]['returned'] and executions[1]['error'] is None
                      and not result['battery_connected']
@@ -85,6 +85,14 @@ def main():
                               if e.get('bytes') == '00321000130000')
                      < next(i for i, e in enumerate(result['events'])
                             if e.get('bytes') == '000c00'))
+    elif args.expect in ('radio-close', 'stock'):
+        # Hardware and the recovered vendor close path establish this traffic
+        # policy. This partial peer deliberately does NOT implement the gateway
+        # radio-disconnect callback or manufacture a firmware stop/RAM reset.
+        lifecycle = (len(executions) == 1 and result['battery_connected']
+                     and free == expected_free and '000c00' not in pce
+                     and '0010' not in pce
+                     and sum(e['kind'] == 'radio-close' for e in result['events']) == 1)
     else:
         lifecycle = (len(executions) == 1 and result['battery_connected']
                      and free == expected_free and '000c00' not in pce)
@@ -97,7 +105,8 @@ def main():
     result['passed'] = outcome and started and lifecycle
     args.output.write_text(json.dumps(result, indent=2) + '\n')
     print('PASS' if result['passed'] else 'FAIL', args.image.name,
-          'battery session active after timeout:', result['battery_connected'])
+          'mode retained in partial peer:', result['battery_connected'],
+          '(gateway radio-disconnect firmware is not executed)')
     if not result['passed']:
         raise SystemExit(1)
 

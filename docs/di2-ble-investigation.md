@@ -1,5 +1,49 @@
 # Di2 BLE service-session lock investigation
 
+## Validated disconnect correction on 2026-10-23
+
+Closing GATT directly, without explicit logical-master stop, gateway `0C/00`
+stop or gateway reset, passed stock-only inventory on both the EW-WU111/BT-DN110
+Di2 bike and a separate SC-EM800/EP800-family STEPS bike. The rider confirmed
+normal shifting and junction-button operation on Di2, and normal display,
+buttons and shifting on STEPS. This is the successful sequence; the failures
+below are retained as investigation history.
+
+The final settings-read experiment's executable SHA-256 was
+`5497d7cf321f52c7bdd0f71709db9515d7add92170c61651fe66729db0c60b9d`.
+The inventory experiments used the same radio-close policy. A temporary CLI
+switch bypassed protocol stops and called the same GATT
+close boundary used by final ordinary-session cleanup. No settings SET or
+firmware operation was sent. The final implementation removes the experiment
+switch and applies that policy to CLI and browser normal/slave sessions.
+
+A subsequent named RD-RX815 settings read successfully reached the part,
+application-version and serial GETs, then failed because the motor-specific
+serial parser required an FF seventh parameter. GATT close still preserved
+shifting and the junction button. The generic vendor unit-serial command
+declares six reply parameters; a component-aware parser now consumes those six
+bytes in the bounded six/seven-parameter reply shapes. Motor firmware and
+authentication retain the strict DCAS parser. This parser correction is
+covered by captured-shape regressions, not a completed physical settings GET.
+
+Recovered vendor bytecode establishes the ordinary Home disconnect chain:
+`BleConnectingCanceler` closes `ETubeDataLinksPort`, clears connected units with
+reset disabled, and closes the BLE link. The all-nonbattery-slave stop loop is
+firmware-update preparation; the reset/unlock helper is a separate operation.
+Neither is the ordinary disconnect recipe. Earlier interpretations of the
+partially decompiled methods incorrectly conflated those paths.
+
+The one-second post-stop settling experiment also failed on STEPS. A separate
+gateway-reset experiment acknowledged `PCE 10` but turned off only the display;
+the battery still needed a power cycle. Both experiments were rejected.
+
+Browser normal/slave sessions now retain gateway-managed service state between
+commands without sending the disproven logical-master stop. Final Disconnect
+closes GATT. Routing roles cannot change on that retained connection; existing
+explicit master-routing cleanup remains separate. The web connection screen
+distinguishes a Di2 bike from a STEPS e-bike instead of forcing every gateway
+into the motor-oriented master workflow.
+
 ## Failed hardware validation on 2026-10-23
 
 The merged branch (`1f3d16f`, release binary SHA-256

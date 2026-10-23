@@ -28,6 +28,14 @@ pub enum SettingsModel {
     E6000,
     Component(&'static str),
 }
+/// Settings serial admission follows the selected model; motor identities retain
+/// the strict DCAS reserved-byte check used by firmware and authentication.
+pub fn serial_bytes_for_model(parameters: &[u8], model: SettingsModel) -> Result<[u8; 6]> {
+    match model {
+        SettingsModel::Component(_) => crate::device::component_serial_bytes(parameters),
+        _ => crate::device::serial_bytes(parameters),
+    }
+}
 impl SettingsModel {
     pub fn name(self) -> &'static str {
         match self {
@@ -920,7 +928,7 @@ pub fn read_for_model(
         raw: hex::encode(raw),
     })
 }
-fn command_models() -> impl Iterator<Item = SettingsModel> {
+pub(crate) fn supports_command(group: u8, command: u8) -> bool {
     [
         SettingsModel::Ep800Crg,
         SettingsModel::Ep600,
@@ -939,35 +947,11 @@ fn command_models() -> impl Iterator<Item = SettingsModel> {
             .filter(|entry| !entry.name.starts_with("DU-"))
             .map(|entry| SettingsModel::Component(entry.name)),
     )
-}
-pub(crate) fn supports_command(group: u8, command: u8) -> bool {
-    command_models().any(|model| {
+    .any(|model| {
         schema_for_model(model)
             .iter()
             .any(|s| s.group == group && (s.get == command || (!s.read_only && s.set == command)))
     })
-}
-/// Admit only declared GET queries; reject any opcode also used as a SET.
-pub(crate) fn supports_read_query(group: u8, command: u8, params: &[u8]) -> bool {
-    let mut read = false;
-    for model in command_models() {
-        for spec in schema_for_model(model) {
-            if spec.group != group {
-                continue;
-            }
-            if !spec.read_only && spec.set == command {
-                return false;
-            }
-            if spec.get == command {
-                read |= params == spec.query
-                    || (spec.width == 0
-                        && spec.value_type != "date"
-                        && spec.query.len() == 1
-                        && params == [spec.query[0] | 1]);
-            }
-        }
-    }
-    read
 }
 /// Profile names use two five-byte text chunks, selected by hex `50/51` or
 /// `60/61`. GET `17/24 [selector]` returns `[selector, ASCII5, ...]`; only the
@@ -1207,10 +1191,26 @@ pub fn set_for_model_bound(
     let s = spec_for_model(name, model)?;
     validate_input(&s, value)?;
     if s.value_type == "date" {
-        return set_date(session, slot, &s, value, backup_path, expected_serial);
+        return set_date(
+            session,
+            slot,
+            &s,
+            value,
+            backup_path,
+            expected_serial,
+            model,
+        );
     }
     if s.width == 0 {
-        return set_name(session, slot, &s, value, backup_path, expected_serial);
+        return set_name(
+            session,
+            slot,
+            &s,
+            value,
+            backup_path,
+            expected_serial,
+            model,
+        );
     }
     let NumericPlan {
         unset,
@@ -1219,7 +1219,7 @@ pub fn set_for_model_bound(
         before,
         after,
     } = plan_numeric(session, slot, &s, value, model)?;
-    let serial = checked_serial(session, slot, expected_serial)?;
+    let serial = checked_serial(session, slot, expected_serial, model)?;
     // create_new prevents accidentally overwriting the only known original configuration.
     let mut backup = OpenOptions::new()
         .write(true)
@@ -1315,14 +1315,12 @@ fn checked_serial(
     session: &mut dyn UnitCommands,
     slot: u8,
     expected: Option<&str>,
+    model: SettingsModel,
 ) -> Result<String> {
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = hex::encode(serial_bytes_for_model(
+        &session.command(slot, 1, 0x3c, &[0], 0x3e)?,
+        model,
+    )?);
     if let Some(expected) = expected {
         ensure!(
             serial.eq_ignore_ascii_case(expected),
@@ -1740,13 +1738,10 @@ pub fn restore_parsed_for_model(
     new_backup_path: &Path,
     model: SettingsModel,
 ) -> Result<ChangeReceipt> {
-    let serial = hex::encode(crate::device::serial_bytes(&session.command(
-        slot,
-        1,
-        0x3c,
-        &[0],
-        0x3e,
-    )?)?);
+    let serial = hex::encode(serial_bytes_for_model(
+        &session.command(slot, 1, 0x3c, &[0], 0x3e)?,
+        model,
+    )?);
     let setting = parsed.validate_for_model(model, &serial)?;
     if setting.group == 0x48 && setting.set == 0x50 {
         return restore_date(
@@ -1756,6 +1751,7 @@ pub fn restore_parsed_for_model(
             &parsed.raw_backup,
             new_backup_path,
             Some(&serial),
+            model,
         );
     }
     let value = parsed.planned_value();
@@ -1799,6 +1795,7 @@ fn set_date(
     value: &str,
     path: &Path,
     expected_serial: Option<&str>,
+    model: SettingsModel,
 ) -> Result<ChangeReceipt> {
     let p = parse_date(value)?;
     // This private path only accepts a validated calendar or the vendor's all-FF unset tuple.
@@ -1809,6 +1806,7 @@ fn set_date(
         &json!({"original_parameters":hex::encode(p)}),
         path,
         expected_serial,
+        model,
     )
 }
 
@@ -1820,6 +1818,7 @@ fn restore_date(
     backup: &Value,
     path: &Path,
     expected_serial: Option<&str>,
+    model: SettingsModel,
 ) -> Result<ChangeReceipt> {
     let original = hex::decode(
         backup["original_parameters"]
@@ -1837,7 +1836,7 @@ fn restore_date(
     ensure!(current.len() >= 4, "short current date");
     let before = s.decode(&current)?;
     let after = s.decode(original)?;
-    let serial = checked_serial(session, slot, expected_serial)?;
+    let serial = checked_serial(session, slot, expected_serial, model)?;
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -1916,11 +1915,12 @@ fn set_name(
     value: &str,
     backup_path: &Path,
     expected_serial: Option<&str>,
+    model: SettingsModel,
 ) -> Result<ChangeReceipt> {
     let original = read_raw(session, slot, s)?;
     let before = s.decode(&original)?;
     let after = json!(value);
-    let serial = checked_serial(session, slot, expected_serial)?;
+    let serial = checked_serial(session, slot, expected_serial, model)?;
     let mut backup = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1965,22 +1965,34 @@ fn set_name(
 mod tests {
     use super::*;
     #[test]
-    fn cleanup_read_queries_require_declared_selectors_and_exclude_all_setters() {
-        assert!(supports_read_query(0x0b, 0x14, &[0]));
-        assert!(!supports_read_query(0x0b, 0x14, &[0, 1]));
-        assert!(supports_read_query(0x17, 0x24, &[0x50]));
-        assert!(supports_read_query(0x17, 0x24, &[0x51]));
-        assert!(!supports_read_query(0x17, 0x24, &[0xff]));
-        let setters: std::collections::BTreeSet<_> = command_models()
-            .flat_map(schema_for_model)
-            .filter(|s| !s.read_only)
-            .map(|s| (s.group, s.set))
-            .collect();
-        for (group, command) in setters {
-            assert!(!supports_read_query(group, command, &[0]));
+    fn component_serial_rechecks_accept_transport_tail_and_keep_identity_binding() {
+        struct Serial;
+        impl UnitCommands for Serial {
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                reply: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!((group, command, params, reply), (1, 0x3c, &[0][..], 0x3e));
+                Ok(vec![1, 2, 3, 4, 5, 6, 0x70])
+            }
         }
-        assert!(!supports_read_query(0x32, 0x10, &[0]));
-        assert!(!supports_read_query(0x16, 0xd8, &[0]));
+        let model = SettingsModel::from_name("RD-RX815").unwrap();
+        assert_eq!(
+            checked_serial(&mut Serial, 11, Some("010203040506"), model).unwrap(),
+            "010203040506"
+        );
+        assert!(checked_serial(&mut Serial, 11, Some("000000000000"), model).is_err());
+        for motor in [
+            SettingsModel::Ep800Crg,
+            SettingsModel::Ep801,
+            SettingsModel::E6000,
+        ] {
+            assert!(checked_serial(&mut Serial, 11, None, motor).is_err());
+        }
     }
     #[test]
     fn older_schemas_expose_only_common_fields_with_their_own_ranges_and_layouts() {

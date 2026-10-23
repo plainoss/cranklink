@@ -1,115 +1,109 @@
 {
-  "scope": "partial PC-link service execution and CLI read-timeout cleanup regressions",
-  "full_topology_validated": false,
+  "scope": "normal/slave GATT-close traffic and separate physical checks; partial firmware service execution",
+  "full_topology_executed": false,
+  "gateway_radio_disconnect_firmware_executed": false,
   "original_missing_reply_cause_reproduced": false,
-  "restored_shifting_validated": false,
-  "hardware_validation": {
-    "date": "2026-10-23",
-    "commit": "1f3d16f60197b5747db4b8409d3a86c635430a45",
-    "authentication_only_physical_check_passed": true,
-    "stock_only_cli_succeeded": true,
-    "master_and_gateway_stop_receipts_received": true,
-    "post_inventory_physical_check_passed": false,
-    "shifting_and_junction_button_both_failed": true,
-    "battery_replug_restored_both": true,
-    "component_settings_read_attempted": false,
-    "original_missing_reply_required_for_failure": false
-  },
-  "steps_hardware_comparison": {
-    "date": "2026-10-23",
-    "gateway": "SC-EM800",
-    "logical_master_family": "EP800",
-    "authentication_only_physical_check_passed": true,
-    "first_inventory_disconnected_before_pc_link_start": true,
-    "requested_inventory_retry_succeeded": true,
-    "master_and_gateway_stop_receipts_received": true,
-    "display_returned_to_riding_mode": false,
-    "normal_power_cycle_restored_operation": true,
-    "settings_or_firmware_operation_sent": false
-  },
-  "modeled": [
-    "zero-initialized RAM and receive ABI",
-    "battery JSRV4 send/queue service",
-    "BLE authentication, gateway PCE replies, metadata and notification delivery",
-    "deliberately lost master identity, master metadata or component part GET reply",
-    "captured start notification injected for metadata-timeout fixture",
-    "discovery bitmap, cache identities and successful master stock GET",
-    "opt-in exact ordered wireless interrupt-control write acceptance; no peripheral effects"
-  ],
-  "not_executed": [
-    "battery housekeeping after directed stop receipt",
-    "wireless interrupt/timer effects and gateway/radio transport firmware",
-    "Nordic RF firmware",
-    "complete boot/NVM initialization",
-    "derailleur settings/shifting"
-  ],
-  "baseline_commit": "6f5683ef3a99840d64a1bf059e7f616919dd4312",
-  "baseline_cli_sha256": "6898fbe5d58bc55b10327fae6dfebc472a79b9d209d756400b998a5d089eda3e",
-  "fixed_cli_sha256": "2e3f8d02041a5a645cd7fd99ea25d750bdbeb04a19c137d055e90d86384ef963",
+  "current_cli_sha256": "c438ac2a6e5e51e34235d28b8ae247bf672d4dbfc65fcd97f4dbe02e3e2f753c",
+  "hardware_settings_read_cli_sha256": "5497d7cf321f52c7bdd0f71709db9515d7add92170c61651fe66729db0c60b9d",
+  "hardware_test_cli_scope": "temporary native CLI bypassed protocol stops and called GATT close; inventory used same policy before extending the experimental CLI gate to settings reads; final source uses same normal-session policy",
   "tested_source_sha256": {
-    "src/ble.rs": "627ca47e0ee5acc220f3e16adfd4a1770a091af99fce960e77a5c715497e73f4",
+    "src/ble.rs": "b5031292c88004a1086dfd9ce55cd970f86767e133850254130895516554e020",
     "src/ble/native.rs": "89a7596a291f96c17f2c11f67dba5b1e430ccbd9dd914e036d0c5defb089cd0d",
-    "src/cli.rs": "0778d37da7fb509f70a2988d46129d4edf7ee616c60b9085fc26746bb749477b",
-    "src/device.rs": "adb7f514a29e3d8f2e85437e5a13b5526dc696a1fd94ba3cc4955e91be123e9d",
-    "src/settings.rs": "1e12fcc1735a1f0eed94263db1d80bebc2a2d002ebdde25f5ef257ccf124cccc",
+    "src/cli.rs": "4e969c31d52a2b0613672ad8ee90dd960561d6880367d4fb57bc44e0fadc2a05",
+    "src/device.rs": "215284ef2be9bf4ecc077ea7405ff4a209d43ea3051ffd0931a7bd19fcd441cf",
+    "src/settings.rs": "de00febd87b859e009814efc12ab20c2c4ba61a777573128922fad489f4972cf",
+    "src/settings/batch.rs": "222abaaf7e3614817b029b85bc3507be2e459b77f8bab7ad19b0fcfea6754529",
+    "src/wasm.rs": "3c18f3ca47b1858ed939a5027c056ae4904cc07c55cfc07e4d8c68c84284d38a",
     "tools/firmware-sim/fw_sim/mn101.py": "c1c4c0f53b7de98cb7479da3d476c5a46a5790307db28dd72e44349d34be5a59",
     "tools/firmware-sim/fw_sim/mn101_decode.py": "a8db8dda136cf3fc90fabf055aaa20d1a0863439f8af3664c37a6c6f209fe382",
     "tools/firmware-sim/fw_sim/di2_service.py": "dfb4bb150d5e3f3ca8b513ff3b9d781092a5b57b62bf90fe7c02a388dd40937a",
-    "tools/firmware-sim/fw_sim/di2_gatt.py": "371aa6346ac35e600f0eb2e306475e55d274f1f2e84d1eadbd4e258db00da207",
-    "tools/firmware-sim/verify_di2.py": "e92466a6658035f3e8632f20b869ad0efddc2aa77c2f5715d8da1ac7c1087016"
+    "tools/firmware-sim/fw_sim/di2_gatt.py": "5fb19d312ff4364a1b125f5a24a329c71984a4fa8d7181d5f91ea68e87d5a3dc",
+    "tools/firmware-sim/verify_di2.py": "ca0550b350cd96f03e8ad8685334b4fd24c1b5d6a63b1819d52cf611e1b4ed6a",
+    "web-instrument/src/core/sessionController.ts": "24816667de30383173ee36919db14d42c53dd820a588773f42204e48b4dd16d8",
+    "web-instrument/src/components/views/ConnectView.tsx": "9219a7585664d3b01315be18b89ce3fb9f099c5b4924df318f3a71ffc01a0291",
+    "web-instrument/src/types.ts": "bd76087633806bfe107c2e385256676b5b8f5fb96fdc893d210f5e70adc53741",
+    "web-instrument/simulator.js": "bae1adeff2af641ae3c541f105dd29d9278631895709777d8f6a307f92e23f74",
+    "web-instrument/e2e/instrument.spec.ts": "9e82b524d4a8cc8756cd267a2e6f09077cc3b739cc9f6872295d3f4c00f7ca9d",
+    "web-instrument/instrument.test.ts": "6bd322693a187dba2f5b95f6787017787c5c4b584105895917e30fa18cd31fd9"
   },
-  "battery_cases": [
+  "physical_checks": [
+    {
+      "date": "2026-10-23",
+      "gateway": "EW-WU111",
+      "master": "BT-DN110",
+      "operation": "units --stock-only",
+      "gatt_close_only": true,
+      "shifting_and_junction_button_normal": true
+    },
+    {
+      "date": "2026-10-23",
+      "gateway": "SC-EM800",
+      "master": "EP800 family",
+      "operation": "units --stock-only",
+      "gatt_close_only": true,
+      "display_buttons_and_shifting_normal": true
+    },
+    {
+      "date": "2026-10-23",
+      "gateway": "EW-WU111",
+      "target": "RD-RX815",
+      "operation": "settings read derailleur-adjustment",
+      "gatt_close_only": true,
+      "operation_completed": false,
+      "error": "component serial rejected by strict motor parser",
+      "shifting_and_junction_button_normal": true,
+      "component_serial_fix_retested_on_hardware": false
+    }
+  ],
+  "settings_set_or_firmware_sent_on_hardware": false,
+  "rejected_experiments": [
+    "explicit master stop followed by gateway 0C/00: physical failure on both bikes",
+    "1005 ms master-stop receipt to gateway-stop delay: STEPS physical failure",
+    "PCE10 reset: display off while battery remained on; power cycle still required"
+  ],
+  "modeled": [
+    "gateway/authentication, metadata, discovery identities and dropped GET replies",
+    "battery receive ABI and JSRV4 send boundary",
+    "opt-in exact wireless interrupt writes without peripheral effects"
+  ],
+  "not_executed": [
+    "gateway radio-disconnect callback",
+    "battery stop housekeeping after receipt",
+    "complete boot, NVM, bus arbitration and radio firmware",
+    "physical component settings GET after serial fix"
+  ],
+  "current_cli_cases": [
     {
       "filename": "BTDN110.4.5.0.dat",
       "sha256": "65af4a0e68d52b43bc94660ab3e5d14c97021d59f528ac3846c8f221364c9f3b",
       "cases": {
         "master": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "metadata": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "component": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "stock": {
-          "cli_exit_code": 0,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
-        },
-        "metadata-before": {
-          "cli_exit_code": 1,
-          "battery_service_active": true,
+          "exit_code": 0,
           "firmware_start_returned": true,
-          "passed": true
-        },
-        "component-before": {
-          "cli_exit_code": 1,
-          "battery_service_active": true,
-          "firmware_start_returned": true,
-          "passed": true
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         }
       }
     },
@@ -118,57 +112,37 @@
       "sha256": "46d1b37f00f5d9d1b54cb7112c4d8841f996438b05f614b4a9947366781a76ef",
       "cases": {
         "master": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "metadata": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "component": {
-          "cli_exit_code": 1,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
+          "exit_code": 1,
+          "firmware_start_returned": true,
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         },
         "stock": {
-          "cli_exit_code": 0,
-          "battery_service_active": false,
-          "firmware_start_returned": true,
           "passed": true,
-          "firmware_stop_receipt_reached": true,
-          "firmware_stop_handler_returned": false,
-          "firmware_stop_instructions_to_receipt": 224
-        },
-        "metadata-before": {
-          "cli_exit_code": 1,
-          "battery_service_active": true,
+          "exit_code": 0,
           "firmware_start_returned": true,
-          "passed": true
-        },
-        "component-before": {
-          "cli_exit_code": 1,
-          "battery_service_active": true,
-          "firmware_start_returned": true,
-          "passed": true
+          "gateway_radio_disconnect_firmware_executed": false,
+          "battery_mode_retained_in_partial_peer": true
         }
       }
     }
   ],
-  "wu_main": {
+  "isolated_wireless_service": {
     "filename": "EWWU101.4.6.0.dat",
     "sha256": "1e68ca8b0fc07d2fc8dc831f6564e27e60d57670409829104636a4d4c7183183",
     "strict": {
@@ -327,13 +301,17 @@
       }
     ]
   },
+  "historical_explicit_stop_validation": {
+    "commit": "45d6b3e",
+    "limitation": "passing stop receipts did not restore either physical bike; not the final normal-session cleanup policy"
+  },
   "checks": {
-    "rust_tests": 354,
+    "rust_tests": 346,
     "web_unit_tests": 121,
     "simulator_tests": 169,
     "simulator_skipped": 5,
     "fresh_wasm_production_smoke": true,
-    "fresh_wasm_browser_e2e_tests": 24,
+    "browser_e2e_tests": 25,
     "independent_review": "no remaining scoped blockers"
   }
 }
