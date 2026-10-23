@@ -61,6 +61,18 @@ export function detectPlatform(): PlatformInfo {
   };
 }
 
+/**
+ * The transport the connect screen offers first. Direct USB on Windows needs
+ * WinUSB; the adapter normally appears as an FTDI COM port, so a wired
+ * connection there prefers Web Serial, as `connect auto` does.
+ */
+export function preferredTransport(platform: PlatformInfo, canUseBluetooth: boolean): "ble" | "usb" | "serial" | null {
+  if (canUseBluetooth) return "ble";
+  if (platform.isWindows && platform.supportsSerial) return "serial";
+  if (platform.supportsUsb) return "usb";
+  return platform.supportsSerial ? "serial" : null;
+}
+
 export async function checkBluetoothAvailability(): Promise<boolean> {
   if (typeof navigator === "undefined" || !("bluetooth" in navigator)) {
     return false;

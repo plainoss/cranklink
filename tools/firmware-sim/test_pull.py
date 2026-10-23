@@ -31,6 +31,15 @@ class TestFirmwarePull(unittest.TestCase):
         self.assertEqual(len(gateways), 8)
         self.assertEqual(len(motors), 10)
 
+    def test_catalog_hashes_match_simulator_profiles(self):
+        """Pull only fixtures the simulator will accept: one source of truth per image."""
+        profiles = {p["id"]: p for p in json.loads((Path(__file__).parent / "profiles.json").read_text())}
+        for profile_id, meta in CATALOG.items():
+            with self.subTest(profile_id=profile_id):
+                self.assertIn(profile_id, profiles)
+                self.assertEqual(meta["sha256"], profiles[profile_id]["sha256"])
+                self.assertEqual(meta["kind"], profiles[profile_id]["kind"])
+
     def test_resolve_profile_id_exact(self):
         self.assertEqual(resolve_profile_id("ep800-4.2.0"), "ep800-4.2.0")
         self.assertEqual(resolve_profile_id("sc-em800-4.6.0"), "sc-em800-4.6.0")

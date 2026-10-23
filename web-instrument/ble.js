@@ -5,6 +5,16 @@ export const characteristicUuid = (id) =>
 const IDS = [0x2af3, 0x2af4, 0x2af9, 0x2afa, 0x2afd, 0x2afe, 0x2aff];
 const RESPONSES = new Set([0x2af3, 0x2af9, 0x2afd]);
 const enc = new TextEncoder();
+// src/ble/browser.rs budgets ble.open for open()'s worst case: every connect
+// attempt times out, then both discovery steps use their full bound.
+export const CONNECT_ATTEMPTS = 3;
+export const CONNECT_TIMEOUT_MS = 12000;
+export const CONNECT_BACKOFF_MS = 800;
+export const DISCOVERY_TIMEOUT_MS = 10000;
+export const OPEN_WORST_CASE_MS =
+  CONNECT_ATTEMPTS * CONNECT_TIMEOUT_MS +
+  (CONNECT_BACKOFF_MS * CONNECT_ATTEMPTS * (CONNECT_ATTEMPTS - 1)) / 2 +
+  2 * DISCOVERY_TIMEOUT_MS;
 const bytesOf = (view) =>
   new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
 
@@ -43,7 +53,11 @@ export class WebBleGatt {
     this.pending = null;
     this.epoch = 0;
     this.opened = false;
+    this.opening = false;
+    this.forgotten = false;
     this.failure = null;
+    this.connectTimeoutMs = CONNECT_TIMEOUT_MS;
+    this.connectBackoffMs = CONNECT_BACKOFF_MS;
     this.credential = null;
     this.credentialPrompt = null;
     this.onDisconnect = () => {
@@ -96,6 +110,9 @@ export class WebBleGatt {
     if (this.device.gatt?.connected) this.device.gatt.disconnect();
   }
   async forget() {
+    // Permanent: the host released this device's session lock and disconnect
+    // listener, so it must never reconnect through this object.
+    this.forgotten = true;
     this.credential = null;
     await this.close();
     this.device.removeEventListener(
@@ -112,7 +129,8 @@ export class WebBleGatt {
           .then(action)
           .then((value) => {
             if (this.epoch !== epoch) {
-              // A timed-out connect may complete later. Close it, never revive it.
+              // A timed-out operation may complete after the link was closed.
+              // Close it, never revive it.
               if (this.device.gatt?.connected) this.device.gatt.disconnect();
               throw new Error(
                 "Stale Bluetooth operation completed after disconnect",
@@ -139,53 +157,109 @@ export class WebBleGatt {
       clearTimeout(timer);
     }
   }
+  // Not bounded(): a failed attempt must not poison the link a retry opens.
+  async connectOnce(milliseconds) {
+    const gatt = this.device.gatt;
+    const attempt = Promise.resolve()
+      .then(() => gatt.connect())
+      .then((server) => {
+        // A timed-out connect may complete later. Close it unless an open
+        // attempt or an opened session shares the link; never revive it.
+        if (!this.opening && !this.opened && gatt.connected) gatt.disconnect();
+        return server;
+      });
+    let timer;
+    try {
+      return await Promise.race([
+        attempt,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "Bluetooth operation timed out; outcome may be uncertain",
+                ),
+              ),
+            milliseconds,
+          );
+        }),
+      ]);
+    } catch (error) {
+      attempt.catch(() => {});
+      // disconnect() also aborts a pending connect.
+      gatt.disconnect();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async open() {
+    if (this.forgotten)
+      throw new Error("Bluetooth device was released; run connect ble again");
     await this.close();
+    const epoch = this.epoch;
     this.failure = null;
-    let server = null;
-    let lastError = null;
-    // Shimano displays (e.g. SC-EM800) take a moment to resume advertising after
-    // acknowledging a PC-link stop from a previous command. Retry connect with backoff.
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        server = await this.bounded(() => this.device.gatt.connect(), 12000);
-        break;
-      } catch (err) {
-        lastError = err;
-        if (attempt < 3) {
-          await new Promise((r) => setTimeout(r, 800 * attempt));
+    this.opening = true;
+    try {
+      let server = null;
+      let lastError = null;
+      // Shimano displays (e.g. SC-EM800) take a moment to resume advertising after
+      // acknowledging a PC-link stop from a previous command. Retry connect with backoff.
+      for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+        if (this.epoch !== epoch) break;
+        try {
+          server = await this.connectOnce(this.connectTimeoutMs);
+          break;
+        } catch (err) {
+          lastError = err;
+          if (attempt < CONNECT_ATTEMPTS) {
+            await new Promise((r) =>
+              setTimeout(r, this.connectBackoffMs * attempt),
+            );
+          }
         }
       }
-    }
-    if (!server) {
-      const err = lastError || new Error("Failed to connect to Bluetooth device");
-      this.fail(err);
-      throw err;
-    }
-    const service = await this.bounded(() =>
-      server.getPrimaryService(ETUBE_SERVICE),
-    );
-    const characteristics = await this.bounded(() =>
-      service.getCharacteristics(),
-    );
-    for (const id of IDS) {
-      const c = characteristics.find(
-        (c) => c.uuid.toLowerCase() === characteristicUuid(id),
+      if (this.epoch !== epoch) {
+        // close() or forget() ran while a connect was pending: the host has
+        // released this object, so drop the link instead of opening on it.
+        if (this.device.gatt?.connected) this.device.gatt.disconnect();
+        throw new Error("Bluetooth connection closed while opening");
+      }
+      if (!server) {
+        const err =
+          lastError || new Error("Failed to connect to Bluetooth device");
+        this.fail(err);
+        throw err;
+      }
+      const service = await this.bounded(
+        () => server.getPrimaryService(ETUBE_SERVICE),
+        DISCOVERY_TIMEOUT_MS,
       );
-      if (c) this.chars.set(id, c);
-    }
-    if (
-      ![0x2af9, 0x2afa, 0x2afd, 0x2afe, 0x2aff].every((id) =>
-        this.chars.has(id),
-      )
-    ) {
-      const error = new Error(
-        "Device has no supported E-TUBE configuration service",
+      const characteristics = await this.bounded(
+        () => service.getCharacteristics(),
+        DISCOVERY_TIMEOUT_MS,
       );
-      this.fail(error);
-      throw error;
+      for (const id of IDS) {
+        const c = characteristics.find(
+          (c) => c.uuid.toLowerCase() === characteristicUuid(id),
+        );
+        if (c) this.chars.set(id, c);
+      }
+      if (
+        ![0x2af9, 0x2afa, 0x2afd, 0x2afe, 0x2aff].every((id) =>
+          this.chars.has(id),
+        )
+      ) {
+        const error = new Error(
+          "Device has no supported E-TUBE configuration service",
+        );
+        this.fail(error);
+        throw error;
+      }
+      this.opened = true;
+    } finally {
+      this.opening = false;
     }
-    this.opened = true;
     return [...this.chars].map(([id, c]) => ({
       id,
       read: c.properties.read,

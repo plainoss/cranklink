@@ -183,7 +183,7 @@ CATALOG = {
         "kind": "gateway",
         "model": "SC-EM800",
         "version": "4.5.0",
-        "sha256": "8aa8bbe626c44daeb9ecbe12d0985aee3fdb2c1f0b0ce688325983ee27e0ee11",
+        "sha256": "8aa8bbe626c44daefb56b386f616d68146001dfd60fd284c0c2ba6770c17877d",
     },
     "sc-em800-4.6.0": {
         "filename": "SCEM800.4.6.0.dat",
@@ -212,7 +212,7 @@ CATALOG = {
         "kind": "motor",
         "model": "DU-EP800",
         "version": "4.1.10",
-        "sha256": "4ab93e74332427dec30f6dfcfa78693b749603f90558b0f43a0d5c412f8641e7",
+        "sha256": "4ab93e74332427de4f035b32bee35a9fe4600d281f4434d39ddc5de8f4b379fb",
     },
     "ep800-4.1.11": {
         "filename": "DUEP800-D.4.1.11.dat",
@@ -233,7 +233,7 @@ CATALOG = {
         "kind": "motor",
         "model": "DU-EP600",
         "version": "4.4.1",
-        "sha256": "c2bdeb052b7f5d89fcf27ee31cc38827c134aa89e3ecddc983d5cfbe81f96ba5",
+        "sha256": "c2bdeb052b7f5d89190674346d1d4f3491e1a7eb05b3c79f17f86983e4fff6ac",
     },
     "ep600-4.6.0": {
         "filename": "DUEP600-D.4.6.0.dat",
@@ -247,7 +247,7 @@ CATALOG = {
         "kind": "motor",
         "model": "DU-EP500",
         "version": "4.1.0",
-        "sha256": "b273042b1f0e69aae28ffcb5fca6be24883f32c322bca6df9d1b6ec2ecb61214",
+        "sha256": "b273042b1f0e69aa35db227e5d590efc845acd6c40381e0ba0aab4d3e5a2333c",
     },
     "ep500-4.1.1": {
         "filename": "DUEP500-D.4.1.1.dat",
@@ -261,7 +261,7 @@ CATALOG = {
         "kind": "motor",
         "model": "DU-E6100",
         "version": "4.8.0",
-        "sha256": "47fa9c5d52d03987bf594514a60ff96b1b51e4ceaa9960ff8666578aeb8516fb",
+        "sha256": "47fa9c5d52d03987c919d623ee6cb9aae7182548084c51115cffbe7cb3dade7c",
     },
     "e5000-4.5.0": {
         "filename": "DUE5000-D.4.5.0.dat",

@@ -311,12 +311,20 @@ impl BleSession {
             return Ok(());
         }
         if let Some(f) = &mut self.trace {
-            writeln!(
+            let written = writeln!(
                 f,
                 "{}",
                 serde_json::json!({"time_ms":crate::platform::now_ms(),"transport":"ble","direction":direction,"characteristic":uuid(id),"bytes":hex::encode(bytes)})
-            )?;
-            f.flush()?;
+            )
+            .and_then(|()| f.flush());
+            // Tracing is diagnostic: a failed write must not abort a relay
+            // transfer mid-image or drop a notification already received.
+            if let Err(error) = written {
+                self.trace = None;
+                crate::platform::notice(&format!(
+                    "Bluetooth trace disabled after a write failure: {error:#}"
+                ));
+            }
         }
         Ok(())
     }
@@ -843,8 +851,21 @@ impl BleSession {
         // session. Restore and confirm slave routing before that final command.
         // Timeouts still fence all further protocol traffic.
         if !was_master {
-            stopped?;
-            return self.stop_gateway_pc_link();
+            // A rejected unit stop leaves the session responsive, so the
+            // gateway is still stopped, as on the master path.
+            if self.poisoned {
+                return stopped;
+            }
+            let gateway = self.stop_gateway_pc_link();
+            return match (stopped, gateway) {
+                (Ok(()), gateway) => gateway,
+                (Err(unit), Ok(())) => {
+                    bail!("BLE cleanup failed; gateway PC-link was stopped: unit stop: {unit:#}")
+                }
+                (Err(unit), Err(gateway)) => {
+                    bail!("BLE cleanup failed; unit stop: {unit:#}; gateway stop: {gateway:#}")
+                }
+            };
         }
         let mut errors = Vec::new();
         if let Err(error) = stopped {
@@ -1186,12 +1207,12 @@ impl Drop for BleSession {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::{cell::RefCell, collections::VecDeque, rc::Rc};
     #[derive(Default)]
-    struct State {
-        writes: Vec<(u16, Vec<u8>)>,
+    pub(crate) struct State {
+        pub(crate) writes: Vec<(u16, Vec<u8>)>,
         pending: VecDeque<Notification>,
         subscriptions: Vec<u16>,
         lamp: u8,
@@ -1529,6 +1550,8 @@ mod tests {
                     (0x16, 0xb0) => {
                         s.speed_limit = u16::from_le_bytes([data[3], data[4]]);
                     }
+                    // Maximum power, 400 W in every mode.
+                    (0x17, 0x14) => response.extend([data[3], 0x90, 0x01]),
                     _ => panic!("unexpected unit command {group:02x}/{cmd:02x}"),
                 }
                 notify(&mut s, FREE_RESPONSE, response);
@@ -1855,6 +1878,15 @@ mod tests {
                 && (bytes[1] == 0x32 || matches!((bytes[1], bytes[2]), (1, 0x84 | 0xc0)))
         }));
         session.stop().unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_trace_writes_disable_the_trace_without_failing_the_command() {
+        let (mut session, _) = mock();
+        // Every write to /dev/full fails with ENOSPC.
+        session.trace = Some(OpenOptions::new().append(true).open("/dev/full").unwrap());
+        session.log("tx", PCE_COMMAND, &[0, 4]).unwrap();
+        assert!(session.trace.is_none());
     }
     #[test]
     fn browser_command_trace_replacement_is_atomic_and_redacts_credentials() {
@@ -2349,6 +2381,27 @@ mod tests {
         );
     }
     #[test]
+    fn rejected_unit_stop_still_stops_a_responsive_slave_gateway() {
+        let gateway_stop = (PCE_COMMAND, vec![0, 0x0c, 0]);
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        state.borrow_mut().reject_pc_stop = true;
+        let error = session.stop().unwrap_err().to_string();
+        assert!(error.contains("BLE cleanup failed; gateway PC-link was stopped"));
+        assert!(error.contains("unit PC-link stop rejected"));
+        assert!(!session.poisoned && !session.gateway_mode);
+        assert_eq!(state.borrow().writes.last(), Some(&gateway_stop));
+        // A unit stop timeout fences the session: no gateway stop follows.
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        session.start(Some(13)).unwrap();
+        state.borrow_mut().timeout_pc_stop = true;
+        assert!(session.stop().is_err());
+        assert!(session.poisoned);
+        assert!(!state.borrow().writes.contains(&gateway_stop));
+    }
+    #[test]
     fn master_stop_timeout_never_claims_restore_or_dispatches_more_commands() {
         let (mut session, state) = mock();
         state.borrow_mut().unit_bitmap = Some([0, 32, 0, 0]);
@@ -2621,7 +2674,8 @@ mod tests {
         session.stop().unwrap();
         assert!(session.linked_slot.is_none());
     }
-    fn component_mock(series: u8, unit: u8) -> (BleSession, Rc<RefCell<State>>) {
+    /// An authenticated gateway session with one component at slot 4.
+    pub(crate) fn component_mock(series: u8, unit: u8) -> (BleSession, Rc<RefCell<State>>) {
         let (mut session, state) = mock();
         {
             let mut s = state.borrow_mut();

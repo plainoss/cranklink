@@ -100,6 +100,11 @@ the viewing orientation when comparing your wiring.
 You need Rust and your own stock firmware files. Close other programs using the
 adaptor. Save any existing settings backup.
 
+Bridge recovery and the bootloader extraction below connect only through direct
+USB (`--port usb`). On Linux this needs the udev rule from the
+[adapter setup](../README.md#install); on Windows it needs the WinUSB driver
+instead of the FTDI COM port.
+
 This mode accepts only **D 4.2.0.0** with **M 4.1.11.0**. Confirm from your records
 that M already has that version. The supplied M file is checked for compatibility
 but is not flashed; its live version cannot be checked before restoring D. The

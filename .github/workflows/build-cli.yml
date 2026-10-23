@@ -29,6 +29,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Check the release tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/v')
+        # --version and the session ready event report CARGO_PKG_VERSION.
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
       - name: Check changed paths
         id: filter
         run: python3 .github/scripts/check-changed-paths.py cli
@@ -36,11 +45,16 @@ jobs:
         run: node --test .github/scripts/prepare-rolling-release.test.cjs
       - uses: dtolnay/rust-toolchain@1.90.0
         if: steps.filter.outputs.has_changes == 'true'
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         if: steps.filter.outputs.has_changes == 'true'
-      - name: Test default CLI and core
+      - name: Check Rust formatting
         if: steps.filter.outputs.has_changes == 'true'
-        run: cargo test --locked --lib --bin cranklink
+        run: cargo fmt --all --check
+      - name: Test USB-only CLI and core
+        if: steps.filter.outputs.has_changes == 'true'
+        run: cargo test --locked --no-default-features --lib --bin cranklink
       - name: Test BLE CLI and core
         if: steps.filter.outputs.has_changes == 'true'
         run: cargo test --locked --features ble --lib --bin cranklink
@@ -212,6 +226,8 @@ jobs:
             dist/*.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
+          # v1.0.0-rc1 and the like must not become the Latest release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
       - name: Prepare rolling tag at the built commit
         if: github.ref == 'refs/heads/main'
         id: rolling

@@ -14,23 +14,41 @@ import pathlib
 import subprocess
 import sys
 
-CLI_PATTERNS = [
-    "src/**",
+# Files that change how every Rust target builds, including wasm32.
+RUST_BUILD_PATTERNS = [
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".cargo/**",
+]
+
+CLI_PATTERNS = [
+    "src/**",
+    *RUST_BUILD_PATTERNS,
+    # The CLI job runs cargo fmt --check, which reads these.
+    "rustfmt.toml",
+    ".rustfmt.toml",
     "tools/firmware-sim/**",
     "tools/patch_motor_speed.py",
     "tools/patch_ep800_speed.py",
+    # A Rust unit test compares these with the settings tables.
+    "web-instrument/schemas/**",
+    "tools/sync-schemas.ts",
+    "web-instrument/scripts/copy-runtime-assets.mjs",
+    ".github/scripts/check-web-assets.py",
     ".github/workflows/build-cli.yml",
     ".github/scripts/check-changed-paths.py",
     ".github/scripts/prepare-rolling-release*",
+    # A Rust unit test compares their wasm-bindgen version with Cargo.toml.
+    "web-instrument/scripts/build-cloudflare.sh",
+    ".github/workflows/web.yml",
 ]
 
 WEB_PATTERNS = [
     "src/**",
-    "Cargo.toml",
-    "Cargo.lock",
+    *RUST_BUILD_PATTERNS,
     "web-instrument/**",
     ".github/workflows/web.yml",
     ".github/scripts/check-web-assets.py",
@@ -74,9 +92,8 @@ def get_base_sha() -> str:
     return ""
 
 
-def get_changed_files(base_ref: str) -> list[str]:
-    if not base_ref:
-        return []
+def get_changed_files(base_ref: str) -> list[str] | None:
+    """Return changed paths, or None when git cannot compute the diff."""
     # Try three-dot diff first, fallback to two-dot
     for diff_arg in (f"{base_ref}...HEAD", f"{base_ref}..HEAD"):
         res = subprocess.run(["git", "diff", "--name-only", diff_arg], capture_output=True, text=True)
@@ -88,7 +105,7 @@ def get_changed_files(base_ref: str) -> list[str]:
     if res.returncode == 0:
         return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
-    return []
+    return None
 
 
 def matches_any(file_path: str, patterns: list[str]) -> bool:
@@ -124,6 +141,10 @@ def main():
         return
 
     changed_files = get_changed_files(base_ref)
+    if changed_files is None:
+        print(f"[check-changed-paths] Could not diff against {base_ref}. Defaulting to running checks for {target}.")
+        set_output("true")
+        return
     matching = [f for f in changed_files if matches_any(f, patterns)]
 
     if matching:

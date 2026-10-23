@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef, type DragEvent } from "react";
 import { UploadCloud, FileCheck2 } from "lucide-react";
-import { Alert, Button, Card, Chip, Disclosure } from "@heroui/react";
+import { Alert, Button, Card, Chip, Disclosure, Link } from "@heroui/react";
 import type { InstrumentState } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
+import { RECOVERY_URL, userFacingError } from "../../domain/errors.ts";
 import { ConfirmDialog } from "../ui/ConfirmDialog.tsx";
 
 type ProgramTarget = "pair" | "dcas" | "rx";
@@ -14,11 +15,11 @@ const PROGRAM_COPY: Record<ProgramTarget, { title: string; body: string }> = {
   },
   dcas: {
     title: "Force-program DCAS only?",
-    body: "Recovery only: use this when DCAS is stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
+    body: "This erases and rewrites only DCAS firmware. It cannot reach a DCAS stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
   },
   rx: {
     title: "Force-program RX only?",
-    body: "Recovery only: use this when RX is stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
+    body: "This erases and rewrites only RX firmware. It cannot reach an RX stuck in its bootloader. Programming one side out of step with the other can leave the motor unusable until both match.",
   },
 };
 interface FirmwareViewProps {
@@ -40,10 +41,16 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
     return (
       <Card className="gap-2" data-testid="component-firmware-unavailable">
         <Card.Title className="text-base font-bold">Firmware tools require a supported drive unit</Card.Title>
-        <Card.Description className="text-sm">Firmware programming is unavailable for {state.identity?.model ?? "the selected component"}. Choose a drive unit from the active component list to use firmware and recovery tools.</Card.Description>
+        <Card.Description className="text-sm">Firmware programming is unavailable for {state.identity?.model ?? "the selected component"}. Choose a drive unit from the active component list to use firmware tools.</Card.Description>
       </Card>
     );
   }
+
+  // The same preconditions executeFirmwareSync enforces for a write.
+  const canProgram = firmware.companionValid && firmware.dryRunPassed && firmware.dryRunSerial === state.identity.serial
+    && !isFlashing && !state.linkLost;
+  // Over Bluetooth the CLI runs only the ble-pair relay and refuses one MCU alone.
+  const wired = state.transport === "usb" || state.transport === "serial";
 
   const handleFiles = (files: FileList | null) => {
     if (files && files.length > 0) {
@@ -153,7 +160,7 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
         <Card.Footer className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 p-0 pt-3 border-t border-separator">
           <Button
             variant="outline"
-            isDisabled={!firmware.companionValid || isFlashing}
+            isDisabled={!firmware.companionValid || isFlashing || state.linkLost}
             onPress={() => controller.executeFirmwareSync(false).catch(() => {})}
             data-action="fw-dry-run-pair"
             data-testid="btn-fw-dry-run-pair"
@@ -161,7 +168,7 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
             Run non-erasing check
           </Button>
           <Button
-            isDisabled={!firmware.companionValid || !firmware.dryRunPassed || isFlashing}
+            isDisabled={!canProgram}
             onPress={() => setConfirming("pair")}
             data-action="fw-flash-pair"
             data-testid="btn-fw-flash-pair"
@@ -169,27 +176,51 @@ export function FirmwareView({ state, controller, onOpenWarning }: FirmwareViewP
             Program both to the bike
           </Button>
         </Card.Footer>
+        {firmware.lastCheck && (
+          <Alert status={firmware.lastCheck.passed ? "success" : "danger"} data-testid="fw-check-result">
+            <Alert.Indicator />
+            <Alert.Content className="min-w-0">
+              <Alert.Title>{firmware.lastCheck.passed ? "Non-erasing check passed" : "Non-erasing check failed"}</Alert.Title>
+              <Alert.Description className="text-xs leading-relaxed [overflow-wrap:anywhere]">
+                Drive unit {firmware.lastCheck.serial} (DCAS {firmware.lastCheck.installed.dcas}, RX {firmware.lastCheck.installed.rx}) with
+                images DCAS {firmware.lastCheck.images.dcas} and RX {firmware.lastCheck.images.rx}. No firmware was written.
+              </Alert.Description>
+              {firmware.lastCheck.error && (
+                <Alert.Description className="text-xs leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]">
+                  {userFacingError(firmware.lastCheck.error, state.transport)}
+                </Alert.Description>
+              )}
+            </Alert.Content>
+          </Alert>
+        )}
       </Card>
 
       <Card className="gap-0 py-2" data-testid="single-mcu-override">
         <Disclosure>
           <Disclosure.Heading>
             <Disclosure.Trigger className="w-full flex items-center justify-between text-xs font-semibold min-h-[40px]">
-              Recovery: program one microcontroller only
+              Program one microcontroller only
               <Disclosure.Indicator />
             </Disclosure.Trigger>
           </Disclosure.Heading>
           <Disclosure.Content>
             <Disclosure.Body className="flex flex-col gap-3 text-xs text-muted leading-relaxed pb-2">
               <p>
-                If one microcontroller was interrupted during a previous flash and remains in bootloader recovery mode, you can
-                target that specific MCU independently.
+                {wired
+                  ? "After the non-erasing check passes, you can program DCAS or RX alone from the checked pair."
+                  : "Programming DCAS or RX alone needs a wired SM-PCE02 connection; over Bluetooth both are programmed together."}{" "}
+                Bootloader recovery is not available in the browser: for a microcontroller stuck in its bootloader, use the cranklink
+                CLI with an SM-PCE02 and its <code className="font-mono">--recovery</code> option.{" "}
+                <Link href={RECOVERY_URL} target="_blank" rel="noreferrer" className="text-xs">
+                  Recovery steps
+                  <Link.Icon />
+                </Link>
               </p>
               <div className="flex items-center gap-3 flex-wrap">
-                <Button variant="danger-soft" size="sm" isDisabled={!firmware.dcasFile || isFlashing} onPress={() => setConfirming("dcas")}>
+                <Button variant="danger-soft" size="sm" isDisabled={!canProgram || !wired} onPress={() => setConfirming("dcas")}>
                   Force program DCAS only
                 </Button>
-                <Button variant="danger-soft" size="sm" isDisabled={!firmware.rxFile || isFlashing} onPress={() => setConfirming("rx")}>
+                <Button variant="danger-soft" size="sm" isDisabled={!canProgram || !wired} onPress={() => setConfirming("rx")}>
                   Force program RX only
                 </Button>
               </div>

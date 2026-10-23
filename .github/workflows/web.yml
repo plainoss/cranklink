@@ -83,6 +83,12 @@ jobs:
         if: steps.filter.outputs.has_changes == 'true'
         working-directory: web-instrument
         run: npx playwright install --with-deps chromium
+      - name: Run browser e2e suite against the simulator
+        if: steps.filter.outputs.has_changes == 'true'
+        working-directory: web-instrument
+        # Drives the fresh WASM core through the UI: staging, batch saves,
+        # rollback, WebMCP review and the mixed-bus component safety cases.
+        run: npm run test:e2e
       - name: Verify _headers isolation and WASM startup on the production build
         if: steps.filter.outputs.has_changes == 'true'
         working-directory: web-instrument

@@ -47,10 +47,34 @@ pub struct Receipt {
     pub reset_acknowledged: bool,
 }
 
+/// A refusal after `read_boot` changed both operating modes but before any
+/// erase: of a bootloader reply it cannot use, or of a write's capability
+/// policy. `reset` records whether the fast bridge returned to the
+/// application, so callers need not treat the refusal as an interrupted write.
+#[derive(Debug)]
+pub struct RefusedBeforeErase {
+    pub reason: String,
+    pub reset: Result<(), String>,
+}
+impl std::fmt::Display for RefusedBeforeErase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.reset {
+            Ok(()) => write!(f, "{} (nothing erased; RX boot bridge reset)", self.reason),
+            Err(e) => write!(
+                f,
+                "{} (nothing erased; RX boot bridge reset failed: {e})",
+                self.reason
+            ),
+        }
+    }
+}
+impl std::error::Error for RefusedBeforeErase {}
+
 /// Requires an already established normal PC-link session at `slot`. The
 /// selector switches RX into update mode, then prepares the DCAS fast bridge.
 /// This changes both operating modes; no erase or image data is sent here.
 /// Complete the probe with `reset_fast` before starting another normal session.
+/// A reply it cannot use is refused as [`RefusedBeforeErase`] after that reset.
 pub fn read_boot(session: &mut Session, slot: u8) -> Result<Boot> {
     ensure!(slot < 32, "invalid RX application slot {slot}");
     session.target(slot)?;
@@ -71,7 +95,10 @@ pub fn read_boot(session: &mut Session, slot: u8) -> Result<Boot> {
     );
     sleep(Duration::from_millis(100));
     let f = fast(session, slot, 0x41, [0, 0, 0], 0x51, 3)?;
-    let p = &f.payload;
+    fast_boot(&f.payload).map_err(|e| refuse_before_erase(session, slot, e))
+}
+
+fn fast_boot(p: &[u8]) -> Result<Boot> {
     ensure!(p.len() >= 9, "truncated fast RX bootloader reply");
     let version = Version::packed(&p[6..9])?;
     ensure!(version.0[0] != 0, "RX bootloader version is zero");
@@ -82,6 +109,18 @@ pub fn read_boot(session: &mut Session, slot: u8) -> Result<Boot> {
         capability_sequence: p[4],
         retry_capable: p[4] == 1,
     })
+}
+
+/// Return the fast bridge before refusing; nothing has been erased yet.
+fn refuse_before_erase(session: &mut Session, slot: u8, reason: anyhow::Error) -> anyhow::Error {
+    let reset = reset_fast(session, slot)
+        .map(|_| ())
+        .map_err(|r| format!("{r:#}"));
+    RefusedBeforeErase {
+        reason: format!("{reason:#}"),
+        reset,
+    }
+    .into()
 }
 
 /// Programs the entire M image, including its header, at the RX DU base address.
@@ -121,21 +160,20 @@ pub fn flash_with_policy(
         );
     }
     ensure!(!image.data.is_empty(), "empty RX image");
+    // Both the erased sectors and the 60-byte fast fragments must fit before
+    // read_boot changes any operating mode.
     ensure!(
-        BASE.checked_add(image.data.len().div_ceil(SECTOR) * SECTOR)
-            .is_some_and(|end| end <= 0x1000000),
+        [SECTOR, 60].into_iter().all(|unit| BASE
+            .checked_add(image.data.len().div_ceil(unit) * unit)
+            .is_some_and(|end| end <= 0x1000000)),
         "RX image exceeds its 24-bit application address range"
     );
     let boot = read_boot(session, slot)?;
     if boot.transport == Transport::Smpce02 {
-        return flash_fast(
-            session,
-            slot,
-            image,
-            boot,
-            allow_unverified_model,
-            &mut progress,
-        );
+        if let Err(e) = validate_fast_capabilities(&boot, allow_unverified_model) {
+            return Err(refuse_before_erase(session, slot, e));
+        }
+        return flash_fast(session, slot, image, boot, &mut progress);
     }
     // All capability and size checks above precede this destructive start.
     legacy(session, 0x21, [0, 0x0e, 0], 0x31, 6)
@@ -255,7 +293,7 @@ fn fast_transfer_reply(frame: &Frame, slot: u8, response: u8, packet_id: u8) -> 
         && frame.payload[3] == packet_id
 }
 
-fn validate_fast_capabilities(boot: &Boot, allow_unverified_model: bool) -> Result<()> {
+pub(crate) fn validate_fast_capabilities(boot: &Boot, allow_unverified_model: bool) -> Result<()> {
     ensure!(
         !boot.retry_capable || allow_unverified_model,
         "retry-capable RX fast bootloader is not hardware validated; refusing before erase (pass --allow-unverified-model to authorize)"
@@ -268,17 +306,11 @@ fn flash_fast(
     slot: u8,
     image: &Firmware,
     boot: Boot,
-    allow_unverified_model: bool,
     progress: &mut impl FnMut(usize, usize),
 ) -> Result<Receipt> {
-    validate_fast_capabilities(&boot, allow_unverified_model)?;
     // Both protocol variants share the transfer wrapper and erase value. The
     // retry capability changes the checksum block from 1080 to 2100 bytes.
     let block_len = if boot.retry_capable { 2100 } else { 1080 };
-    ensure!(
-        BASE + image.data.len().div_ceil(60) * 60 <= 0x1000000,
-        "padded fast RX image exceeds address range"
-    );
     fast(session, slot, 0x21, [0, 0x0e, 0], 0x31, 6)
         .context("RX fast erase/start uncertain; do not repeat automatically")?;
     let a = BASE;
@@ -682,7 +714,7 @@ fn transfer_retry(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     struct LegacyReplay {
         pending: VecDeque<Frame>,
@@ -898,6 +930,101 @@ mod tests {
             .to_string()
             .contains("before erase"));
         validate_fast_capabilities(&boot, true).unwrap();
+    }
+    /// `read_boot` at slot 13 through fast-bridge preparation, answered by a
+    /// fast bootloader with the given capability, then the `reset_fast` return.
+    pub(crate) fn fast_probe_script(capability: u8) -> Vec<(Frame, Frame)> {
+        use crate::device::tests::frame;
+        let a8 = |p: &[u8]| {
+            let mut b = [0u8; 16];
+            b[..p.len()].copy_from_slice(p);
+            frame(0xa8, &b)
+        };
+        let target = (frame(6, &[13]), frame(0x26, &[0]));
+        let mut script = vec![
+            target.clone(),
+            (frame(0x48, &[13, 1, 0xc0, 13]), frame(0x48, &[0, 1, 0xc2])),
+            (
+                frame(0x48, &[13, 0x32, 0x20, 1]),
+                frame(0x48, &[0, 0x32, 0x22]),
+            ),
+            (frame(3, &[0x60]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xe0])),
+            target.clone(),
+        ];
+        for (index, key) in [
+            [0x31, 0x41, 0x59],
+            [0x26, 0x53, 0x58],
+            [0x97, 0x93, 0x23],
+            [0x84, 0x62, 0x64],
+            [0x33, 0x83, 0x27],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let index = index as u8 + 1;
+            // The first key 5 is not awaited; idle bus traffic answers it.
+            let reply = if index == 5 {
+                frame(0x88, &[0x70, 0, 0, 0x78])
+            } else {
+                frame(0x88, &[0x11, index])
+            };
+            script.push((frame(0x88, &[index, key[0], key[1], key[2]]), reply));
+        }
+        script.extend([
+            target.clone(),
+            (frame(0x88, &[5, 0x33, 0x83, 0x27]), frame(0x88, &[0x11, 5])),
+            (frame(7, &[0, 1, 0, 0, 0]), frame(0x27, &[0, 0])),
+            (frame(7, &[5]), frame(0x27, &[5, 0])),
+            target,
+            // Its acknowledgement is consumed after the switch to mode 6.
+            (frame(0x88, &[0x4b, 0, 0, 0]), a8(&[13, 0x31])),
+            (frame(7, &[6]), frame(0x27, &[6, 0])),
+            (a8(&[13, 0x4c, 0xff]), a8(&[13, 0x55, 0xff])),
+            (frame(7, &[0, 0xff, 0xdf, 0xff, 0xff]), frame(0x27, &[0, 0])),
+            (frame(7, &[1, 0, 0x20, 0, 0]), frame(0x27, &[1, 0])),
+            (a8(&[13, 0x4c, 13]), a8(&[13, 0x55, 13])),
+            (a8(&[13, 0x2f]), a8(&[13, 0x3b, 0, 1])),
+            (
+                frame(0xa8, &fast_payload(13, 0x41, [0, 0, 0])),
+                a8(&[13, 0x70, 0xf2, 0, capability, 0x51, 0x20, 7, 2]),
+            ),
+            // reset_fast
+            (a8(&[13, 0x4c, 13]), a8(&[13, 0x55, 13])),
+            (a8(&[13, 0x28]), a8(&[13, 0x31])),
+            (frame(7, &[0, 1, 0, 0, 0]), frame(0x27, &[0, 0])),
+            (frame(7, &[5]), frame(0x27, &[5, 0])),
+        ]);
+        script
+    }
+    #[test]
+    fn fast_refusal_after_boot_entry_returns_the_bridge_without_erasing() {
+        // The largest image whose 60-byte fragments fit reaches boot entry.
+        let (_, image, _) = legacy_fixture(262140);
+        // A retry-capable bootloader, then a reply read_boot cannot use.
+        for (capability, reason) in [(1, "retry-capable"), (2, "capability sequence 2")] {
+            let (mut session, steps) =
+                crate::device::tests::scripted_motor(13, fast_probe_script(capability));
+            let error = flash_with_policy(&mut session, 13, &image, false, |_, _| {}).unwrap_err();
+            let refusal = error
+                .downcast_ref::<RefusedBeforeErase>()
+                .expect("typed pre-erase refusal");
+            assert!(refusal.reason.contains(reason), "{error:#}");
+            assert_eq!(refusal.reset, Ok(()));
+            // The script ends with the bridge return and admits no erase (21).
+            assert!(steps.borrow().is_empty());
+        }
+    }
+    #[test]
+    fn image_beyond_fast_fragment_range_is_refused_before_boot_entry() {
+        // These fit in 2048-byte sectors but not in 60-byte fast fragments.
+        for size in [262141, 262144] {
+            let (_, image, _) = legacy_fixture(size);
+            // The empty script fails the test on any wire command.
+            let (mut session, _) = crate::device::tests::scripted(Vec::new());
+            let error = flash_with_policy(&mut session, 13, &image, false, |_, _| {}).unwrap_err();
+            assert!(format!("{error:#}").contains("address range"), "{error:#}");
+        }
     }
     #[test]
     fn eof_checksum_includes_padding_only_in_window() {

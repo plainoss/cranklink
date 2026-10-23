@@ -4,7 +4,7 @@
 
 ## Component settings
 
-Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior.
+Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior. As for drive units, `set` and batches containing a `set` require `-s <SERIAL>` (from `probe`); sibling components such as left and right levers share a schema, so a slot or model name alone does not identify the unit.
 
 Component sessions use the stock identity and, where necessary, a part discriminator to select an exact catalog model. They read the component application version without issuing motor cargo/RX queries. Unknown or unresolved identities are rejected. A catalog entry does not automatically grant a settings layout: components without an implemented schema return no fields and `capabilities.settings_available: false` in full snapshots.
 
@@ -30,20 +30,20 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings restore lever-before.json
 
 The web app uses the same Rust schemas. After connecting, select the target in **Active component**; discovery lists the connected models and slots. Refresh the inventory after changing the bus. Component selection reads a fresh identity and settings snapshot before displaying controls. Save or discard staged edits before switching targets. Read-only and unavailable fields cannot be staged, and catalogued models without a settings layout display an explicit unavailable message. Motor tuning and firmware actions appear only for drive units.
 
-Browser saves create durable local backups before each SET and require verified receipts. The Backups page offers restore only for the selected model and serial; switching components retains other backups for download. Full configuration snapshots are downloadable records; restore uses the setting backups created before writes. Batches run in order and can partially apply on failure, so keep their backups for recovery. WebMCP exposes inventory and component selection through `cranklink_list_components` and `cranklink_select_component`, with the same target and staging guards.
+Browser saves create durable local backups before each SET and require verified receipts. The Backups page offers restore only for the selected model and serial, and only while no edits are staged; switching components retains other backups for download. Full configuration snapshots are downloadable records; restore uses the setting backups created before writes. Batches run in order (apart from the region-change ordering under [Batch plans](#batch-plans)) and can partially apply on failure, so keep their backups for recovery. Restoring a save restores all of its backups in one batch, so a region change is undone together with its speed or power limit. WebMCP exposes inventory and component selection through `cranklink_list_components` and `cranklink_select_component`, with the same target and staging guards.
 
-Signed values can be supplied directly, for example `settings set hub-adjustment -3 --backup hub-before.json`. Hub adjustment can acknowledge acceptance before its actuator reaches the target. Cranklink sends one SET and polls GET for a three-second completion window, checking the live maximum on every reply. Individual transport calls retain their own timeouts. Setting the current value still sends one SET so it can cancel a different pending target; the receipt's `changed` field remains false. An unfinished adjustment reports an uncertain outcome and retains its backup; it is never automatically retried.
+Signed values can be supplied directly, for example `cranklink --port usb -c MU-UR500 -s <SERIAL> settings set hub-adjustment -3 --backup hub-before.json`. Hub adjustment can acknowledge acceptance before its actuator reaches the target. Cranklink sends one SET and polls GET for a three-second completion window, checking the live maximum on every reply. Individual transport calls retain their own timeouts. Setting the current value still sends one SET so it can cancel a different pending target; the receipt's `changed` field remains false. An unfinished adjustment reports an uncertain outcome and retains its backup; it is never automatically retried.
 
 Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. Browser tests additionally drive the current UI and WASM through SC-EM800 4.6.0 and MU-UR500 3.3.1 save, power-cycle, readback and restore flows, and an unfinished hub adjustment. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
 ## Protected writes
 
-Fields flagged `oem` require drive-unit authentication, run automatically when `-s <SERIAL>` is given (`--no-auth` disables it). The protocol is chosen from the live motor identity:
+Fields flagged `oem` require drive-unit authentication. A `set`, `restore` or `batch` that writes one runs it automatically with the live serial; with `--no-auth` it is refused instead. `--unit-auth` (alias `--ble-unit-auth`) forces authentication before every connected settings command, reads included, except `set --dry-run`, and cannot be combined with `--no-auth`. The web app adds it for EP600, EP801 and EP500 motors to every save and restore, and to reads over Bluetooth. The protocol is chosen from the live motor identity:
 
 | Family | Authentication |
 | --- | --- |
 | EP800, EP800-CRG, E5100 | Legacy |
-| EP600, EP801, EP500 (incl. CRG) | Modern |
+| EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Modern |
 | E8000, E8080 | Legacy from D4.7.0, none earlier |
 | E7000, E6100, E6110, E6180 | Legacy from D4.4.0, none earlier |
 | E6100-CRG, E6180-TRK | Legacy |
@@ -53,8 +53,14 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 
 ## Backups and restore
 
+- `set` and batches containing a `set` require `-s <SERIAL>`, checked before connecting; `--dry-run`, reads and restores do not.
+- `set --dry-run` reads the device and runs the same checks as the write (destination limits, OEM torque bounds, drivetrain, calendar), then reports the current value and, for numeric fields, the `planned_parameters` the SET would send and whether it would change the value (`changed`). It takes no backup, sends no SET and skips unit authentication, but refuses `--no-auth` for a protected setting as the write does.
 - Every `set` writes a new backup file (component serial, original value, planned value) before sending, then verifies by readback. Component backups also record the settings model. Backup files are never overwritten.
+- Each write reads the serial for its backup right before the SET and refuses, with no backup and no SET, if it differs from the serial verified when the session started. In a batch, earlier writes stay applied.
+- If the PC-link stop or Bluetooth disconnect fails after a command completed, its receipt (including the backup path) is still printed before the error, and the command exits with an error.
+- Destination, assist-profile, profile-display and maximum-power replies must echo the requested record selector; a reply for another record is refused before the backup, and the SET always names the requested record.
 - `restore` takes such a backup, checks the serial, and writes a new backup of the current value first.
+- Without `--backup`, both write to a new file in the current directory: `set` to `backup-<setting>-<serial>-<ms>.json` (dots in the setting name become underscores), `restore` to `backup-restore-<serial>-<ms>.json`. The receipt prints the path.
 - Component restores also require the same catalog model in the backup; shared fields changed since the backup are preserved. Existing motor backups remain compatible.
 - A `settings read --output` snapshot is not a restore input.
 - Readback does not prove persistence. Power-cycle the bike and read again.
@@ -73,10 +79,12 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 cranklink -s <SERIAL> settings batch plan.json --backup-prefix run-01
 ```
 
-1–128 operations run in order on one connection; relative `file` paths resolve from the plan's directory. Each write gets its own backup. A batch is not atomic: on failure, earlier writes stay applied; restore them from their backups.
+1–128 operations run in order on one connection; relative `file` paths resolve from the plan's directory. One exception keeps region changes valid: when a destination write (or restore) comes first, a later `speed-limit` or `max-power.*` write of the same change that fits both the current and the new destination runs before it. It never moves past a read, another destination write or an earlier write of the same setting; results and backup numbers keep plan order, and the journal's `order` lists the sequence that ran. In a plan with a destination write, a step that would still fall outside its destination is refused before any write. Each write gets its own backup. A batch is not atomic: on failure, earlier writes stay applied; restore them from their backups.
 
 ## Constraints
 
 - Speed and maximum power are validated against the destination (region). An unset EP800 destination blocks speed changes; set a destination first. The web app stages a compatible destination automatically.
+- A destination write or restore is refused while the current speed limit or maximum power is outside the new destination's range (for example 32 km/h before destination 0, 15 km/h before destination 1, or more than 400 W before destination 3). Change it first, or put the destination and the new limit in one batch, destination first. When neither order fits, as from 15 km/h in destination 0 to 30 km/h in destination 1, the batch is refused before any write; save a speed both destinations permit (19–25 km/h here) first.
+- On EP600, EP801 and EP500, per-mode torque must be one of the vendor levels for the motor's OEM torque bounds. Only the 20–85 and 20–50 Nm tables are verified; torque writes are refused on motors with other bounds.
 - An unset maintenance calendar must be initialized with `maintenance-date YYYY-MM-DD` before editing year, month, or day individually.
 - Bus slots can change after a power cycle. Select a component with `-c <MODEL>` or a slot from a fresh `cranklink units`.

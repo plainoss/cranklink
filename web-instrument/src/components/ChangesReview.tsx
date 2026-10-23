@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, RotateCcw, ShieldCheck } from "lucide-react";
 import type { InstrumentState } from "../types.ts";
 import type { SessionController } from "../core/sessionController.ts";
-import { formatSetting, isRegulatedSetting, settingLabel } from "../domain/settingFormat.ts";
+import { formatSetting, isRegulatedSetting, settingLabel, unwritableNotice, unwritableValues } from "../domain/settingFormat.ts";
 import { Alert, Button, Card, Checkbox, Label, Modal } from "@heroui/react";
 
 interface StagedChange {
@@ -76,18 +76,48 @@ export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
   );
 }
 
+interface RegulatedAcknowledgmentProps {
+  labels: string[];
+  isSelected: boolean;
+  onChange: (selected: boolean) => void;
+  "data-testid": string;
+}
+
+/** The explicit acknowledgment a write of regulated settings needs, from this review or an agent's. */
+export function RegulatedAcknowledgment({ labels, isSelected, onChange, "data-testid": testId }: RegulatedAcknowledgmentProps) {
+  return (
+    <Checkbox isSelected={isSelected} onChange={onChange} data-testid={testId}>
+      <Checkbox.Control>
+        <Checkbox.Indicator />
+      </Checkbox.Control>
+      <Checkbox.Content>
+        <Label className="text-xs leading-relaxed">
+          {labels.join(" and ")} {labels.length === 1 ? "changes" : "change"} legal
+          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
+          approved.
+        </Label>
+      </Checkbox.Content>
+    </Checkbox>
+  );
+}
+
 interface ReviewDialogProps {
   state: InstrumentState;
   controller: SessionController;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Disconnect once the save succeeds: the disconnect prompt's "Save & disconnect". */
+  disconnectAfterSave?: boolean;
 }
 
 /** The single save path: every write is reviewed here first. */
-export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDialogProps) {
+export function ReviewDialog({ state, controller, open, onOpenChange, disconnectAfterSave = false }: ReviewDialogProps) {
   const changes = stagedChanges(state);
   const count = changes.length;
   const regulated = changes.filter((change) => change.regulated);
+  // A backup of a value cranklink cannot write is not a way back.
+  const unwritable = unwritableValues(state.schema, changes.map((change) => [change.name, state.liveValues[change.name]?.value]),
+    { model: state.identity?.modelSlug, live: state.liveValues });
   const [acknowledged, setAcknowledged] = useState(false);
   const saving = state.phase === "committing";
 
@@ -99,10 +129,16 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
   }, [open]);
 
   const save = async () => {
+    // Closing the dialog clears the caller's disconnect request.
+    const thenDisconnect = disconnectAfterSave;
     onOpenChange(false);
-    await controller.commitStagedBatch().catch(() => {
+    try {
+      await controller.commitStagedBatch();
+    } catch {
       // The failure banner explains the bike's state; staged values remain.
-    });
+      return;
+    }
+    if (thenDisconnect) await controller.disconnect().catch(() => {});
   };
 
   return (
@@ -149,26 +185,36 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
               {regulated.length > 0 && (
                 <Alert status="warning">
                   <Alert.Content>
-                    <Checkbox isSelected={acknowledged} onChange={setAcknowledged} data-testid="ack-regulated">
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                      <Checkbox.Content>
-                        <Label className="text-xs leading-relaxed">
-                          {regulated.map((change) => change.label).join(" and ")} {regulated.length === 1 ? "changes" : "change"} legal
-                          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
-                          approved.
-                        </Label>
-                      </Checkbox.Content>
-                    </Checkbox>
+                    <RegulatedAcknowledgment
+                      labels={regulated.map((change) => change.label)}
+                      isSelected={acknowledged}
+                      onChange={setAcknowledged}
+                      data-testid="ack-regulated"
+                    />
                   </Alert.Content>
                 </Alert>
               )}
 
-              <p className="flex items-start gap-2 text-xs text-muted">
-                <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
-                Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
-              </p>
+              {unwritable.length === 0 ? (
+                <p className="flex items-start gap-2 text-xs text-muted">
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
+                  Each setting’s current value is backed up before it is written, so you can restore it from Backup & Restore.
+                </p>
+              ) : (
+                <p className="flex items-start gap-2 text-xs font-medium" data-testid="review-unwritable">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                  <span>
+                    {unwritableNotice(unwritable)}
+                    {unwritable.length < count && " The other changes are backed up first and can be restored there."}
+                  </span>
+                </p>
+              )}
+              {state.linkLost && (
+                <p className="flex items-start gap-2 text-xs font-medium" data-testid="review-link-lost">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                  The link to the bike closed. Close this review and reconnect before saving.
+                </p>
+              )}
             </Modal.Body>
             <Modal.Footer className="flex-wrap">
               <Button variant="ghost" onPress={() => controller.discardAllStaged()} className="mr-auto">
@@ -178,11 +224,11 @@ export function ReviewDialog({ state, controller, open, onOpenChange }: ReviewDi
                 Keep editing
               </Button>
               <Button
-                isDisabled={saving || (regulated.length > 0 && !acknowledged)}
+                isDisabled={saving || state.linkLost || (regulated.length > 0 && !acknowledged)}
                 onPress={save}
                 data-testid="btn-commit-batch"
               >
-                Save to bike
+                {disconnectAfterSave ? "Save & disconnect" : "Save to bike"}
               </Button>
             </Modal.Footer>
           </Modal.Dialog>

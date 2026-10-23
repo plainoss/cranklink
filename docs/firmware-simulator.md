@@ -185,11 +185,11 @@ CRANKLINK_SIM_FIXTURES=/tmp/firmware-fixtures.json \
 Run `verify_gatt.py --binary target/debug/cranklink --fixtures /tmp/firmware-fixtures.json --output /tmp/gatt-verification.json` in the same Python environment for the real Bluetooth client and stock GATT lifecycle matrix. `verify_features.py` adds snapshot, batch and preflight checks:
 
 ```sh
-python tools/firmware-sim/verify_features.py --binary target/debug/cranklink \
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_features.py --binary target/debug/cranklink \
   --fixtures /absolute/path/fixtures.local.json --output /tmp/cranklink-feature-results.json
 ```
 
-Add `--gateway <profile> --motor <profile>` to run a single pair. Reports contain raw CLI output and should stay local.
+It runs one pair, SC-EM800 4.6.0 with EP800 4.2.0 by default (profiles `sc-em800-4.6.0` and `ep800-4.2.0`, which the fixtures file must contain); choose another with `--gateway <profile> --motor <profile>`. Reports contain raw CLI output and should stay local.
 
 The native verifier selects four representative pairs when their profiles are present: SC-EM800/EP800, SC-E6100/EP600, SC-E7000/EP800 and SC-E7000/E6100. It also tests the actual client's timeout with dropped GET replies. Firmware metadata checks and the virtual endpoint never weaken CLI gates.
 

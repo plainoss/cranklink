@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 test("production build omits development simulator controls", async ({ page }) => {
-  await page.goto("./");
+  const response = await page.goto("./");
+  // Other sites must not frame the app and drive it through WebMCP messages.
+  expect(response?.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
   await expect.poll(async () => {
     try {
       return await page.evaluate(() => window.crossOriginIsolated && Boolean((window as any).estepsTerminal?.status().ready));

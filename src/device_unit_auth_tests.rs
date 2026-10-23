@@ -199,6 +199,7 @@ fn session(mode: u8) -> (Session, Rc<RefCell<State>>) {
         target_slot: Some(13),
         adapter_supply: false,
         unit_auth_attempted: false,
+        discovery: DiscoveryState::Fresh,
     };
     (session, state)
 }

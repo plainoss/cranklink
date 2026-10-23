@@ -293,6 +293,12 @@ class NativeWireTests(unittest.TestCase):
             frames.extend(decoder.feed(bytes([byte])))
         self.assertEqual(frames, [(0x48, payload)])
 
+    def test_ff_fill_after_a_mid_frame_start_does_not_desync(self):
+        replies = [(0x88, bytes([0x30, n])) for n in range(3)]
+        data = self.wire.encode(0x88, b'\x70\x00\x00\x78')[3:]
+        data += b''.join(self.wire.encode(control, payload) for control, payload in replies)
+        self.assertEqual(self.wire.Decoder().feed(data), replies)
+
     def test_coalesced_frames_preserve_controls_and_payloads(self):
         frames = [(0x48, b'\x0d\x16\xae\xff'), (0x24, b''), (0xa8, b'\xbb\xbd')]
         data = b''.join(self.wire.encode(control, payload) for control, payload in frames)

@@ -123,8 +123,8 @@ EXAMPLES:
   cranklink firmware probe --target dcas --recovery
   cranklink -s 010203040506 firmware flash dcas DUEP800-D.4.2.0.dat --companion DUEP800-M.4.1.11.dat --recovery --write
 
-  # Start persistent JSON-RPC driver session for scripts or AI agents:
-  cranklink session --json
+  # Read-only JSON-RPC session for scripts, wired ports only (see docs/session.md):
+  cranklink --port usb session
 ";
 
 #[derive(Parser)]
@@ -170,7 +170,7 @@ struct Cli {
         visible_aliases = ["expect-motor-serial", "ble-expect-serial"],
         global = true,
         help_heading = "Target Verification",
-        help = "Require this 12-hex-digit motor serial (auto-sanitized from colons/hyphens)"
+        help = "Require this 12-hex-digit unit serial from probe (auto-sanitized from colons/hyphens)"
     )]
     expect_serial: Option<String>,
 
@@ -278,7 +278,7 @@ enum Command {
     },
     /// Inventory connected E-TUBE bus components (motor, display, shifter)
     Units,
-    /// Probe active drive unit (model, serial, MCU firmware versions)
+    /// Probe the drive unit, or the component chosen with --component/--slot (model, serial, firmware versions)
     Probe,
     /// Persistent interactive JSON-RPC session driver for AI agents & test runners
     Session,
@@ -329,10 +329,10 @@ enum SettingsCommand {
         /// New value
         #[arg(allow_negative_numbers = true)]
         value: String,
-        /// Pre-write backup path (auto-generated if omitted)
+        /// Pre-write backup path (default: a new file in the current directory)
         #[arg(long)]
         backup: Option<PathBuf>,
-        /// Validate schema, bounds, and permissions without writing to EEPROM
+        /// Run the write's input and live checks without writing (no unit authentication)
         #[arg(long)]
         dry_run: bool,
     },
@@ -340,7 +340,7 @@ enum SettingsCommand {
     Restore {
         /// Backup file to restore
         file: PathBuf,
-        /// Pre-restore backup path (auto-generated if omitted)
+        /// Pre-restore backup path (default: a new file in the current directory)
         #[arg(long)]
         backup: Option<PathBuf>,
         #[arg(skip)]
@@ -408,7 +408,7 @@ enum FlashCommand {
         /// Required matching RX companion container file (.dat)
         #[arg(long)]
         companion: PathBuf,
-        /// Optional assertion for expected file SHA-256 (auto-computed by default)
+        /// Expected file SHA-256; required to write a plaintext image, which has no container checksum
         #[arg(long)]
         expect_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -420,7 +420,7 @@ enum FlashCommand {
         /// Recover the EP800 Key-2 stall with the documented temporary resistor bridge
         #[arg(long, conflicts_with = "recovery")]
         bridge_recovery: bool,
-        /// Maximum connection attempts before any flash write (bridge recovery only)
+        /// Maximum connection attempts before any flash write, 1-20 (bridge recovery only; default: 20)
         #[arg(long, requires = "bridge_recovery", value_parser = clap::value_parser!(u8).range(1..=20))]
         attempts: Option<u8>,
         /// Seconds to establish the bridge before connecting (default: 10)
@@ -437,7 +437,7 @@ enum FlashCommand {
         /// Required matching DCAS companion container file (.dat)
         #[arg(long)]
         companion: PathBuf,
-        /// Optional assertion for expected file SHA-256 (auto-computed by default)
+        /// Expected file SHA-256; required to write a plaintext image, which has no container checksum
         #[arg(long)]
         expect_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -458,10 +458,10 @@ enum FlashCommand {
         /// Path to Renesas RX container file (.dat)
         #[arg(long)]
         rx: PathBuf,
-        /// Optional assertion for DCAS file SHA-256 (auto-computed by default)
+        /// Expected DCAS file SHA-256; required to write a plaintext D image (no container checksum)
         #[arg(long)]
         expect_dcas_sha256: Option<String>,
-        /// Optional assertion for RX file SHA-256 (auto-computed by default)
+        /// Expected RX file SHA-256; required to write a plaintext M image (no container checksum)
         #[arg(long)]
         expect_rx_sha256: Option<String>,
         /// Transaction journal path (auto-generated if omitted)
@@ -509,7 +509,17 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             out_print!("{}", error);
             return Ok(());
         }
-        Err(error) => return Err(error.into()),
+        Err(error)
+            if error.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand =>
+        {
+            err_println!("{}", error.render().to_string().trim_end());
+            anyhow::bail!("a command is required");
+        }
+        // Callers prefix "error: " themselves; clap's rendering already has it.
+        Err(error) => {
+            let rendered = error.render().to_string();
+            anyhow::bail!("{}", rendered.trim_end().trim_start_matches("error: "));
+        }
     };
 
     // Environment variable overrides
@@ -527,7 +537,11 @@ pub fn execute(args: Vec<String>) -> Result<()> {
             }
         }
     }
-    if cli.passkey.is_none() && cli.passkey_file.is_none() {
+    // Only a Bluetooth port uses the passkey; an exported one must not break wired use.
+    if cli.port.as_deref().is_some_and(crate::ble::is_port)
+        && cli.passkey.is_none()
+        && cli.passkey_file.is_none()
+    {
         if let Ok(pk) = std::env::var("CRANKLINK_PASSKEY") {
             if !pk.trim().is_empty() {
                 cli.passkey = Some(pk.trim().to_string());
@@ -537,11 +551,14 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     let mut format = cli.format;
     if cli.json {
         format = OutputFormat::Json;
-    } else if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
-        if f.eq_ignore_ascii_case("json") {
-            format = OutputFormat::Json;
-        } else if f.eq_ignore_ascii_case("text") {
-            format = OutputFormat::Text;
+    } else if cli.format == OutputFormat::Auto {
+        // An explicit --format wins over the environment.
+        if let Ok(f) = std::env::var("CRANKLINK_FORMAT") {
+            if f.eq_ignore_ascii_case("json") {
+                format = OutputFormat::Json;
+            } else if f.eq_ignore_ascii_case("text") {
+                format = OutputFormat::Text;
+            }
         }
     }
     let is_json = format.is_json();
@@ -554,7 +571,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
     // Safety check: read-only rejection
     ensure!(
         !cli.read_only || read_only_command_allowed(&cli.command),
-        "--read-only rejects mutating commands (settings set/restore, firmware flash, power-cycle)"
+        "--read-only rejects mutating commands (settings set/restore/batch, firmware flash/probe, adapter power-cycle)"
     );
     ensure!(
         !(cli.unit_auth && cli.no_auth),
@@ -608,29 +625,48 @@ pub fn execute(args: Vec<String>) -> Result<()> {
         _ => {}
     }
 
+    require_write_serial(&cli.command, cli.expect_serial.as_deref())?;
+
+    // `ble scan` is the documented spelling of `scan --ble`; neither needs a port.
+    if let Command::Ble {
+        command: BleCommand::Scan { seconds, all },
+    } = cli.command
+    {
+        cli.command = Command::Scan {
+            ble: true,
+            seconds,
+            all,
+        };
+    }
+
     // BLE dispatch vs native wired dispatch
     if cli.port.as_deref().is_some_and(crate::ble::is_port)
         && !matches!(
             cli.command,
-            Command::Firmware {
-                command: FirmwareCommand::Inspect { .. }
-            } | Command::Settings {
-                command: SettingsCommand::Schema { .. }
-            }
+            Command::Scan { .. }
+                | Command::Firmware {
+                    command: FirmwareCommand::Inspect { .. }
+                }
+                | Command::Settings {
+                    command: SettingsCommand::Schema { .. }
+                }
         )
     {
         return execute_ble(cli, is_json);
     }
 
-    // Require BLE port for BLE-only operations
-    ensure!(
-        cli.passkey.is_none() && cli.passkey_file.is_none(),
-        "--passkey and --passkey-file require a Bluetooth port (--port ble:DEVICE_ID)"
-    );
-    ensure!(
-        cli.ble_master.is_none(),
-        "--ble-master requires a Bluetooth port (--port ble:DEVICE_ID)"
-    );
+    // Require BLE port for BLE-only operations. Offline commands and scans
+    // stay off BLE dispatch even with a Bluetooth port, and ignore its options.
+    if !cli.port.as_deref().is_some_and(crate::ble::is_port) {
+        ensure!(
+            cli.passkey.is_none() && cli.passkey_file.is_none(),
+            "--passkey and --passkey-file require a Bluetooth port (--port ble:DEVICE_ID)"
+        );
+        ensure!(
+            cli.ble_master.is_none(),
+            "--ble-master requires a Bluetooth port (--port ble:DEVICE_ID)"
+        );
+    }
 
     let port = cli.port;
     let slot = cli.slot;
@@ -782,22 +818,23 @@ pub fn execute(args: Vec<String>) -> Result<()> {
 
                     let model = resolve_settings_model(&mut s, &id)?;
                     validate_settings_preflight(&command, model, &motor_serial)?;
+                    ensure!(
+                        !(no_auth && write_requires_unit_auth(&command, model, unit_auth)),
+                        "setting requires drive-unit authentication, but --no-auth was specified"
+                    );
                     if command_requires_unit_auth(&command, model, unit_auth) {
-                        ensure!(
-                            !no_auth,
-                            "setting requires drive-unit authentication, but --no-auth was specified"
-                        );
                         let _receipt = s.authenticate_unit_settings(&motor_serial)?;
                     }
 
-                    let val = execute_settings(&mut s, &id, &command)?;
+                    let val = execute_settings(&mut s, &id, &command, Some(&motor_serial))?;
                     Ok((val, model))
                 });
             let stopped = s.normal_stop();
-            let (value, model) =
-                finish_operation(result, stopped.context("PC-link Stop acknowledgement"))?;
-            print_settings_result(&value, &command, model, is_json)?;
-            Ok(())
+            finish_reporting(
+                result,
+                stopped.context("PC-link Stop acknowledgement"),
+                |(value, model)| print_settings_result(value, &command, *model, is_json),
+            )
         }
         Command::Firmware { command } => execute_firmware_command(
             port.as_deref(),
@@ -815,6 +852,149 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 "Bluetooth commands require selecting a Bluetooth port (--port ble:DEVICE_ID)"
             )
         }
+    }
+}
+
+/// Single-quote anything a shell would split or expand (Windows paths with
+/// spaces are common); POSIX shells and PowerShell both accept this form.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:\\".contains(c))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+/// The exact command to resume an interrupted write on the same adapter and slot.
+fn recovery_command(
+    target: &str,
+    port: Option<&str>,
+    slot: Option<u8>,
+    serial: &str,
+    file: &Path,
+    companion: &Path,
+    expect_sha256: Option<&str>,
+    allow_unverified_model: bool,
+) -> String {
+    let mut command = String::from("cranklink");
+    if let Some(port) = port {
+        command.push_str(&format!(" --port {}", shell_quote(port)));
+    }
+    if let Some(slot) = slot {
+        command.push_str(&format!(" --slot {slot}"));
+    }
+    command.push_str(&format!(
+        " -s {serial} firmware flash {target} {} --companion {}",
+        shell_quote(&file.display().to_string()),
+        shell_quote(&companion.display().to_string())
+    ));
+    if let Some(sha256) = expect_sha256 {
+        command.push_str(&format!(" --expect-sha256 {sha256}"));
+    }
+    command.push_str(" --recovery --write");
+    if allow_unverified_model {
+        command.push_str(" --allow-unverified-model");
+    }
+    command
+}
+
+/// The warning for a write that failed after it started. Bluetooth has no
+/// recovery path, so after a `ble-pair` write the command is a wired one.
+fn interrupted_flash_banner(journal: &Path, command: &str, over_ble: bool) -> String {
+    let rule = "=".repeat(80);
+    let recover = if over_ble {
+        "Bluetooth cannot recover the motor. Connect an SM-PCE02 by wire and run:"
+    } else {
+        "To recover, re-run with:"
+    };
+    format!(
+        "\n{rule}\n\
+         CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.\n\
+         DO NOT POWER CYCLE THE MOTOR.\n\
+         Journal preserved at: {}\n\
+         {recover}\n  {command}\n{rule}\n",
+        journal.display()
+    )
+}
+
+/// Entry from the application leaves the bootloader at the application's slot
+/// once 01/C0 is acknowledged, so a failure after that may leave it there. A
+/// failure before it leaves the application running, and the recovery reset
+/// sends the key sequence, so the read-only probe comes first.
+fn bootloader_guidance(port: Option<&str>, slot: u8, failure: &str) -> String {
+    let mut probe = String::from("cranklink");
+    if let Some(port) = port {
+        probe.push_str(&format!(" --port {}", shell_quote(port)));
+    }
+    let mut reset = probe.clone();
+    if slot != 31 {
+        reset.push_str(&format!(" --slot {slot}"));
+    }
+    probe.push_str(" probe");
+    reset.push_str(" firmware probe --target dcas --recovery --reset");
+    format!(
+        "{failure}; nothing was erased or written.\n\
+         The motor may remain in its DCAS bootloader. Check whether its application answers with:\n  {probe}\n\
+         Only if it does not, return it to its application with:\n  {reset}"
+    )
+}
+
+/// A plaintext image has no container checksum, so corruption is undetectable;
+/// a write must be bound to a hash the user verified. Callers compare the hash.
+fn ensure_plaintext_hash(
+    fw: &Firmware,
+    file: &Path,
+    expected: Option<&str>,
+    flag: &str,
+) -> Result<()> {
+    ensure!(
+        fw.metadata.encrypted || expected.is_some(),
+        "{} is a plaintext image without container integrity data; pass {flag} <SHA-256 of the file you verified> to write it",
+        file.display()
+    );
+    Ok(())
+}
+
+fn integrity_label(meta: &crate::firmware::FirmwareMetadata) -> &'static str {
+    if meta.encrypted {
+        "MD5-verified container"
+    } else {
+        "none (plaintext image; corruption cannot be detected)"
+    }
+}
+
+/// `firmware inspect --json`: the image's metadata with its integrity, and
+/// the same under `companion` for a companion validated against it.
+#[derive(serde::Serialize)]
+struct InspectedImage<'a> {
+    #[serde(flatten)]
+    metadata: &'a crate::firmware::FirmwareMetadata,
+    /// `integrity_label` as `md5-verified-container` or `none`.
+    integrity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    companion: Option<Box<InspectedImage<'a>>>,
+}
+
+fn inspect_json<'a>(
+    meta: &'a crate::firmware::FirmwareMetadata,
+    companion: Option<&'a crate::firmware::FirmwareMetadata>,
+) -> InspectedImage<'a> {
+    let image = |metadata: &'a crate::firmware::FirmwareMetadata| InspectedImage {
+        metadata,
+        integrity: if metadata.encrypted {
+            "md5-verified-container"
+        } else {
+            "none"
+        },
+        companion: None,
+    };
+    InspectedImage {
+        companion: companion.map(|companion| Box::new(image(companion))),
+        ..image(meta)
     }
 }
 
@@ -869,8 +1049,9 @@ fn execute_firmware_command(
             decode_to,
         } => {
             let fw = Firmware::load(file)?;
-            if let Some(c) = companion {
-                fw.validate_companion(&Firmware::load(c)?)?;
+            let companion = companion.map(Firmware::load).transpose()?;
+            if let Some(c) = &companion {
+                fw.validate_companion(c)?;
             }
             if let Some(out) = &decode_to {
                 use std::io::Write;
@@ -884,10 +1065,17 @@ fn execute_firmware_command(
                 f.write_all(&fw.data)?;
                 f.sync_all()?;
             }
+            let companion = companion.as_ref().map(|c| &c.metadata);
             if is_json {
-                out_println!("{}", serde_json::to_string_pretty(&fw.metadata)?);
+                out_println!(
+                    "{}",
+                    serde_json::to_string_pretty(&inspect_json(&fw.metadata, companion))?
+                );
             } else {
-                print_firmware_metadata(&fw.metadata, decode_to.as_deref());
+                out_println!(
+                    "{}",
+                    firmware_metadata_text(&fw.metadata, companion, decode_to.as_deref())
+                );
             }
             Ok(())
         }
@@ -900,15 +1088,45 @@ fn execute_firmware_command(
             s.initialize()?;
             match target.to_lowercase().as_str() {
                 "dcas" => {
-                    if !recovery {
-                        let _ = s.normal_start(slot)?;
-                    }
-                    let identity = s.boot_start_at(!recovery, slot)?;
-                    if is_json {
-                        out_println!("{}", serde_json::to_string_pretty(&identity)?);
+                    let application = if !recovery {
+                        let application = s.normal_start(slot)?;
+                        if let Some(expected) = expect_serial {
+                            let checked = hex::decode(expected)
+                                .map_err(anyhow::Error::from)
+                                .and_then(|serial| {
+                                    check_application_serial(&mut s, application.slot, &serial)
+                                })
+                                .context("bootloader not entered");
+                            if let Err(e) = checked {
+                                s.normal_stop()
+                                    .context("serial check failed; PC-link stop failed")?;
+                                return Err(e);
+                            }
+                        }
+                        Some(application)
                     } else {
+                        None
+                    };
+                    let identity = match s.boot_start_at(!recovery, slot) {
+                        Ok(identity) => identity,
+                        Err(e) => {
+                            if let Some(application) = &application {
+                                err_println!(
+                                    "{}",
+                                    bootloader_guidance(
+                                        port,
+                                        application.slot,
+                                        "Bootloader entry did not complete"
+                                    )
+                                );
+                            }
+                            return Err(e);
+                        }
+                    };
+                    if !is_json {
                         out_println!("DCAS Bootloader Probe:");
                         out_println!("  Slot:       {}", identity.slot);
+                        out_println!("  Serial:     {}", hex::encode(identity.serial));
                         out_println!(
                             "  Version:    v{}.{}.{}.{}",
                             identity.version[0],
@@ -919,20 +1137,38 @@ fn execute_firmware_command(
                         out_println!("  Board:      {}", identity.board);
                         out_println!("  Series:     0x{:02X}", identity.series);
                     }
-                    if !recovery || reset {
+                    if let Some(application) = &application {
+                        verify_application_return(&mut s, port, slot, application, "DCAS probe")?;
+                    } else if reset {
                         s.boot_reset()?;
+                    }
+                    // JSON is a success receipt; print it only after the checks pass.
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&identity)?);
+                    } else if application.is_some() {
+                        out_println!("  Status:     Application return verified");
                     }
                 }
                 "rx" => {
                     let before = start_rx_session(&mut s, slot, recovery)?;
-                    let boot = crate::rx::read_boot(&mut s, before.slot)?;
-                    if is_json {
-                        out_println!("{}", serde_json::to_string_pretty(&boot)?);
-                    } else {
+                    if let (false, Some(expected)) = (recovery, expect_serial) {
+                        let checked = hex::decode(expected)
+                            .map_err(anyhow::Error::from)
+                            .and_then(|serial| {
+                                check_application_serial(&mut s, before.slot, &serial)
+                            })
+                            .context("RX update mode not entered");
+                        if let Err(e) = checked {
+                            s.normal_stop()
+                                .context("serial check failed; PC-link stop failed")?;
+                            return Err(e);
+                        }
+                    }
+                    let boot = read_rx_boot_unerased(&mut s, before.slot, recovery, None)?;
+                    if !is_json {
                         out_println!("Renesas RX Bootloader Probe:");
                         out_println!("  Capability: {}", boot.capability_sequence);
                     }
-                    crate::rx::reset_fast(&mut s, before.slot)?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
                     ensure!(
@@ -941,7 +1177,9 @@ fn execute_firmware_command(
                             && after.rx_version == before.rx_version,
                         "application changed after RX probe"
                     );
-                    if !is_json {
+                    if is_json {
+                        out_println!("{}", serde_json::to_string_pretty(&boot)?);
+                    } else {
                         out_println!(
                             "  Status:     {}",
                             if recovery {
@@ -1044,6 +1282,9 @@ fn execute_firmware_command(
                         "source SHA-256 does not match --expect-sha256"
                     );
                 }
+                if write {
+                    ensure_plaintext_hash(&fw, &file, expect_sha256.as_deref(), "--expect-sha256")?;
+                }
 
                 let serial_str = expect_serial.ok_or_else(|| {
                     anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
@@ -1070,16 +1311,44 @@ fn execute_firmware_command(
                 };
                 if let Some(i) = &before {
                     jnl.record("application-before", i)?;
-                    fw.validate_companion_version_for_pair(&comp, parse_version(&i.rx_version)?)?;
+                    let preflight = check_application_serial(&mut s, i.slot, &serial)
+                        .context("bootloader not entered")
+                        .and_then(|()| {
+                            fw.validate_companion_version_for_pair(
+                                &comp,
+                                parse_version(&i.rx_version)?,
+                            )
+                        });
+                    if let Err(e) = preflight {
+                        let e = journal_failure(&mut jnl, "preflight-rejected", e);
+                        let stop = s
+                            .normal_stop()
+                            .context("preflight rejected image; PC-link stop failed");
+                        return finish_operation(Err(e), stop);
+                    }
                 }
-                let boot = s.boot_start_at(!recovery, slot)?;
-                jnl.record("boot-identity", &boot)?;
-                let allow_model = !write || allow_unverified_model;
-                let guard = (|| {
-                    ensure!(
-                        boot.serial.as_slice() == serial.as_slice(),
-                        "live serial differs from --expect-serial"
-                    );
+                let boot = match s.boot_start_at(!recovery, slot) {
+                    Ok(boot) => boot,
+                    Err(e) => {
+                        let e = journal_failure(&mut jnl, "boot-entry-failed", e);
+                        if let Some(i) = &before {
+                            err_println!(
+                                "{}",
+                                bootloader_guidance(
+                                    port,
+                                    i.slot,
+                                    "Bootloader entry did not complete"
+                                )
+                            );
+                        }
+                        return Err(e);
+                    }
+                };
+                // A dry run applies the same model policy as the write it previews.
+                let allow_model = allow_unverified_model;
+                // A failed journal write refuses like the guard: still reset.
+                let guard = jnl.record("boot-identity", &boot).and_then(|()| {
+                    check_serial(&boot.serial, &serial)?;
                     fw.validate_target_with_policy(
                         boot.series,
                         boot.unit,
@@ -1087,24 +1356,65 @@ fn execute_firmware_command(
                         Version(boot.version),
                         allow_model,
                     )
-                })();
+                });
                 let profile = match guard {
                     Ok(p) => p,
                     Err(e) => {
-                        jnl.record("guard-rejected", &format!("{e:#}"))?;
-                        if !recovery {
-                            s.boot_reset()
-                                .context("guard rejected image; application reset failed")?;
+                        let e = journal_failure(&mut jnl, "guard-rejected", e);
+                        if let Some(i) = &before {
+                            let reset = s
+                                .boot_reset()
+                                .context("guard rejected image; application reset failed");
+                            if reset.is_err() {
+                                err_println!(
+                                    "{}",
+                                    bootloader_guidance(
+                                        port,
+                                        i.slot,
+                                        "The bootloader reset was not acknowledged"
+                                    )
+                                );
+                            }
+                            return finish_operation(Err(e), reset);
                         }
                         return Err(e);
                     }
                 };
 
                 if !write {
-                    if !recovery {
-                        s.boot_reset()?;
+                    if let Some(before) = &before {
+                        let returned =
+                            verify_application_return(&mut s, port, slot, before, "DCAS dry run");
+                        let after = returned.map_err(|e| {
+                            journal_failure(&mut jnl, "application-return-failed", e)
+                        })?;
+                        jnl.record("application-return-verified", &after)?;
                     }
                     jnl.record("dry-run-complete", &boot)?;
+                    let needs_hash = !fw.metadata.encrypted && expect_sha256.is_none();
+                    let needs_opt_in = profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified;
+                    if is_json {
+                        out_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "dry_run": true,
+                                "target": "dcas",
+                                "family": profile.family_name,
+                                "verification_tier": profile.verification_tier,
+                                "boot": boot,
+                                "serial": serial_str,
+                                "source_sha256": fw.metadata.source_sha256,
+                                "encrypted": fw.metadata.encrypted,
+                                "flash_state": "unmodified",
+                                "application_return_verified": before.is_some(),
+                                // Each requires_* flag names an option --write must carry.
+                                "requires_expect_sha256": !fw.metadata.encrypted,
+                                "requires_allow_unverified_model": needs_opt_in,
+                            }))?
+                        );
+                        return Ok(());
+                    }
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- Target Bootloader: Verified ({} {:?} v{}.{}.{}.{}, Board {})",
@@ -1118,11 +1428,16 @@ fn execute_firmware_command(
                     );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
+                    out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    if profile.verification_tier
-                        != crate::firmware::VerificationTier::HardwareVerified
-                    {
-                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                    if before.is_some() {
+                        out_println!("- Application Return: Verified");
+                    }
+                    if needs_hash {
+                        out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
+                    }
+                    if needs_opt_in {
+                        out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
                             ">> To execute live flash programming, add the --write flag.\n"
@@ -1135,42 +1450,61 @@ fn execute_firmware_command(
                 let receipt = match s.flash_dcas(&fw.data, &boot, progress_reporter()) {
                     Ok(r) => r,
                     Err(e) => {
-                        jnl.record("uncertain", &format!("{e:#}"))?;
-                        err_println!("\n================================================================================");
-                        err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
-                        err_println!("DO NOT POWER CYCLE THE MOTOR.");
-                        err_println!("Journal preserved at: {}", journal_path.display());
-                        err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash dcas {} --companion {} --recovery --write{}",
+                        let e = journal_failure(&mut jnl, "uncertain", e);
+                        // The bootloader keeps the slot it was entered at; 31 is the recovery default.
+                        let command = recovery_command(
+                            "dcas",
+                            port,
+                            Some(boot.slot).filter(|slot| *slot != 31),
                             serial_str,
-                            file.display(),
-                            companion.display(),
-                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
-                        err_println!("================================================================================\n");
+                            &file,
+                            &companion,
+                            (!fw.metadata.encrypted).then_some(fw.metadata.source_sha256.as_str()),
+                            allow_unverified_model,
+                        );
+                        err_println!(
+                            "{}",
+                            interrupted_flash_banner(&journal_path, &command, false)
+                        );
                         return Err(e);
                     }
                 };
-                jnl.record("finish-and-reset", &receipt)?;
-                let after = s.normal_start(if recovery { None } else { slot })?;
-                let stop = s.normal_stop();
-                jnl.record("application-after", &after)?;
-                stop?;
-                ensure!(
-                    after.dcas_version == fw.metadata.version.to_string(),
-                    "post-flash DCAS version mismatch"
-                );
-                ensure!(
-                    after.rx_version == fw.metadata.compatibility_version.to_string()
-                        || after.rx_version == comp.metadata.version.to_string(),
-                    "post-flash RX version mismatch"
-                );
-                if let Some(before) = before {
-                    ensure!(
-                        before.cargo == after.cargo,
-                        "cargo identity changed after flashing"
-                    );
-                }
-                jnl.record("verified", &after)?;
+                // The transfer has finished: a journal failure must not skip the
+                // application return and verification below.
+                let finished = jnl.record("finish-and-reset", &receipt);
+                let after = match s
+                    .normal_start(if recovery { None } else { slot })
+                    .context("transfer finished, but the application did not return")
+                {
+                    Ok(after) => after,
+                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
+                };
+                verify_flashed_application(
+                    &mut s,
+                    &mut jnl,
+                    finished,
+                    &after,
+                    &serial,
+                    serial_str,
+                    || {
+                        ensure!(
+                            after.dcas_version == fw.metadata.version.to_string(),
+                            "post-flash DCAS version mismatch"
+                        );
+                        ensure!(
+                            after.rx_version == fw.metadata.compatibility_version.to_string()
+                                || after.rx_version == comp.metadata.version.to_string(),
+                            "post-flash RX version mismatch"
+                        );
+                        if let Some(before) = &before {
+                            ensure!(
+                                before.cargo == after.cargo,
+                                "cargo identity changed after flashing"
+                            );
+                        }
+                        Ok(())
+                    },
+                )?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
@@ -1202,6 +1536,9 @@ fn execute_firmware_command(
                         "source SHA-256 differs from --expect-sha256"
                     );
                 }
+                if write {
+                    ensure_plaintext_hash(&fw, &file, expect_sha256.as_deref(), "--expect-sha256")?;
+                }
                 let serial_str = expect_serial.ok_or_else(|| {
                     anyhow::anyhow!("flashing requires motor serial (--expect-serial <12-HEX>)")
                 })?;
@@ -1222,20 +1559,44 @@ fn execute_firmware_command(
                 s.initialize()?;
                 let before = start_rx_session(&mut s, slot, recovery)?;
                 if !recovery {
-                    ensure!(
-                        before.dcas_version == d.metadata.version.to_string(),
-                        "live D version differs from supplied companion; flash D first"
-                    );
+                    let preflight = check_application_serial(&mut s, before.slot, &serial)
+                        .context("bootloader not entered")
+                        .and_then(|()| {
+                            ensure!(
+                                before.dcas_version == d.metadata.version.to_string(),
+                                "live D version differs from supplied companion; flash D first"
+                            );
+                            Ok(())
+                        });
+                    if let Err(e) = preflight {
+                        let e = journal_failure(&mut jnl, "preflight-rejected", e);
+                        let stop = s
+                            .normal_stop()
+                            .context("preflight rejected image; PC-link stop failed");
+                        return finish_operation(Err(e), stop);
+                    }
                 }
                 jnl.record("application-before", &before)?;
-                let boot = s.boot_start(true)?;
-                jnl.record("dcas-identity", &boot)?;
-                let allow_model = !write || allow_unverified_model;
-                let guard = (|| {
-                    ensure!(
-                        boot.serial.as_slice() == serial.as_slice(),
-                        "live serial differs from expected"
-                    );
+                let boot = match s.boot_start(true) {
+                    Ok(boot) => boot,
+                    Err(e) => {
+                        let e = journal_failure(&mut jnl, "boot-entry-failed", e);
+                        err_println!(
+                            "{}",
+                            bootloader_guidance(
+                                port,
+                                before.slot,
+                                "Bootloader entry did not complete"
+                            )
+                        );
+                        return Err(e);
+                    }
+                };
+                // A dry run applies the same model policy as the write it previews.
+                let allow_model = allow_unverified_model;
+                // A failed journal write refuses like the guard: still reset.
+                let guard = jnl.record("dcas-identity", &boot).and_then(|()| {
+                    check_serial(&boot.serial, &serial)?;
                     d.validate_target_with_policy(
                         boot.series,
                         boot.unit,
@@ -1243,18 +1604,57 @@ fn execute_firmware_command(
                         Version(boot.version),
                         allow_model,
                     )
-                })();
-                s.boot_reset()?;
-                let profile = guard?;
+                });
+                let reset = s.boot_reset();
+                if reset.is_err() {
+                    err_println!(
+                        "{}",
+                        bootloader_guidance(
+                            port,
+                            before.slot,
+                            "The bootloader reset was not acknowledged"
+                        )
+                    );
+                }
+                let profile = finish_operation(guard, reset)?;
                 let ready = start_rx_session(&mut s, Some(before.slot), recovery)?;
 
                 if !write {
-                    let rx = crate::rx::read_boot(&mut s, ready.slot)?;
-                    jnl.record("rx-boot", &rx)?;
-                    crate::rx::reset_fast(&mut s, before.slot)?;
+                    let rx = read_rx_boot_unerased(&mut s, ready.slot, recovery, Some(&mut jnl))?;
                     let after = start_rx_session(&mut s, Some(before.slot), recovery)?;
                     s.normal_stop()?;
+                    // Predict the write: it refuses a retry-capable bootloader without the flag.
+                    if let Err(e) =
+                        crate::rx::validate_fast_capabilities(&rx, allow_unverified_model)
+                    {
+                        jnl.record("dry-run-refused", &format!("{e:#}"))?;
+                        return Err(e);
+                    }
                     jnl.record("dry-run-complete", &after)?;
+                    let needs_hash = !fw.metadata.encrypted && expect_sha256.is_none();
+                    let needs_opt_in = profile.verification_tier
+                        != crate::firmware::VerificationTier::HardwareVerified
+                        || rx.retry_capable;
+                    if is_json {
+                        out_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "dry_run": true,
+                                "target": "rx",
+                                "family": profile.family_name,
+                                "verification_tier": profile.verification_tier,
+                                "rx_boot": rx,
+                                "serial": serial_str,
+                                "source_sha256": fw.metadata.source_sha256,
+                                "encrypted": fw.metadata.encrypted,
+                                "flash_state": "unmodified",
+                                // Each requires_* flag names an option --write must carry.
+                                "requires_expect_sha256": !fw.metadata.encrypted,
+                                "requires_allow_unverified_model": needs_opt_in,
+                            }))?
+                        );
+                        return Ok(());
+                    }
                     out_println!("\n[DRY RUN - VALIDATION ONLY]");
                     out_println!(
                         "- RX Bootloader: Verified ({}, Sequence {})",
@@ -1263,12 +1663,13 @@ fn execute_firmware_command(
                     );
                     out_println!("- Motor Serial: Verified ({})", serial_str);
                     out_println!("- Source SHA-256: {}", fw.metadata.source_sha256);
+                    out_println!("- Integrity: {}", integrity_label(&fw.metadata));
                     out_println!("- Flash State: UNMODIFIED (No bytes written)");
-                    if profile.verification_tier
-                        != crate::firmware::VerificationTier::HardwareVerified
-                        || rx.retry_capable
-                    {
-                        out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
+                    if needs_hash {
+                        out_println!(">> Writing this plaintext image also requires --expect-sha256 <SHA-256 of the file you verified>.");
+                    }
+                    if needs_opt_in {
+                        out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
                     } else {
                         out_println!(
                             ">> To execute live flash programming, add the --write flag.\n"
@@ -1286,36 +1687,66 @@ fn execute_firmware_command(
                     progress_reporter(),
                 ) {
                     Ok(r) => r,
+                    Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+                        let e = journal_failure(&mut jnl, "refused-before-erase", e);
+                        let restarted = return_after_rx_refusal(
+                            &mut s,
+                            &e,
+                            before.slot,
+                            recovery,
+                            Some(&mut jnl),
+                        );
+                        return finish_operation(Err(e), restarted);
+                    }
                     Err(e) => {
-                        jnl.record("uncertain", &format!("{e:#}"))?;
-                        err_println!("\n================================================================================");
-                        err_println!("CRITICAL: FLASH WRITE INTERRUPTED. Motor may be in an unbootable recovery state.");
-                        err_println!("DO NOT POWER CYCLE THE MOTOR.");
-                        err_println!("Journal preserved at: {}", journal_path.display());
-                        err_println!("To recover, re-run with:");
-                        err_println!("  cranklink -s {} firmware flash rx {} --companion {} --recovery --write{}",
+                        let e = journal_failure(&mut jnl, "uncertain", e);
+                        let command = recovery_command(
+                            "rx",
+                            port,
+                            slot,
                             serial_str,
-                            file.display(),
-                            companion.display(),
-                            if allow_unverified_model { " --allow-unverified-model" } else { "" });
-                        err_println!("================================================================================\n");
+                            &file,
+                            &companion,
+                            (!fw.metadata.encrypted).then_some(fw.metadata.source_sha256.as_str()),
+                            allow_unverified_model,
+                        );
+                        err_println!(
+                            "{}",
+                            interrupted_flash_banner(&journal_path, &command, false)
+                        );
                         return Err(e);
                     }
                 };
-                jnl.record("finish-and-reset", &receipt)?;
-                let after = s.normal_start(Some(before.slot))?;
-                s.normal_stop()?;
-                jnl.record("application-after", &after)?;
-                ensure!(
-                    after.cargo == before.cargo
-                        && after.dcas_version == d.metadata.version.to_string(),
-                    "cargo or D version changed after RX update"
-                );
-                ensure!(
-                    after.rx_version == fw.metadata.version.to_string(),
-                    "post-flash RX version mismatch"
-                );
-                jnl.record("verified", &after)?;
+                // The transfer has finished: a journal failure must not skip the
+                // application return and verification below.
+                let finished = jnl.record("finish-and-reset", &receipt);
+                let after = match s
+                    .normal_start(Some(before.slot))
+                    .context("transfer finished, but the application did not return")
+                {
+                    Ok(after) => after,
+                    Err(e) => return Err(journal_failure(&mut jnl, "verification-failed", e)),
+                };
+                verify_flashed_application(
+                    &mut s,
+                    &mut jnl,
+                    finished,
+                    &after,
+                    &serial,
+                    serial_str,
+                    || {
+                        ensure!(
+                            after.cargo == before.cargo
+                                && after.dcas_version == d.metadata.version.to_string(),
+                            "cargo or D version changed after RX update"
+                        );
+                        ensure!(
+                            after.rx_version == fw.metadata.version.to_string(),
+                            "post-flash RX version mismatch"
+                        );
+                        Ok(())
+                    },
+                )?;
                 if is_json {
                     out_println!("{}", serde_json::to_string_pretty(&after)?);
                 } else {
@@ -1535,14 +1966,14 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
                 validate_settings_preflight(&command, model, &serial)?;
+                ensure!(
+                    !(cli.no_auth && write_requires_unit_auth(&command, model, cli.unit_auth)),
+                    "setting requires drive-unit authentication, but --no-auth was specified"
+                );
                 if command_requires_unit_auth(&command, model, cli.unit_auth) {
-                    ensure!(
-                        !cli.no_auth,
-                        "setting requires drive-unit authentication, but --no-auth was specified"
-                    );
                     let _receipt = session.authenticate_unit_settings(&serial)?;
                 }
-                let mut val = execute_settings(&mut session, &id, &command)?;
+                let mut val = execute_settings(&mut session, &id, &command, Some(&serial))?;
                 if let Some(obj) = val.as_object_mut() {
                     obj.insert(
                         "ble_routing".to_string(),
@@ -1561,7 +1992,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     Ok(None)
                 }
             }
-            _ => unreachable!(),
+            _ => anyhow::bail!("command is not available over Bluetooth"),
         }
     })();
     #[cfg(target_arch = "wasm32")]
@@ -1580,15 +2011,16 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     };
     let stopped = session.stop();
     let closed = session.close();
-    let result = finish_operation(
-        result,
+    let cleanup = finish_operation(
         stopped.context("BLE PC-link stop was not confirmed"),
+        closed.context("BLE disconnect failed"),
     );
-    let value = finish_operation(result, closed.context("BLE disconnect failed"))?;
-    if let Some(val) = value {
-        out_println!("{}", serde_json::to_string_pretty(&val)?);
-    }
-    Ok(())
+    finish_reporting(result, cleanup, |value| {
+        if let Some(val) = value {
+            out_println!("{}", serde_json::to_string_pretty(val)?);
+        }
+        Ok(())
+    })
 }
 
 fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
@@ -1627,15 +2059,16 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         d.metadata.kind.is_dcas() && m.metadata.kind == FirmwareKind::Renesas,
         "flash ble-pair requires D and M images"
     );
-    let allow_model = !*write || *allow_unverified_model;
+    // A dry run applies the same model policy as the write it previews.
+    let allow_model = *allow_unverified_model;
     if !allow_model {
         ensure!(
             d.metadata.series == 0x23 && d.metadata.unit == 0 && d.metadata.board == Some(1),
             "BLE pair updates support EP800 board 1 only without --allow-unverified-model"
         );
         ensure!(
-            matches!(d.metadata.version.0, [4, 1, 11, 0] | [4, 2, 0, 0] | [4, 3, 0, 0]),
-            "BLE pair updater requires a supported EP800 target version without --allow-unverified-model"
+            crate::firmware::EP800_BLE_TARGET_VERSIONS.contains(&d.metadata.version),
+            "BLE pair updater requires a supported EP800 target version (4.1.11 or 4.2.0) without --allow-unverified-model"
         );
     } else {
         ensure!(
@@ -1659,6 +2092,15 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
             m.metadata.source_sha256.eq_ignore_ascii_case(exp),
             "RX firmware SHA-256 mismatch"
         );
+    }
+    if *write {
+        ensure_plaintext_hash(
+            &d,
+            dcas,
+            expect_dcas_sha256.as_deref(),
+            "--expect-dcas-sha256",
+        )?;
+        ensure_plaintext_hash(&m, rx, expect_rx_sha256.as_deref(), "--expect-rx-sha256")?;
     }
 
     let backup_path = backup.clone().unwrap_or_else(|| {
@@ -1703,6 +2145,8 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         session.set_master_routing(true)?;
     }
 
+    // The wired recovery command while a D or M write is in flight.
+    let mut recovery = None;
     let result = (|| -> Result<serde_json::Value> {
         if reused {
             #[cfg(target_arch = "wasm32")]
@@ -1710,7 +2154,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         } else {
             session.authenticate()?;
         }
-        let (before, _) = ble_checked_start(&mut session, cli.slot, None, Some(serial_str))?;
+        let (before, _) = ble_checked_motor_start(&mut session, cli.slot, Some(serial_str))?;
         ensure!(
             parse_version(&before.dcas_version)? <= d.metadata.version
                 && parse_version(&before.rx_version)? <= m.metadata.version,
@@ -1724,11 +2168,15 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         )?;
 
         let mut link = session.motor_firmware_with_policy(&serial, allow_model)?;
-        let rx_boot = link.enter_rx()?;
+        // enter_rx resets a refusing RX bootloader; also restore normal routing.
+        let rx_boot = match link.enter_rx() {
+            Ok(boot) => boot,
+            Err(e) => return finish_operation(Err(e), link.application_return()),
+        };
         jnl.record("rx-boot-before", &rx_boot)?;
         link.reset_rx()?;
         link.application_return()?;
-        let (checked, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+        let (checked, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
         ensure!(
             checked.cargo == before.cargo
                 && checked.dcas_version == before.dcas_version
@@ -1763,38 +2211,72 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         if !*write {
             link.application_return()?;
             jnl.record("dry-run-complete", &boot)?;
-            out_println!("\n[DRY RUN - VALIDATION ONLY]");
-            out_println!(
-                "- DCAS & RX Bootloader Handshakes: Verified ({})",
-                profile.family_name
-            );
-            out_println!("- Motor Serial: Verified ({})", serial_str);
-            out_println!(
-                "- Pre-Update Settings Backup: Saved ({})",
-                backup_path.display()
-            );
-            out_println!("- Flash State: UNMODIFIED (No bytes written)");
-            if profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified {
-                out_println!(">> To execute live flash programming on {}, add --write --allow-unverified-model.\n", profile.family_name);
-            } else {
-                out_println!(">> To execute live flash programming, add the --write flag.\n");
+            let needs_opt_in =
+                profile.verification_tier != crate::firmware::VerificationTier::HardwareVerified;
+            if !is_json {
+                out_println!("\n[DRY RUN - VALIDATION ONLY]");
+                out_println!(
+                    "- DCAS & RX Bootloader Handshakes: Verified ({})",
+                    profile.family_name
+                );
+                out_println!("- Motor Serial: Verified ({})", serial_str);
+                out_println!(
+                    "- Pre-Update Settings Backup: Saved ({})",
+                    backup_path.display()
+                );
+                out_println!("- DCAS Integrity: {}", integrity_label(&d.metadata));
+                out_println!("- RX Integrity: {}", integrity_label(&m.metadata));
+                out_println!("- Flash State: UNMODIFIED (No bytes written)");
+                for (name, meta, expected, flag) in [
+                    ("D", &d.metadata, expect_dcas_sha256, "--expect-dcas-sha256"),
+                    ("M", &m.metadata, expect_rx_sha256, "--expect-rx-sha256"),
+                ] {
+                    if !meta.encrypted && expected.is_none() {
+                        out_println!(">> Writing the plaintext {name} image also requires {flag} <SHA-256 of the file you verified>.");
+                    }
+                }
+                if needs_opt_in {
+                    out_println!(">> To execute live flash programming on {}, add --write (keeping --allow-unverified-model).\n", profile.family_name);
+                } else {
+                    out_println!(">> To execute live flash programming, add the --write flag.\n");
+                }
             }
             return Ok(serde_json::json!({
                 "transport": "ble",
                 "write": false,
                 "serial": serial_str,
                 "dry_run": true,
+                "family": profile.family_name,
+                "verification_tier": profile.verification_tier,
+                "backup": backup_path,
+                "flash_state": "unmodified",
+                // Each requires_* flag names an option --write must carry.
+                "requires_expect_dcas_sha256": !d.metadata.encrypted,
+                "requires_expect_rx_sha256": !m.metadata.encrypted,
+                "requires_allow_unverified_model": needs_opt_in,
             }));
         }
 
         jnl.record("dcas-destructive-start", &d.metadata)?;
+        // The bootloader keeps the slot it was entered at; 31 is the recovery default.
+        recovery = Some(recovery_command(
+            "dcas",
+            None,
+            Some(boot.slot).filter(|slot| *slot != 31),
+            serial_str,
+            dcas,
+            rx,
+            (!d.metadata.encrypted).then_some(d.metadata.source_sha256.as_str()),
+            allow_model,
+        ));
         let receipt = link.flash_dcas(&d.data, &boot, progress_reporter())?;
+        recovery = None;
         jnl.record("dcas-finish-and-reset", &receipt)?;
         link.application_return()?;
 
         let incomplete_pair = before.rx_version != m.metadata.version.to_string();
         if !incomplete_pair {
-            let (middle, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+            let (middle, _) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
             ensure!(
                 middle.cargo == before.cargo && middle.rx_version == before.rx_version,
                 "identity or RX changed after D operation"
@@ -1811,18 +2293,39 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         } else {
             session.motor_firmware_with_policy(&serial, allow_model)?
         };
-        let boot = link.enter_rx()?;
-        ensure!(
-            boot.version == rx_boot.version
-                && boot.capability_sequence == rx_boot.capability_sequence,
-            "RX boot capability changed before erase"
-        );
+        let boot = match link.enter_rx() {
+            Ok(boot) => boot,
+            Err(e) => return finish_operation(Err(e), link.application_return()),
+        };
+        if boot.version != rx_boot.version
+            || boot.capability_sequence != rx_boot.capability_sequence
+        {
+            // Nothing in M is erased yet; return RX and the gateway to the
+            // application before reporting.
+            let cleanup = link.reset_rx().and_then(|()| link.application_return());
+            return finish_operation(
+                Err(anyhow::anyhow!("RX boot capability changed before erase")),
+                cleanup,
+            );
+        }
         jnl.record("rx-destructive-start", &m.metadata)?;
+        // D answers again, so the wired adapter finds the motor by discovery.
+        recovery = Some(recovery_command(
+            "rx",
+            None,
+            None,
+            serial_str,
+            rx,
+            dcas,
+            (!m.metadata.encrypted).then_some(m.metadata.source_sha256.as_str()),
+            allow_model,
+        ));
         let receipt = link.flash_rx(&m, boot, progress_reporter())?;
+        recovery = None;
         jnl.record("rx-finish-and-reset", &receipt)?;
         link.application_return()?;
 
-        let (after, _) = ble_checked_start(&mut session, None, None, Some(serial_str))?;
+        let (after, after_serial) = ble_checked_motor_start(&mut session, None, Some(serial_str))?;
         ensure!(
             after.cargo == before.cargo,
             "cargo identity changed after pair operation"
@@ -1843,13 +2346,20 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
                 name: None,
                 output: None,
             },
+            None,
         )?;
         jnl.record("settings-after", &settings_after)?;
         ensure!(
             crate::settings::decoded_snapshots_equal(&settings_before, &settings_after),
             "settings changed after firmware operation; inspect backup and journal"
         );
-        jnl.record("verified", &after)?;
+        jnl.record(
+            "verified",
+            &JournaledApplication {
+                identity: &after,
+                serial: Some(&after_serial),
+            },
+        )?;
         Ok(serde_json::json!({
             "transport": "ble",
             "write": true,
@@ -1860,8 +2370,9 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         }))
     })();
 
-    if let Err(e) = &result {
-        jnl.record("uncertain", &format!("{e:#}"))?;
+    let result = result.map_err(|e| journal_failure(&mut jnl, "uncertain", e));
+    if let (Err(_), Some(command)) = (&result, &recovery) {
+        err_println!("{}", interrupted_flash_banner(&journal_path, command, true));
     }
     let stopped = session.stop();
     let closed = session.close();
@@ -1871,28 +2382,33 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
         jnl.record("cleanup-confirmed", &true)?;
     }
     let value = result?;
-    if is_json {
-        out_println!("{}", serde_json::to_string_pretty(&value)?);
-    } else {
-        out_println!("BLE firmware pair flashed successfully:");
-        let app = value.get("application_after");
-        let cargo = app
-            .and_then(|a| a.get("cargo"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
-        let dcas = app
-            .and_then(|a| a.get("dcas_version"))
-            .and_then(|d| d.as_str())
-            .unwrap_or("");
-        let rx = app
-            .and_then(|a| a.get("rx_version"))
-            .and_then(|r| r.as_str())
-            .unwrap_or("");
-        out_println!("  Model Cargo: {}", cargo);
-        out_println!("  DCAS (D):    v{}", dcas);
-        out_println!("  Renesas (M): v{}", rx);
+    if let Some(summary) = ble_pair_summary(&value, is_json)? {
+        out_println!("{summary}");
     }
     Ok(())
+}
+
+/// The closing stdout of `flash ble-pair`. A dry run printed its text report
+/// already and must never read as a flash.
+fn ble_pair_summary(value: &serde_json::Value, is_json: bool) -> Result<Option<String>> {
+    if is_json {
+        return Ok(Some(serde_json::to_string_pretty(value)?));
+    }
+    if value.get("dry_run") == Some(&serde_json::Value::Bool(true)) {
+        return Ok(None);
+    }
+    let app = value.get("application_after");
+    let field = |name: &str| {
+        app.and_then(|a| a.get(name))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
+    Ok(Some(format!(
+        "BLE firmware pair flashed successfully:\n  Model Cargo: {}\n  DCAS (D):    v{}\n  Renesas (M): v{}",
+        field("cargo"),
+        field("dcas_version"),
+        field("rx_version")
+    )))
 }
 
 fn read_ble_passkey(cli: &Cli) -> Result<Option<String>> {
@@ -1935,6 +2451,7 @@ fn ble_firmware_backup(
             name: None,
             output: None,
         },
+        None,
     )?;
     ensure!(
         backup["unavailable"]
@@ -1961,6 +2478,24 @@ fn ble_checked_start(
     expected: Option<&str>,
 ) -> Result<(crate::device::Identity, String)> {
     let id = session.start_component(slot, component)?;
+    ble_checked_serial(session, id, expected)
+}
+
+/// Firmware paths keep the motor gate even with an explicit slot.
+fn ble_checked_motor_start(
+    session: &mut crate::ble::BleSession,
+    slot: Option<u8>,
+    expected: Option<&str>,
+) -> Result<(crate::device::Identity, String)> {
+    let id = session.start(slot)?;
+    ble_checked_serial(session, id, expected)
+}
+
+fn ble_checked_serial(
+    session: &mut crate::ble::BleSession,
+    id: crate::device::Identity,
+    expected: Option<&str>,
+) -> Result<(crate::device::Identity, String)> {
     let serial = crate::device::UnitCommands::command(session, id.slot, 1, 0x3c, &[0], 0x3e)?;
     let serial = hex::encode(crate::device::serial_bytes(&serial)?);
     if let Some(expected) = expected {
@@ -2001,12 +2536,34 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
     }
 }
 
+/// Report a completed operation even when its cleanup fails: a verified
+/// write must still print its receipt and backup path, or a retry would back
+/// up the already changed value as the original.
+fn finish_reporting<T>(
+    result: Result<T>,
+    cleanup: Result<()>,
+    report: impl FnOnce(&T) -> Result<()>,
+) -> Result<()> {
+    let value = match result {
+        Ok(value) => value,
+        Err(error) => return finish_operation(Err(error), cleanup),
+    };
+    finish_operation(
+        report(&value),
+        cleanup
+            .context("the operation completed and its result is shown above, but cleanup failed"),
+    )
+}
+
 fn read_only_command_allowed(command: &Command) -> bool {
     match command {
         Command::Scan { .. } | Command::Units | Command::Probe | Command::Session => true,
+        // A settings dry run only reads; firmware dry runs enter bootloaders.
         Command::Settings { command } => matches!(
             command,
-            SettingsCommand::Read { .. } | SettingsCommand::Schema { .. }
+            SettingsCommand::Read { .. }
+                | SettingsCommand::Schema { .. }
+                | SettingsCommand::Set { dry_run: true, .. }
         ),
         Command::Firmware { command } => matches!(
             command,
@@ -2019,9 +2576,10 @@ fn read_only_command_allowed(command: &Command) -> bool {
     }
 }
 
+/// Commands execute_ble implements; anything else is refused before connecting.
 fn ble_command_allowed(command: &Command) -> bool {
     match command {
-        Command::Probe | Command::Units | Command::Session => true,
+        Command::Probe | Command::Units => true,
         Command::Settings { .. } => true,
         Command::Firmware { command } => matches!(
             command,
@@ -2030,7 +2588,7 @@ fn ble_command_allowed(command: &Command) -> bool {
                 ..
             }
         ),
-        Command::Ble { .. } => true,
+        Command::Ble { command } => matches!(command, BleCommand::TestLink),
         _ => false,
     }
 }
@@ -2165,9 +2723,17 @@ fn command_requires_unit_auth(
     model: crate::settings::SettingsModel,
     explicit_unit_auth: bool,
 ) -> bool {
-    if matches!(command, SettingsCommand::Set { dry_run: true, .. }) {
-        return false;
-    }
+    !matches!(command, SettingsCommand::Set { dry_run: true, .. })
+        && write_requires_unit_auth(command, model, explicit_unit_auth)
+}
+
+/// Whether the write `command` runs, or a dry run previews, needs drive-unit
+/// authentication; a dry run skips it but refuses `--no-auth` as the write does.
+fn write_requires_unit_auth(
+    command: &SettingsCommand,
+    model: crate::settings::SettingsModel,
+    explicit_unit_auth: bool,
+) -> bool {
     if explicit_unit_auth {
         return true;
     }
@@ -2178,11 +2744,7 @@ fn command_requires_unit_auth(
             .any(|spec| spec.name.eq_ignore_ascii_case(name) && spec.oem)
     };
     match command {
-        SettingsCommand::Set {
-            name,
-            dry_run: false,
-            ..
-        } => is_oem_setting(name),
+        SettingsCommand::Set { name, .. } => is_oem_setting(name),
         SettingsCommand::Restore {
             parsed: Some(parsed),
             ..
@@ -2197,6 +2759,28 @@ fn command_requires_unit_auth(
         }),
         _ => false,
     }
+}
+
+/// Settings writes are bound to the unit the user named: auto-selection, a slot
+/// or a model name cannot tell two bikes, or sibling components, apart.
+/// Restores are already bound to the serial in their backup.
+fn require_write_serial(command: &Command, expect_serial: Option<&str>) -> Result<()> {
+    let writes = match command {
+        Command::Settings {
+            command: SettingsCommand::Set { dry_run, .. },
+        } => !dry_run,
+        Command::Settings {
+            command: SettingsCommand::Batch { operations, .. },
+        } => operations
+            .iter()
+            .any(|op| matches!(op, crate::settings::batch::Operation::Set { .. })),
+        _ => false,
+    };
+    ensure!(
+        !writes || expect_serial.is_some(),
+        "settings writes require -s/--expect-serial <SERIAL>; read the serial with probe first"
+    );
+    Ok(())
 }
 
 fn validate_settings_preflight(
@@ -2265,10 +2849,13 @@ fn validate_settings_preflight(
     Ok(())
 }
 
+/// `verified_serial` is the serial checked when the session started; every
+/// set and batch write re-checks it right before its SET.
 fn execute_settings(
     session: &mut dyn crate::device::UnitCommands,
     id: &crate::device::Identity,
     command: &SettingsCommand,
+    verified_serial: Option<&str>,
 ) -> Result<serde_json::Value> {
     let model = resolve_settings_model(session, id)?;
     let serial_raw = session.command(id.slot, 1, 0x3c, &[0], 0x3e);
@@ -2340,23 +2927,7 @@ fn execute_settings(
             dry_run,
         } => {
             if *dry_run {
-                let specs = crate::settings::schema_for_model(model);
-                let spec = specs
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| anyhow::anyhow!("unknown setting: {name}"))?;
-                crate::settings::validate_input(spec, value)?;
-                let current = crate::settings::read_for_model(session, id.slot, name, model)?;
-                crate::settings::validate_current_value(model, spec, &current.value)?;
-                return Ok(serde_json::json!({
-                    "dry_run": true,
-                    "valid": true,
-                    "setting": name,
-                    "current_value": current.value,
-                    "planned_value": value,
-                    "oem": spec.oem,
-                    "unit": spec.unit,
-                }));
+                return crate::settings::dry_run_for_model(session, id.slot, name, value, model);
             }
             let backup_path = backup.clone().unwrap_or_else(|| {
                 PathBuf::from(format!(
@@ -2366,8 +2937,15 @@ fn execute_settings(
                     crate::platform::now_ms()
                 ))
             });
-            let receipt =
-                crate::settings::set_for_model(session, id.slot, name, value, &backup_path, model)?;
+            let receipt = crate::settings::set_for_model_bound(
+                session,
+                id.slot,
+                name,
+                value,
+                &backup_path,
+                model,
+                verified_serial,
+            )?;
             let mut v = serde_json::to_value(receipt)?;
             v["backup_file"] = serde_json::json!(backup_path);
             Ok(v)
@@ -2407,10 +2985,167 @@ fn execute_settings(
             let prefix = backup_prefix
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(format!("batch-{}", crate::platform::now_ms())));
-            crate::settings::batch::run(session, id.slot, operations, &prefix, model)
+            crate::settings::batch::run_bound(
+                session,
+                id.slot,
+                operations,
+                &prefix,
+                model,
+                verified_serial,
+            )
         }
         SettingsCommand::Schema { .. } => unreachable!(),
     }
+}
+
+/// Compare the application's serial with -s: before entering any bootloader,
+/// so a wrong motor is never switched into boot mode, and again after a flash.
+fn check_application_serial(session: &mut Session, slot: u8, expected: &[u8]) -> Result<()> {
+    let live = crate::device::serial_bytes(&session.command(slot, 1, 0x3c, &[0], 0x3e)?)?;
+    check_serial(&live, expected)
+}
+
+/// Name both serials: a motor stuck in its bootloader cannot run `probe`.
+fn check_serial(live: &[u8], expected: &[u8]) -> Result<()> {
+    ensure!(
+        live == expected,
+        "live serial {} differs from --expect-serial {}",
+        hex::encode(live),
+        hex::encode(expected)
+    );
+    Ok(())
+}
+
+/// Reset the DCAS bootloader entered from the application and confirm the
+/// application came back unchanged, with the same restart the write path uses.
+/// Until it answers, the motor may remain in its bootloader at `before.slot`.
+fn verify_application_return(
+    session: &mut Session,
+    port: Option<&str>,
+    slot: Option<u8>,
+    before: &crate::device::Identity,
+    step: &str,
+) -> Result<crate::device::Identity> {
+    let after = session
+        .boot_reset()
+        .context("bootloader reset not acknowledged")
+        .and_then(|()| session.normal_start(slot))
+        .with_context(|| format!("application did not return after {step}"));
+    let after = match after {
+        Ok(after) => after,
+        Err(e) => {
+            err_println!(
+                "{}",
+                bootloader_guidance(
+                    port,
+                    before.slot,
+                    &format!("The application did not return after the {step}")
+                )
+            );
+            return Err(e);
+        }
+    };
+    session.normal_stop()?;
+    ensure!(
+        after.cargo == before.cargo
+            && after.dcas_version == before.dcas_version
+            && after.rx_version == before.rx_version,
+        "application changed after {step}"
+    );
+    Ok(after)
+}
+
+/// `rx::read_boot` for a probe or dry run, neither of which erases, then the
+/// bridge reset; the caller restarts the application. A refusal has already
+/// reset the bridge, so the application is restarted once that reset is
+/// confirmed. Any other entry failure may leave RX in update mode with the
+/// bridge active, a state no reset is validated for, so it is only journaled
+/// and reported, as is a failed reset.
+fn read_rx_boot_unerased(
+    session: &mut Session,
+    slot: u8,
+    recovery: bool,
+    mut jnl: Option<&mut Journal>,
+) -> Result<crate::rx::Boot> {
+    let boot = match crate::rx::read_boot(session, slot) {
+        Ok(boot) => boot,
+        Err(e) if e.is::<crate::rx::RefusedBeforeErase>() => {
+            let e = match jnl.as_deref_mut() {
+                Some(jnl) => journal_failure(jnl, "dry-run-refused", e),
+                None => e,
+            };
+            let restarted = return_after_rx_refusal(session, &e, slot, recovery, jnl);
+            return finish_operation(Err(e), restarted);
+        }
+        Err(e) => {
+            let e = match jnl {
+                Some(jnl) => journal_failure(jnl, "rx-boot-failed", e),
+                None => e,
+            };
+            warn_rx_bridge_unconfirmed(recovery);
+            return Err(e);
+        }
+    };
+    // A failed journal write must not skip the bridge reset.
+    let journaled = match jnl.as_deref_mut() {
+        Some(jnl) => jnl.record("rx-boot", &boot),
+        None => Ok(()),
+    };
+    let reset = crate::rx::reset_fast(session, slot).map(|_| ());
+    let reset = reset.map_err(|e| {
+        warn_rx_bridge_unconfirmed(recovery);
+        match jnl {
+            Some(jnl) => journal_failure(jnl, "rx-reset-failed", e),
+            None => e,
+        }
+    });
+    finish_operation(journaled, reset).map(|()| boot)
+}
+
+fn warn_rx_bridge_unconfirmed(recovery: bool) {
+    err_println!(
+        "Nothing was erased, but the RX boot bridge did not confirm its return to the application."
+    );
+    // The read-only probe needs both application versions, which a recovery
+    // RX application cannot report; only the recovery RX probe reaches it.
+    let check = if recovery {
+        "cranklink firmware probe --target rx --recovery"
+    } else {
+        "cranklink probe"
+    };
+    err_println!("Check the application with `{check}` before retrying.");
+}
+
+/// Return to the application after `rx::RefusedBeforeErase`, as the dry run
+/// does; nothing was erased, so the refusal is not an interrupted write.
+fn return_after_rx_refusal(
+    session: &mut Session,
+    refusal: &anyhow::Error,
+    slot: u8,
+    recovery: bool,
+    jnl: Option<&mut Journal>,
+) -> Result<()> {
+    let reset = refusal
+        .downcast_ref::<crate::rx::RefusedBeforeErase>()
+        .is_some_and(|r| r.reset.is_ok());
+    if !reset {
+        warn_rx_bridge_unconfirmed(recovery);
+        return Ok(());
+    }
+    let after = start_rx_session(session, Some(slot), recovery)
+        .context("RX refused before erase; application restart failed")?;
+    session
+        .normal_stop()
+        .context("RX refused before erase; PC-link stop failed")?;
+    if let Some(jnl) = jnl {
+        // The restarted application's serial is not read here.
+        let application = JournaledApplication {
+            identity: &after,
+            serial: None,
+        };
+        jnl.record("application-after", &application)?;
+    }
+    Ok(())
 }
 
 fn start_rx_session(
@@ -2503,6 +3238,14 @@ fn print_probe_card(
         cargo_bytes.push(0);
     }
     let model_candidates = crate::unit_models::candidates(model_series, model_unit, None, None);
+    // Component sessions report their resolved catalog model in `cargo`.
+    if model_candidates.contains(&cargo) {
+        out_println!("Component Probe:");
+        out_println!("  Model:       {} (Slot {})", cargo, slot);
+        out_println!("  Serial:      {}", serial);
+        out_println!("  Application: v{}", dcas_version.trim_start_matches('v'));
+        return;
+    }
     let resolved = crate::unit_models::identify(model_series, model_unit, None, Some(&cargo_bytes));
     let model_name = if let Some(m) = resolved {
         m.to_string()
@@ -2530,22 +3273,19 @@ fn print_probe_card(
     out_println!("  Renesas (M): {}", rx_str);
 }
 
-fn destination_label(val: i64) -> Option<&'static str> {
-    match val {
-        0 => Some("Japan / Region 0"),
-        1 => Some("Europe / Australia"),
-        2 => Some("Japan / 24 km/h"),
-        3 => Some("Europe / Restricted"),
-        4 => Some("Australia"),
-        5 => Some("US Class 3 (45 km/h)"),
-        _ => None,
-    }
+// Label a destination by the speed range the core enforces for it; the vendor
+// region names are unverified.
+fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<String> {
+    let (minimum, maximum) =
+        crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
+    Some(format!("{}-{} km/h", minimum / 100, maximum / 100))
 }
 
 fn format_setting_value(
     name: &str,
     val: &serde_json::Value,
     specs: &[crate::settings::SettingSpec],
+    model: crate::settings::SettingsModel,
 ) -> String {
     if val.is_null() {
         return "unset".to_string();
@@ -2554,7 +3294,7 @@ fn format_setting_value(
     if let Some(spec) = spec {
         if name.eq_ignore_ascii_case("destination") {
             if let Some(n) = val.as_i64() {
-                if let Some(lbl) = destination_label(n) {
+                if let Some(lbl) = destination_label(model, n) {
                     return format!("{n} ({lbl})");
                 }
             }
@@ -2702,7 +3442,7 @@ fn print_settings_result(
         SettingsCommand::Read { name, output } => {
             if let Some(target) = name {
                 let val = value.get("value").unwrap_or(value);
-                let formatted = format_setting_value(target, val, &specs);
+                let formatted = format_setting_value(target, val, &specs, model);
                 out_println!("{}: {}", target, formatted);
             } else {
                 out_println!("Drive Unit Settings ({}):\n", model.name());
@@ -2712,7 +3452,7 @@ fn print_settings_result(
                     for n in names {
                         if let Some(val_obj) = values_obj.get(n) {
                             let val = val_obj.get("value").unwrap_or(&serde_json::Value::Null);
-                            let formatted = format_setting_value(n, val, &specs);
+                            let formatted = format_setting_value(n, val, &specs, model);
                             out_println!("  {:<32} {}", format!("{n}:"), formatted);
                         }
                     }
@@ -2742,8 +3482,8 @@ fn print_settings_result(
                 let planned = value
                     .get("planned_value")
                     .unwrap_or(&serde_json::Value::Null);
-                let curr_fmt = format_setting_value(name, curr, &specs);
-                let planned_fmt = format_setting_value(name, planned, &specs);
+                let curr_fmt = format_setting_value(name, curr, &specs, model);
+                let planned_fmt = format_setting_value(name, planned, &specs, model);
                 out_println!("[DRY RUN - VALIDATION ONLY]");
                 out_println!("Setting: {}", name);
                 out_println!("  Current:  {}", curr_fmt);
@@ -2762,8 +3502,8 @@ fn print_settings_result(
                     .and_then(|b| b.as_str())
                     .or_else(|| value.get("backup").and_then(|b| b.as_str()))
                     .unwrap_or("");
-                let before_fmt = format_setting_value(setting, before, &specs);
-                let after_fmt = format_setting_value(setting, after, &specs);
+                let before_fmt = format_setting_value(setting, before, &specs, model);
+                let after_fmt = format_setting_value(setting, after, &specs, model);
                 out_println!("Setting updated: {}", setting);
                 out_println!("  Previous: {}", before_fmt);
                 out_println!("  New:      {}", after_fmt);
@@ -2791,10 +3531,13 @@ fn print_settings_result(
     Ok(())
 }
 
-fn print_firmware_metadata(
+/// `firmware inspect` text output; a validated companion adds its integrity
+/// and SHA-256.
+fn firmware_metadata_text(
     meta: &crate::firmware::FirmwareMetadata,
+    companion: Option<&crate::firmware::FirmwareMetadata>,
     decode_to: Option<&std::path::Path>,
-) {
+) -> String {
     let kind_str = match meta.kind {
         FirmwareKind::DcasX => "DCASX",
         FirmwareKind::Dcas2i => "DCAS2i",
@@ -2808,19 +3551,33 @@ fn print_firmware_metadata(
         ),
         None => format!("Series 0x{:02X}, Unit 0x{:02X}", meta.series, meta.unit),
     };
-    out_println!("Firmware Image Metadata:");
-    out_println!("  Kind:                {}", kind_str);
-    out_println!(
-        "  Version:             v{} (Compatibility: v{})",
-        meta.version,
-        meta.compatibility_version
-    );
-    out_println!("  Target Board/Series: {}", board_str);
-    out_println!("  Checksum:            0x{:02X}", meta.checksum);
-    out_println!("  Source SHA-256:      {}", meta.source_sha256);
+    let mut lines = vec![
+        "Firmware Image Metadata:".to_owned(),
+        format!("  Kind:                {}", kind_str),
+        format!(
+            "  Version:             v{} (Compatibility: v{})",
+            meta.version, meta.compatibility_version
+        ),
+        format!("  Target Board/Series: {}", board_str),
+        format!("  Checksum:            0x{:02X}", meta.checksum),
+        format!("  Integrity:           {}", integrity_label(meta)),
+        format!("  Source SHA-256:      {}", meta.source_sha256),
+    ];
     if let Some(out) = decode_to {
-        out_println!("  Decoded Output:      {}", out.display());
+        lines.push(format!("  Decoded Output:      {}", out.display()));
     }
+    // After the image's own lines, so each hash sits with its file.
+    if let Some(companion) = companion {
+        lines.push(format!(
+            "  Companion Integrity: {}",
+            integrity_label(companion)
+        ));
+        lines.push(format!(
+            "  Companion SHA-256:   {}",
+            companion.source_sha256
+        ));
+    }
+    lines.join("\n")
 }
 
 fn print_adapter_status(power: &crate::device::PowerInfo) {
@@ -2867,6 +3624,54 @@ impl Journal {
     }
 }
 
+/// A returned application identity as journaled, with the serial it
+/// reported in the same session; `None` when that serial was not confirmed.
+#[derive(serde::Serialize)]
+struct JournaledApplication<'a> {
+    #[serde(flatten)]
+    identity: &'a crate::device::Identity,
+    serial: Option<&'a str>,
+}
+
+/// The wired DCAS and RX flashes after the transfer `finished`: check the
+/// returned application's serial, stop its PC-link and journal it as
+/// application-after, then run `checks` and journal verified. Each record
+/// names the serial only once it matched.
+fn verify_flashed_application(
+    session: &mut Session,
+    jnl: &mut Journal,
+    finished: Result<()>,
+    after: &crate::device::Identity,
+    serial: &[u8],
+    serial_str: &str,
+    checks: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let serial_check = check_application_serial(session, after.slot, serial);
+    let stop = session.normal_stop();
+    let application = JournaledApplication {
+        identity: after,
+        serial: serial_check.is_ok().then_some(serial_str),
+    };
+    let journaled = finished.and_then(|()| jnl.record("application-after", &application));
+    let verified = serial_check
+        .and_then(|()| checks())
+        .map_err(|e| journal_failure(jnl, "verification-failed", e))
+        .and_then(|()| {
+            journaled.context("transfer finished and verified, but the flash journal is incomplete")
+        });
+    finish_operation(verified, stop)?;
+    jnl.record("verified", &application)
+        .context("flash verified, but the flash journal is incomplete")
+}
+
+/// Journal a failed step; a journal error must never replace it.
+fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyhow::Error {
+    match jnl.record(stage, &format!("{error:#}")) {
+        Ok(()) => error,
+        Err(j) => error.context(format!("journal entry '{stage}' was not written: {j:#}")),
+    }
+}
+
 #[cfg(test)]
 mod cli_tests {
     use super::*;
@@ -2888,6 +3693,882 @@ mod cli_tests {
     }
 
     #[test]
+    fn application_serial_is_checked_before_bootloader_entry() {
+        use crate::device::tests::{frame, scripted};
+        let query = frame(0x48, &[13, 1, 0x3c, 0]);
+        let reply = frame(0x48, &[0, 1, 0x3e, 1, 2, 3, 4, 5, 6, 0xff]);
+        let (mut session, steps) = scripted(vec![(query.clone(), reply.clone())]);
+        check_application_serial(&mut session, 13, &[1, 2, 3, 4, 5, 6]).unwrap();
+        assert!(steps.borrow().is_empty());
+        let (mut session, _) = scripted(vec![(query, reply)]);
+        let error = check_application_serial(&mut session, 13, &[9, 9, 9, 9, 9, 9]).unwrap_err();
+        assert!(format!("{error:#}").contains("differs from --expect-serial"));
+    }
+
+    #[test]
+    fn a_bootloader_serial_mismatch_names_the_live_serial() {
+        // A motor stuck in its bootloader reports its serial only here and in probe.
+        let boot = crate::device::BootIdentity {
+            slot: 31,
+            version: [4, 2, 0, 0],
+            board: 1,
+            series: 0x23,
+            unit: 0,
+            serial: [1, 2, 3, 4, 5, 6],
+        };
+        check_serial(&boot.serial, &[1, 2, 3, 4, 5, 6]).unwrap();
+        assert_eq!(
+            check_serial(&boot.serial, &[0; 6]).unwrap_err().to_string(),
+            "live serial 010203040506 differs from --expect-serial 000000000000"
+        );
+    }
+
+    /// The DCAS bootloader reset, then discovery and a PC-link start at slot
+    /// 13 reading cargo 00-CRG, D 4.2.0 and the given M version, then the stop.
+    fn application_return_script(
+        rx: [u8; 3],
+    ) -> Vec<(crate::protocol::Frame, crate::protocol::Frame)> {
+        use crate::device::tests::frame;
+        let idle = frame(0x88, &[0x70, 0, 0, 0x78]);
+        let mut script = vec![
+            (frame(0x88, &[0x28, 0, 0, 0]), frame(0x88, &[0x31])),
+            (frame(3, &[0x20]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+            (frame(0x1d, &[0]), frame(0x3d, &[0, 0])),
+            (frame(0x1b, &[]), frame(0x3b, &[0, 0x20, 0, 0])),
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (
+                frame(0x48, &[13, 1, 0x1c, 0]),
+                frame(0x48, &[0, 1, 0x1e, 0x23, 0]),
+            ),
+            (frame(4, &[]), frame(0x24, &[0xe0])),
+            (frame(0x48, &[13, 0x32, 0x10, 1, 0, 0, 0]), idle.clone()),
+        ];
+        for (index, key) in [
+            [0xa2, 0x2b],
+            [0x30, 0x0e],
+            [0x7a, 0x4d],
+            [0x62, 0x2b],
+            [0x85, 0xb4],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            script.push((
+                frame(0x48, &[13, 0x32, 0x30, key[0], key[1], 0, 0]),
+                if index == 4 {
+                    frame(0x48, &[0, 0x32, 0x12, 1])
+                } else {
+                    idle.clone()
+                },
+            ));
+        }
+        script.extend([
+            (
+                frame(0x48, &[13, 0x16, 0x7c, 0]),
+                frame(
+                    0x48,
+                    &[0, 0x16, 0x7e, b'0', b'0', b'-', b'C', b'R', b'G', 0],
+                ),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x2c, 0]),
+                frame(0x48, &[0, 1, 0x2e, 0x42, 0, 0]),
+            ),
+            (
+                frame(0x48, &[13, 1, 0x84, 1]),
+                frame(0x48, &[0, 1, 0x86, rx[0], rx[1], rx[2]]),
+            ),
+            (
+                frame(0x48, &[13, 0x32, 0x10, 0, 0, 0, 0]),
+                frame(0x48, &[0, 0x32, 0x12, 0]),
+            ),
+        ]);
+        script
+    }
+
+    #[test]
+    fn dcas_dry_run_requires_the_same_application_back() {
+        use crate::device::tests::scripted;
+        let before = crate::device::Identity {
+            slot: 13,
+            cargo: "00-CRG".into(),
+            dcas_version: "4.2.0.0".into(),
+            rx_version: "4.1.11.0".into(),
+        };
+        let (mut session, steps) = scripted(application_return_script([0x41, 11, 0]));
+        let after =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap();
+        assert_eq!(after.rx_version, before.rx_version);
+        assert!(steps.borrow().is_empty());
+        // A different M version after the reset is not the same application.
+        let (mut session, _) = scripted(application_return_script([0x41, 10, 0]));
+        let error =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("application changed after DCAS dry run"),
+            "{error:#}"
+        );
+        // No motor answers discovery after the reset: it may still be in boot.
+        let mut script = application_return_script([0x41, 11, 0]);
+        script.truncate(5);
+        script[4].1 = crate::device::tests::frame(0x3b, &[0, 0, 0, 0]);
+        let (mut session, steps) = scripted(script);
+        let error =
+            verify_application_return(&mut session, None, Some(13), &before, "DCAS dry run")
+                .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("application did not return after DCAS dry run"),
+            "{error:#}"
+        );
+        assert!(steps.borrow().is_empty());
+    }
+
+    #[test]
+    fn ble_pair_dry_run_needs_the_opt_in_for_unverified_models() {
+        // Synthetic plaintext EP600 (30/00) D and M images; refused offline.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x44, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x30, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x44, 0, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x44, 0, 0, 1]);
+        m[14..19].copy_from_slice(&[0x30, 0, 0x44, 0, 0]);
+        m[126..].copy_from_slice(b"et");
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-ble-pair-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        // An absent simulator socket: never a radio scan, and the opt-in run
+        // fails at connect with its journal and backup kept in `dir`.
+        let port = format!("ble-sim:{}", dir.join("absent.sock").display());
+        let args = |extra: &[&str]| {
+            let mut args = vec![
+                "cranklink".to_string(),
+                "--port".into(),
+                port.clone(),
+                "-s".into(),
+                "010203040506".into(),
+                "firmware".into(),
+                "flash".into(),
+            ];
+            args.extend(extra.iter().map(|s| s.to_string()));
+            args.extend([
+                "ble-pair".into(),
+                "--dcas".into(),
+                d_path.display().to_string(),
+                "--rx".into(),
+                m_path.display().to_string(),
+                "--journal".into(),
+                dir.join("pair.jsonl").display().to_string(),
+                "--backup".into(),
+                dir.join("pair.json").display().to_string(),
+            ]);
+            args
+        };
+        let error = execute(args(&[])).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("without --allow-unverified-model"),
+            "{error:#}"
+        );
+        // With the opt-in it gets past the model policy (and then fails to connect).
+        let error = execute(args(&["--allow-unverified-model"])).unwrap_err();
+        assert!(
+            !format!("{error:#}").contains("without --allow-unverified-model"),
+            "{error:#}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ble_pair_dry_run_never_reports_a_flash() {
+        let dry_run = serde_json::json!({"transport": "ble", "write": false, "dry_run": true});
+        // Text mode printed the dry-run report already; nothing may follow it.
+        assert_eq!(ble_pair_summary(&dry_run, false).unwrap(), None);
+        let json = ble_pair_summary(&dry_run, true).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            dry_run
+        );
+        let written = serde_json::json!({
+            "write": true,
+            "application_after": {"cargo": "00-CRG", "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0"},
+        });
+        assert_eq!(
+            ble_pair_summary(&written, false).unwrap().unwrap(),
+            "BLE firmware pair flashed successfully:\n  Model Cargo: 00-CRG\n  \
+             DCAS (D):    v4.2.0.0\n  Renesas (M): v4.1.11.0"
+        );
+    }
+
+    #[test]
+    fn ble_pair_refuses_an_unanalysed_ep800_target_offline() {
+        // Synthetic plaintext EP800 (23/00) D4.3.0: live BLE entry does not
+        // admit 4.3.0, so the pair would fail after writing D.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x43, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x23, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x41, 11, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x41, 11, 0, 1]);
+        m[14..19].copy_from_slice(&[0x23, 0, 0x41, 11, 0]);
+        m[126..].copy_from_slice(b"et");
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-ble-target-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        let port = format!("ble-sim:{}", dir.join("absent.sock").display());
+        // A regressed gate gets further; keep its journal and backup in `dir`.
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                &port,
+                "-s",
+                "010203040506",
+                "firmware",
+                "flash",
+                "ble-pair",
+                "--dcas",
+                &d_path.display().to_string(),
+                "--rx",
+                &m_path.display().to_string(),
+                "--journal",
+                &dir.join("pair.jsonl").display().to_string(),
+                "--backup",
+                &dir.join("pair.json").display().to_string(),
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("supported EP800 target version"),
+            "{error:#}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_reports_the_integrity_of_the_image_and_its_companion() {
+        let meta = |kind, encrypted, sha: &str| crate::firmware::FirmwareMetadata {
+            kind,
+            version: Version([4, 2, 0, 0]),
+            compatibility_version: Version([4, 1, 11, 0]),
+            series: 0x23,
+            unit: 0,
+            board: Some(1),
+            encrypted,
+            source_bytes: 128,
+            decoded_bytes: 128,
+            source_sha256: sha.into(),
+            decoded_sha256: sha.into(),
+            checksum: 0,
+        };
+        let d = meta(FirmwareKind::DcasX, true, "d0");
+        let m = meta(FirmwareKind::Renesas, false, "m0");
+
+        let alone = serde_json::to_value(inspect_json(&d, None)).unwrap();
+        assert_eq!(alone["integrity"], "md5-verified-container");
+        // Existing metadata fields stay at the top level.
+        assert_eq!(
+            (&alone["kind"], &alone["source_sha256"]),
+            (&"dcas-x".into(), &"d0".into())
+        );
+        assert!(alone.get("companion").is_none());
+        let pair = serde_json::to_value(inspect_json(&d, Some(&m))).unwrap();
+        assert_eq!(pair["integrity"], "md5-verified-container");
+        assert_eq!(pair["companion"]["integrity"], "none");
+        assert_eq!(pair["companion"]["source_sha256"], "m0");
+
+        let text = firmware_metadata_text(&d, Some(&m), None);
+        // Each hash sits with its own file's lines.
+        assert!(
+            text.ends_with(
+                "  Integrity:           MD5-verified container\n  Source SHA-256:      d0\n  \
+                 Companion Integrity: none (plaintext image; corruption cannot be detected)\n  \
+                 Companion SHA-256:   m0"
+            ),
+            "{text}"
+        );
+        assert!(!firmware_metadata_text(&d, None, None).contains("Companion"));
+    }
+
+    #[test]
+    fn plaintext_images_are_written_only_with_a_verified_hash() {
+        // Synthetic plaintext EP800 (23/00) D4.2.0 and M4.1.11: hardware-verified
+        // model, so only the missing container checksum can refuse them offline.
+        let mut d = vec![0xff; 128];
+        d[16..19].copy_from_slice(&[0x42, 0, 0]);
+        d[24..28].copy_from_slice(&128u32.to_le_bytes());
+        d[40..44].copy_from_slice(&[0x23, 0, 4, 1]);
+        d[47..50].copy_from_slice(&[0x41, 11, 0]);
+        d[126..].copy_from_slice(b"et");
+        let mut m = vec![0xff; 128];
+        m[..4].copy_from_slice(&128u32.to_le_bytes());
+        m[8..12].copy_from_slice(&[0x41, 11, 0, 1]);
+        m[14..19].copy_from_slice(&[0x23, 0, 0x41, 11, 0]);
+        m[126..].copy_from_slice(b"et");
+        let (d_sha, m_sha) = (
+            Firmware::from_bytes(&d).unwrap().metadata.source_sha256,
+            Firmware::from_bytes(&m).unwrap().metadata.source_sha256,
+        );
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-integrity-gate-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (d_path, m_path) = (dir.join("D.bin"), dir.join("M.bin"));
+        std::fs::write(&d_path, d).unwrap();
+        std::fs::write(&m_path, m).unwrap();
+        let file = |path: &Path| path.display().to_string();
+        // The journal opens after every offline check and just before the
+        // transport, whose socket does not exist; it shows how far a run got.
+        let flash = |port: &str, mut command: Vec<String>, journal: &str| {
+            let journal = dir.join(journal);
+            command.extend(["--journal".into(), file(&journal)]);
+            let mut args: Vec<String> = [
+                "cranklink",
+                "--port",
+                port,
+                "-s",
+                "010203040506",
+                "firmware",
+                "flash",
+            ]
+            .map(String::from)
+            .to_vec();
+            args.extend(command);
+            (
+                format!("{:#}", execute(args).unwrap_err()),
+                journal.exists(),
+            )
+        };
+
+        let sim = format!("sim:{}", file(&dir.join("absent.sock")));
+        for (target, image, companion, sha) in [
+            ("dcas", &d_path, &m_path, d_sha.as_str()),
+            ("rx", &m_path, &d_path, m_sha.as_str()),
+        ] {
+            let wired = |extra: &[&str], journal: &str| {
+                let mut command = vec![
+                    target.to_string(),
+                    file(image),
+                    "--companion".into(),
+                    file(companion),
+                ];
+                command.extend(extra.iter().map(|s| s.to_string()));
+                flash(&sim, command, &format!("{target}-{journal}.jsonl"))
+            };
+            let (error, journaled) = wired(&["--write"], "unbound");
+            assert!(
+                error.contains("plaintext") && error.contains("--expect-sha256") && !journaled,
+                "{error}"
+            );
+            // A dry run, or a write bound to the file's hash, passes the gate.
+            for (extra, journal) in [
+                (&[][..], "dry-run"),
+                (&["--write", "--expect-sha256", sha][..], "bound"),
+            ] {
+                let (error, journaled) = wired(extra, journal);
+                assert!(journaled && !error.contains("plaintext"), "{error}");
+            }
+        }
+
+        let ble = format!("ble-sim:{}", file(&dir.join("absent-ble.sock")));
+        let pair = |extra: &[&str], name: &str| {
+            let mut command = vec![
+                "ble-pair".to_string(),
+                "--dcas".into(),
+                file(&d_path),
+                "--rx".into(),
+                file(&m_path),
+                "--backup".into(),
+                file(&dir.join(format!("pair-{name}.json"))),
+                "--write".into(),
+            ];
+            command.extend(extra.iter().map(|s| s.to_string()));
+            flash(&ble, command, &format!("pair-{name}.jsonl"))
+        };
+        let (error, journaled) = pair(&[], "unbound");
+        assert!(
+            error.contains("--expect-dcas-sha256") && !journaled,
+            "{error}"
+        );
+        let (error, journaled) = pair(&["--expect-dcas-sha256", &d_sha], "d-only");
+        assert!(
+            error.contains("--expect-rx-sha256") && !journaled,
+            "{error}"
+        );
+        let (error, journaled) = pair(
+            &["--expect-dcas-sha256", &d_sha, "--expect-rx-sha256", &m_sha],
+            "bound",
+        );
+        assert!(journaled && !error.contains("plaintext"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn firmware_pair_start_keeps_the_motor_gate_for_an_explicit_slot() {
+        use crate::ble::tests::component_mock;
+        // A derailleur answers at slot 4: settings may start it, firmware may not.
+        let (mut session, _) = component_mock(2, 4);
+        assert!(ble_checked_start(&mut session, Some(4), None, None).is_ok());
+        let (mut session, state) = component_mock(2, 4);
+        assert!(ble_checked_motor_start(&mut session, Some(4), None).is_err());
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(_, bytes)| bytes.get(1..4) == Some(&[0x32, 0x10, 1][..])));
+    }
+
+    #[test]
+    fn recovery_command_keeps_the_failing_port_and_slot() {
+        let (d, m) = (Path::new("D.dat"), Path::new("M.dat"));
+        assert_eq!(
+            recovery_command(
+                "dcas",
+                Some("COM3"),
+                Some(13),
+                "010203040506",
+                d,
+                m,
+                None,
+                true
+            ),
+            "cranklink --port COM3 --slot 13 -s 010203040506 firmware flash dcas D.dat \
+             --companion M.dat --recovery --write --allow-unverified-model"
+        );
+        // A plaintext image is written only with its hash; the rerun must carry it.
+        let command = recovery_command("rx", None, None, "010203040506", m, d, Some("ab12"), false);
+        assert_eq!(
+            command,
+            "cranklink -s 010203040506 firmware flash rx M.dat --companion D.dat \
+             --expect-sha256 ab12 --recovery --write"
+        );
+        let spaced = recovery_command(
+            "dcas",
+            Some("COM3"),
+            Some(13),
+            "010203040506",
+            Path::new("C:\\Users\\First Last\\D's.dat"),
+            m,
+            None,
+            true,
+        );
+        assert!(
+            spaced.contains("'C:\\Users\\First Last\\D'\\''s.dat'"),
+            "{spaced}"
+        );
+        // Every hint must parse, as a POSIX shell splits it, into the command it describes.
+        fn shell_split(line: &str) -> Vec<String> {
+            let (mut args, mut current, mut quoted, mut chars) =
+                (Vec::new(), String::new(), false, line.chars().peekable());
+            while let Some(c) = chars.next() {
+                match c {
+                    '\'' => quoted = !quoted,
+                    '\\' if !quoted => current.extend(chars.next()),
+                    ' ' if !quoted => args.push(std::mem::take(&mut current)),
+                    _ => current.push(c),
+                }
+            }
+            args.push(current);
+            args
+        }
+        for line in [command, spaced] {
+            let cli = Cli::try_parse_from(shell_split(&line)).unwrap();
+            assert!(matches!(cli.command, Command::Firmware { .. }), "{line}");
+        }
+    }
+
+    #[test]
+    fn an_interrupted_ble_pair_write_points_to_wired_recovery() {
+        let journal = Path::new("pair.journal.jsonl");
+        let command = recovery_command(
+            "dcas",
+            None,
+            Some(13),
+            "010203040506",
+            Path::new("D.dat"),
+            Path::new("M.dat"),
+            None,
+            false,
+        );
+        let wired = interrupted_flash_banner(journal, &command, false);
+        assert!(
+            wired.starts_with(&format!(
+                "\n{}\nCRITICAL: FLASH WRITE INTERRUPTED.",
+                "=".repeat(80)
+            )),
+            "{wired}"
+        );
+        assert!(wired.contains(
+            "DO NOT POWER CYCLE THE MOTOR.\nJournal preserved at: pair.journal.jsonl\n\
+             To recover, re-run with:\n  cranklink --slot 13 -s 010203040506 firmware flash dcas"
+        ));
+        let ble = interrupted_flash_banner(journal, &command, true);
+        assert!(ble.contains("DO NOT POWER CYCLE THE MOTOR."), "{ble}");
+        assert!(ble.contains(
+            "Bluetooth cannot recover the motor. Connect an SM-PCE02 by wire and run:\n  \
+             cranklink --slot 13 -s 010203040506 firmware flash dcas D.dat --companion M.dat \
+             --recovery --write\n"
+        ));
+    }
+
+    #[test]
+    fn bootloader_guidance_probes_before_resetting_the_retained_slot() {
+        let guidance = bootloader_guidance(Some("usb"), 13, "Bootloader entry did not complete");
+        assert!(
+            guidance
+                .starts_with("Bootloader entry did not complete; nothing was erased or written"),
+            "{guidance}"
+        );
+        // The read-only application probe comes before the recovery reset.
+        let commands: Vec<&str> = guidance
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "cranklink --port usb probe",
+                "cranklink --port usb --slot 13 firmware probe --target dcas --recovery --reset"
+            ]
+        );
+        let cli = Cli::try_parse_from(commands[0].split(' ')).unwrap();
+        assert!(matches!(cli.command, Command::Probe));
+        let cli = Cli::try_parse_from(commands[1].split(' ')).unwrap();
+        assert_eq!(cli.slot, Some(13));
+        // 31 is the recovery default, and the auto port is the default port.
+        let guidance = bootloader_guidance(None, 31, "Bootloader entry did not complete");
+        assert!(guidance.contains("\n  cranklink probe\n"), "{guidance}");
+        assert!(guidance.ends_with("\n  cranklink firmware probe --target dcas --recovery --reset"));
+    }
+
+    #[test]
+    fn a_failed_uncertain_journal_entry_keeps_the_flash_error() {
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-uncertain-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let mut jnl = Journal::new(&path).unwrap();
+        let error = journal_failure(&mut jnl, "uncertain", anyhow::anyhow!("flash write NAK"));
+        assert_eq!(format!("{error:#}"), "flash write NAK");
+        drop(jnl);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(r#""stage":"uncertain""#));
+        // A journal that rejects the write must not hide the flash error.
+        let mut jnl = Journal(std::fs::OpenOptions::new().read(true).open(&path).unwrap());
+        let error = format!(
+            "{:#}",
+            journal_failure(&mut jnl, "uncertain", anyhow::anyhow!("flash write NAK"))
+        );
+        assert!(
+            error.contains("flash write NAK") && error.contains("was not written"),
+            "{error}"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn post_flash_journal_stages_record_the_confirmed_serial() {
+        use crate::device::tests::{frame, scripted_motor};
+        // The flash paths need a live bootloader, so this drives the
+        // post-transfer step both wired flashes share.
+        let after = crate::device::Identity {
+            slot: 13,
+            cargo: "00-CRG".into(),
+            dcas_version: "4.2.0.0".into(),
+            rx_version: "4.1.11.0".into(),
+        };
+        let run = |live: [u8; 6], checks: fn() -> Result<()>| {
+            let path = std::env::temp_dir().join(format!(
+                "cranklink-after-{}-{}",
+                std::process::id(),
+                crate::platform::now_ms()
+            ));
+            let mut reply = vec![0, 1, 0x3e];
+            reply.extend(live);
+            let (mut session, steps) = scripted_motor(
+                13,
+                vec![
+                    (frame(0x48, &[13, 1, 0x3c, 0]), frame(0x48, &reply)),
+                    (
+                        frame(0x48, &[13, 0x32, 0x10, 0, 0, 0, 0]),
+                        frame(0x48, &[0, 0x32, 0x12, 0]),
+                    ),
+                ],
+            );
+            let mut jnl = Journal::new(&path).unwrap();
+            let result = verify_flashed_application(
+                &mut session,
+                &mut jnl,
+                Ok(()),
+                &after,
+                &[1, 2, 3, 4, 5, 6],
+                "010203040506",
+                checks,
+            );
+            // The PC-link is stopped whatever the verdict.
+            assert!(steps.borrow().is_empty());
+            drop(jnl);
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            let stages: Vec<(String, serde_json::Value)> = text
+                .lines()
+                .map(|line| {
+                    let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                    (
+                        record["stage"].as_str().unwrap().into(),
+                        record["data"].clone(),
+                    )
+                })
+                .collect();
+            (result, stages)
+        };
+
+        let (result, stages) = run([1, 2, 3, 4, 5, 6], || Ok(()));
+        result.unwrap();
+        let confirmed = serde_json::json!({"slot": 13, "cargo": "00-CRG",
+            "dcas_version": "4.2.0.0", "rx_version": "4.1.11.0", "serial": "010203040506"});
+        assert_eq!(
+            stages,
+            [
+                ("application-after".into(), confirmed.clone()),
+                ("verified".into(), confirmed)
+            ]
+        );
+
+        // A different motor answered: its identity is journaled, never with
+        // the expected serial, and the checks and verified are never reached.
+        let (result, stages) = run([9, 9, 9, 9, 9, 9], || panic!("checks after a mismatch"));
+        assert!(format!("{:#}", result.unwrap_err()).contains("differs from --expect-serial"));
+        let names: Vec<&str> = stages.iter().map(|(stage, _)| stage.as_str()).collect();
+        assert_eq!(names, ["application-after", "verification-failed"]);
+        assert!(stages[0].1["serial"].is_null() && stages[0].1["slot"] == 13);
+    }
+
+    #[test]
+    fn a_failed_rx_boot_entry_is_journaled_without_a_blind_reset() {
+        use crate::device::tests::{frame, scripted_motor};
+        // RX acknowledges update mode, then the fast bridge's protocol switch
+        // is not confirmed: RX may be in update mode, with no usable reply.
+        let script = vec![
+            (frame(6, &[13]), frame(0x26, &[0])),
+            (frame(0x48, &[13, 1, 0xc0, 13]), frame(0x48, &[0, 1, 0xc2])),
+            (
+                frame(0x48, &[13, 0x32, 0x20, 1]),
+                frame(0x48, &[0, 0x32, 0x22]),
+            ),
+            (frame(3, &[0x60]), frame(0x23, &[0])),
+            (frame(4, &[]), frame(0x24, &[0xa0])),
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-rx-boot-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let mut jnl = Journal::new(&path).unwrap();
+        let (mut session, steps) = scripted_motor(13, script.clone());
+        let error = read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("prepare DCAS fast RX boot bridge"),
+            "{error:#}"
+        );
+        // The script admits no reset or restart after the failure.
+        assert!(steps.borrow().is_empty());
+        drop(jnl);
+        let journal = std::fs::read_to_string(&path).unwrap();
+        assert!(journal.contains(r#""stage":"rx-boot-failed""#), "{journal}");
+        std::fs::remove_file(path).unwrap();
+        // A probe has no journal and sends nothing more either.
+        let (mut session, steps) = scripted_motor(13, script);
+        read_rx_boot_unerased(&mut session, 13, false, None).unwrap_err();
+        assert!(steps.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_unerased_rx_boot_read_resets_the_bridge_despite_the_journal() {
+        use crate::device::tests::{frame, scripted_motor};
+        use crate::rx::tests::fast_probe_script;
+        let path = std::env::temp_dir().join(format!(
+            "cranklink-rx-reset-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        // A journal that rejects the rx-boot entry must not skip the reset.
+        Journal::new(&path).unwrap();
+        let mut jnl = Journal(std::fs::OpenOptions::new().read(true).open(&path).unwrap());
+        let (mut session, steps) = scripted_motor(13, fast_probe_script(0));
+        read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(steps.borrow().is_empty());
+        // The adapter then rejects its return to mode 5: the reset failed.
+        let mut script = fast_probe_script(0);
+        script.last_mut().unwrap().1 = frame(0x27, &[5, 1]);
+        std::fs::remove_file(&path).unwrap();
+        let mut jnl = Journal::new(&path).unwrap();
+        let (mut session, steps) = scripted_motor(13, script);
+        let error = read_rx_boot_unerased(&mut session, 13, false, Some(&mut jnl)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("restore DCAS application after RX session"),
+            "{error:#}"
+        );
+        assert!(steps.borrow().is_empty());
+        drop(jnl);
+        let journal = std::fs::read_to_string(&path).unwrap();
+        assert!(journal.contains(r#""stage":"rx-boot""#), "{journal}");
+        assert!(
+            journal.contains(r#""stage":"rx-reset-failed""#),
+            "{journal}"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn offline_commands_accept_a_bluetooth_port_with_its_options() {
+        // Offline commands never open the port, so its passkey must not fail them.
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                "ble:AA",
+                "--passkey",
+                "123456",
+                "firmware",
+                "inspect",
+                "/nonexistent/fw.dat",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            !format!("{error:#}").contains("require a Bluetooth port"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn ble_sessions_accept_only_commands_execute_ble_implements() {
+        let command = |args: &[&str]| {
+            let mut full = vec!["cranklink"];
+            full.extend_from_slice(args);
+            Cli::try_parse_from(full).unwrap().command
+        };
+        for args in [
+            &["probe"][..],
+            &["units"],
+            &["ble", "test-link"],
+            &["settings", "read"],
+        ] {
+            assert!(ble_command_allowed(&command(args)), "{args:?}");
+        }
+        for args in [&["session"][..], &["ble", "scan"], &["adapter", "status"]] {
+            assert!(!ble_command_allowed(&command(args)), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn usage_errors_are_not_double_prefixed() {
+        let error = execute(
+            ["cranklink", "--port", "a", "--port", "b", "scan"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.starts_with("the argument '--port <PORT>'"),
+            "{message}"
+        );
+        let error = execute(vec!["cranklink".into()]).unwrap_err();
+        assert_eq!(format!("{error:#}"), "a command is required");
+    }
+
+    #[test]
+    fn settings_writes_require_an_expected_serial() {
+        use crate::settings::batch::Operation;
+        let command = |args: &[&str]| {
+            let mut full = vec!["cranklink"];
+            full.extend_from_slice(args);
+            Cli::try_parse_from(full).unwrap().command
+        };
+        let set = command(&["settings", "set", "switch-a-function", "1"]);
+        assert!(require_write_serial(&set, None).is_err());
+        assert!(require_write_serial(&set, Some("010203040506")).is_ok());
+        for args in [
+            &["settings", "set", "lamp", "1", "--dry-run"][..],
+            &["settings", "read"],
+            &["settings", "restore", "backup.json"],
+            &["probe"],
+        ] {
+            assert!(
+                require_write_serial(&command(args), None).is_ok(),
+                "{args:?}"
+            );
+        }
+        let batch = |operations| Command::Settings {
+            command: SettingsCommand::Batch {
+                plan: PathBuf::from("plan.json"),
+                operations,
+                backup_prefix: None,
+            },
+        };
+        let reads = batch(vec![Operation::Read { name: None }]);
+        assert!(require_write_serial(&reads, None).is_ok());
+        let writes = batch(vec![Operation::Set {
+            name: "lamp".into(),
+            value: "1".into(),
+        }]);
+        assert!(require_write_serial(&writes, None).is_err());
+        // Rejected offline, before any transport opens (unless the documented
+        // CRANKLINK_SERIAL is exported, which satisfies the requirement).
+        if std::env::var_os("CRANKLINK_SERIAL").is_some() {
+            return;
+        }
+        let error = execute(
+            [
+                "cranklink",
+                "--port",
+                "sim:/nonexistent",
+                "settings",
+                "set",
+                "lamp",
+                "1",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("--expect-serial"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn read_only_rejects_mutating_commands() {
         for args in [
             vec!["settings", "set", "lamp", "1"],
@@ -2901,6 +4582,7 @@ mod cli_tests {
                 "comp.dat",
             ],
             vec!["adapter", "power-cycle"],
+            vec!["firmware", "probe", "--target", "dcas"],
         ] {
             let mut command = vec!["cranklink", "--read-only"];
             command.extend(args);
@@ -2917,14 +4599,14 @@ mod cli_tests {
             vec!["units"],
             vec!["probe"],
             vec!["settings", "read"],
-            vec!["settings", "schema"],
+            vec!["settings", "schema", "--model", "ep800"],
+            vec!["settings", "set", "lamp", "1", "--dry-run"],
             vec!["firmware", "inspect", "fw.dat"],
         ] {
             let mut command = vec!["cranklink", "--read-only"];
             command.extend(args);
-            if let Ok(cli) = Cli::try_parse_from(command) {
-                assert!(read_only_command_allowed(&cli.command));
-            }
+            let cli = Cli::try_parse_from(command.clone()).unwrap();
+            assert!(read_only_command_allowed(&cli.command), "{command:?}");
         }
     }
 
@@ -3149,6 +4831,7 @@ mod cli_tests {
                 name: None,
                 output: None,
             },
+            None,
         )
         .unwrap();
         assert_eq!(snapshot["identity"]["model_name"], "SM-BMR1");
@@ -3157,6 +4840,35 @@ mod cli_tests {
         assert_eq!(snapshot["identity"]["settings_model"], "SM-BMR1");
         assert_eq!(snapshot["capabilities"]["settings_available"], true);
         assert_eq!(snapshot["values"]["multi-shift-limit.up"]["value"], 2);
+    }
+
+    #[test]
+    fn a_completed_operation_is_reported_even_when_cleanup_fails() {
+        let mut seen = None;
+        let error = finish_reporting(Ok(5), Err(anyhow::anyhow!("stop")), |value| {
+            seen = Some(*value);
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(seen, Some(5));
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("completed") && message.contains("stop"),
+            "{message}"
+        );
+
+        let mut reports = 0;
+        finish_reporting(Ok(5), Ok(()), |_| {
+            reports += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(reports, 1);
+        let error = finish_reporting(Err::<i32, _>(anyhow::anyhow!("write")), Ok(()), |_| {
+            panic!("a failed operation has no result to report")
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "write");
     }
 
     #[test]
@@ -3197,9 +4909,71 @@ mod cli_tests {
                 backup: None,
                 dry_run: true,
             },
+            None,
         )
         .unwrap_err();
         assert!(error.to_string().contains("backup cannot be restored"));
+    }
+
+    #[test]
+    fn settings_writes_recheck_the_serial_verified_at_session_start() {
+        struct Lever;
+        impl crate::device::UnitCommands for Lever {
+            fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
+                Ok(vec![slot, 2, 1])
+            }
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                match (group, command) {
+                    // Another lever now answers on the verified unit's slot.
+                    (1, 0x3c) => Ok(vec![9; 6]),
+                    (4, 0x0c) => Ok(vec![1]),
+                    (4, 0x14) => Ok(vec![0x23, 0xaf]),
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+        let id = crate::device::Identity {
+            slot: 4,
+            cargo: "ST-6770-L".into(),
+            dcas_version: "3.0.0.0".into(),
+            rx_version: "not applicable".into(),
+        };
+        let prefix = std::env::temp_dir().join(format!(
+            "cranklink-cli-bound-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        let backup = prefix.with_extension("json");
+        let operations = serde_json::from_value(serde_json::json!([
+            {"op":"set","name":"switch-a-function","value":1}
+        ]))
+        .unwrap();
+        for command in [
+            SettingsCommand::Set {
+                name: "switch-a-function".into(),
+                value: "1".into(),
+                backup: Some(backup.clone()),
+                dry_run: false,
+            },
+            SettingsCommand::Batch {
+                plan: PathBuf::new(),
+                backup_prefix: Some(prefix.clone()),
+                operations,
+            },
+        ] {
+            let error =
+                execute_settings(&mut Lever, &id, &command, Some("010203040506")).unwrap_err();
+            assert!(format!("{error:#}").contains("refusing write"), "{error:#}");
+        }
+        assert!(!backup.exists());
+        assert!(!PathBuf::from(format!("{}.journal.jsonl", prefix.display())).exists());
     }
 
     #[test]
@@ -3388,45 +5162,80 @@ mod cli_tests {
 
     #[test]
     fn setting_value_formatting() {
-        let specs = crate::settings::schema_for_model(crate::settings::SettingsModel::Ep800Crg);
+        let model = crate::settings::SettingsModel::Ep800Crg;
+        let specs = crate::settings::schema_for_model(model);
         assert_eq!(
-            format_setting_value("destination", &serde_json::json!(1), &specs),
-            "1 (Europe / Australia)"
+            format_setting_value("destination", &serde_json::json!(1), &specs, model),
+            "1 (19-32 km/h)"
         );
         assert_eq!(
-            format_setting_value("destination", &serde_json::json!(0), &specs),
-            "0 (Japan / Region 0)"
+            format_setting_value("destination", &serde_json::json!(0), &specs, model),
+            "0 (15-25 km/h)"
+        );
+        // Destinations without a legacy speed range get no label.
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(2), &specs, model),
+            "2"
+        );
+        let modern = crate::settings::SettingsModel::Ep801;
+        let modern_specs = crate::settings::schema_for_model(modern);
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(5), &modern_specs, modern),
+            "5 (19-45 km/h)"
         );
         assert_eq!(
-            format_setting_value("profile1.boost.torque", &serde_json::json!(85), &specs),
+            format_setting_value("destination", &serde_json::json!(2), &modern_specs, modern),
+            "2 (14-24 km/h)"
+        );
+        assert_eq!(
+            format_setting_value("destination", &serde_json::json!(4), &modern_specs, modern),
+            "4"
+        );
+        assert_eq!(
+            format_setting_value(
+                "profile1.boost.torque",
+                &serde_json::json!(85),
+                &specs,
+                model
+            ),
             "85 Nm"
         );
         assert_eq!(
-            format_setting_value("tire-circumference", &serde_json::json!(2040), &specs),
+            format_setting_value(
+                "tire-circumference",
+                &serde_json::json!(2040),
+                &specs,
+                model
+            ),
             "2040 mm"
         );
         assert_eq!(
-            format_setting_value("lamp", &serde_json::json!(1), &specs),
+            format_setting_value("lamp", &serde_json::json!(1), &specs, model),
             "1 (on)"
         );
         assert_eq!(
-            format_setting_value("lamp", &serde_json::json!(0), &specs),
+            format_setting_value("lamp", &serde_json::json!(0), &specs, model),
             "0 (off)"
         );
         assert_eq!(
-            format_setting_value("maintenance-alert", &serde_json::json!(1), &specs),
+            format_setting_value("maintenance-alert", &serde_json::json!(1), &specs, model),
             "1 (enabled)"
         );
         assert_eq!(
-            format_setting_value("maintenance-alert", &serde_json::json!(0), &specs),
+            format_setting_value("maintenance-alert", &serde_json::json!(0), &specs, model),
             "0 (disabled)"
         );
         assert_eq!(
-            format_setting_value("maintenance-date", &serde_json::Value::Null, &specs),
+            format_setting_value("maintenance-date", &serde_json::Value::Null, &specs, model),
             "unset"
         );
         assert_eq!(
-            format_setting_value("profile1.name", &serde_json::json!("Profile1"), &specs),
+            format_setting_value(
+                "profile1.name",
+                &serde_json::json!("Profile1"),
+                &specs,
+                model
+            ),
             "Profile1"
         );
     }
@@ -3635,6 +5444,8 @@ mod cli_tests {
         assert_eq!(dry_decision.route, "normal");
         assert!(dry_decision.reason.contains("dry-run"));
         assert!(!command_requires_unit_auth(&dry_run_cmd, model, true));
+        // The dry run still refuses --no-auth where the write would.
+        assert!(write_requires_unit_auth(&dry_run_cmd, model, false));
         assert_eq!(plan_ble_routing(None, &Command::Probe).route, "normal");
         assert_eq!(plan_ble_routing(None, &Command::Units).route, "normal");
     }

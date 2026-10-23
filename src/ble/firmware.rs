@@ -244,7 +244,8 @@ impl BleSession {
         let d = self.command(slot, 1, 0x2c, &[0], 0x2e)?;
         if !allow_unverified_model {
             ensure!(
-                matches!(version(&d)?.as_str(), "4.1.10.0" | "4.1.11.0" | "4.2.0.0"),
+                crate::firmware::EP800_BLE_LIVE_VERSIONS
+                    .contains(&crate::firmware::Version::packed(&d)?),
                 "BLE firmware entry supports supported EP800 4.1.10/4.1.11/4.2.0 only without --allow-unverified-model"
             );
         } else {
@@ -285,15 +286,29 @@ impl MotorFirmware<'_> {
         let reply = self.session.wait(|n| {
             n.characteristic == FREE_RESPONSE && n.value.starts_with(&[self.slot, 0x32, 0x22])
         })?;
+        // Any matching acknowledgement may mean RX left its application, so
+        // a truncated one must still block application_return.
+        self.rx_mode = true;
         ensure!(
             reply.value.len() >= 4,
             "truncated RX update-mode acknowledgement"
         );
-        self.rx_mode = true;
         // PCA_UPDATE_SET is acknowledged before the other MCU has restarted.
         // Let RX enter its bootloader before the first capability request.
         sleep(Duration::from_secs(1));
-        crate::rx::read_legacy_boot(self)
+        match crate::rx::read_legacy_boot(self) {
+            Ok(boot) => Ok(boot),
+            // A refusal leaves RX in its bootloader with nothing erased. Reset
+            // it while the relay is healthy so application_return can follow.
+            Err(e) if !self.session.poisoned => match crate::rx::reset_legacy(self) {
+                Ok(()) => {
+                    self.rx_mode = false;
+                    Err(e.context("RX bootloader refused before erase; RX reset sent"))
+                }
+                Err(r) => Err(e.context(format!("RX reset after refusal failed: {r:#}"))),
+            },
+            Err(e) => Err(e),
+        }
     }
     pub fn reset_rx(&mut self) -> Result<()> {
         ensure!(self.rx_mode, "RX mode is not active");
@@ -804,6 +819,76 @@ mod transport_tests {
             s.writes[1],
             (FREE_COMMAND, vec![13, 0xf0, 0, 0x28, 0, 0, 0], false)
         );
+    }
+    #[test]
+    fn refused_rx_bootloader_is_reset_before_application_return() {
+        let free = |value: &[u8]| vec![n(FREE_RESPONSE, value)];
+        // Retry-capable, then zero-version capability replies; both refuse.
+        for capability in [
+            [13, 0xf2, 1, 0x51, 0x20, 7, 2],
+            [13, 0xf2, 0, 0x51, 0, 0, 0],
+        ] {
+            let state = Rc::new(RefCell::new(State::default()));
+            state.borrow_mut().replies.extend([
+                free(&[13, 0x32, 0x22, 0]),
+                free(&capability),
+                free(&[13, 0xf2, 0, 0x31, 0, 0, 0]),
+                vec![n(PCE_RESPONSE, &[0x23, 0])],
+                vec![n(PCE_RESPONSE, &[0x24, 0xa0])],
+            ]);
+            let mut session = session(state.clone());
+            session.master_routing = true;
+            let mut link = link(&mut session, false);
+            link.dcas_mode = false;
+            let error = link.enter_rx().unwrap_err();
+            assert!(
+                format!("{error:#}").contains("refused before erase"),
+                "{error:#}"
+            );
+            assert!(!link.rx_mode);
+            link.application_return().unwrap();
+            assert!(!session.firmware_active);
+            let s = state.borrow();
+            assert_eq!(
+                s.writes[2],
+                (FREE_COMMAND, vec![13, 0xf0, 0, 0x28, 0, 0, 0], false)
+            );
+            assert_eq!(s.writes[3].1, [0, 3, 0x20]);
+            assert_eq!(s.writes.len(), 5);
+        }
+        // A lost capability reply fences the relay: no reset, no normal routing.
+        let state = Rc::new(RefCell::new(State::default()));
+        state
+            .borrow_mut()
+            .replies
+            .push_back(free(&[13, 0x32, 0x22, 0]));
+        let mut session = session(state.clone());
+        session.master_routing = true;
+        let mut link = link(&mut session, false);
+        link.dcas_mode = false;
+        assert!(link.enter_rx().is_err());
+        assert!(link.rx_mode);
+        assert!(link.application_return().is_err());
+        assert_eq!(state.borrow().writes.len(), 2);
+    }
+    #[test]
+    fn truncated_rx_update_acknowledgement_blocks_application_return() {
+        let free = |value: &[u8]| vec![n(FREE_RESPONSE, value)];
+        let state = Rc::new(RefCell::new(State::default()));
+        state.borrow_mut().replies.extend([
+            free(&[13, 0x32, 0x22]),
+            vec![n(PCE_RESPONSE, &[0x23, 0])],
+            vec![n(PCE_RESPONSE, &[0x24, 0xa0])],
+        ]);
+        let mut session = session(state.clone());
+        session.master_routing = true;
+        let mut link = link(&mut session, false);
+        link.dcas_mode = false;
+        let error = link.enter_rx().unwrap_err();
+        assert!(format!("{error:#}").contains("truncated"), "{error:#}");
+        assert!(link.application_return().is_err());
+        assert!(session.firmware_active);
+        assert_eq!(state.borrow().writes.len(), 1);
     }
     #[test]
     fn retry_capable_rx_is_rejected_before_erase() {

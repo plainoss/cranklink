@@ -20,6 +20,25 @@ pub fn read_bounded(
     Ok(data)
 }
 
+/// Make a new file's directory entry durable. sync_all flushes only the
+/// file, so a host crash after the next device write could otherwise lose a
+/// freshly created backup.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub fn sync_parent(path: &std::path::Path) -> std::io::Result<()> {
+    let dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    File::open(dir)?.sync_all()
+}
+
+/// Browser hosts persist entries on fs.sync, and Windows cannot open a
+/// directory as a File.
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+pub fn sync_parent(_: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use serde_json::json;
@@ -178,3 +197,20 @@ mod browser {
 }
 #[cfg(target_arch = "wasm32")]
 pub use browser::{read, read_bounded, File, OpenOptions};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sync_parent_accepts_nested_and_bare_relative_paths() {
+        let file = std::env::temp_dir().join(format!(
+            "cranklink-sync-parent-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::write(&file, b"{}\n").unwrap();
+        super::sync_parent(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        // A bare file name has an empty parent: the current directory.
+        super::sync_parent(std::path::Path::new("backup.json")).unwrap();
+    }
+}

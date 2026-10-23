@@ -3,8 +3,8 @@
  *
  * Instead of forcing the user to manually classify, inspect, dry-run, and flash DCAS (D)
  * and RX (M) chips separately, this module models the drive unit firmware release as a
- * synchronized companion package by default. Single-MCU flashing is relegated to an explicit
- * recovery override.
+ * synchronized companion package by default. Single-MCU flashing is an explicit override
+ * for a checked pair; bootloader recovery is CLI-only.
  */
 
 import type { FirmwareMetadata, InspectedFirmwareFile } from "../types.ts";
@@ -13,8 +13,9 @@ export function classifyFirmwareRole(
   filename: string,
   metadata?: FirmwareMetadata | null,
 ): "dcas" | "rx" | "unknown" {
-  if (metadata?.kind === "DcasX") return "dcas";
-  if (metadata?.kind === "Renesas") return "rx";
+  // Rust serializes FirmwareKind in kebab-case.
+  if (metadata?.kind === "dcas-x" || metadata?.kind === "dcas2i" || metadata?.kind === "dcas2") return "dcas";
+  if (metadata?.kind === "renesas") return "rx";
   const upper = filename.toUpperCase();
   if (upper.includes("-D.") || upper.includes("_D.") || upper.includes("DCAS")) {
     return "dcas";
@@ -123,7 +124,8 @@ export interface SyncFlashPlan {
   journalFiles: string[];
 }
 
-function shellQuote(s: string): string {
+/** Quotes one argument for the terminal's shell-like command parser. */
+export function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
 }
 

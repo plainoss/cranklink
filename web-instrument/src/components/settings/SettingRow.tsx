@@ -204,29 +204,46 @@ const INTL_UNITS: Record<string, string> = {
 
 export function SettingSlider({ name, min, max, step, "data-testid": testId }: SettingSliderProps) {
   const setting = useSetting(name);
+  const noteId = useId();
   const lower = min ?? setting.spec?.userMin ?? 0;
   const upper = max ?? setting.spec?.userMax ?? 100;
   const value = Number.isFinite(setting.numeric) ? Math.min(upper, Math.max(lower, setting.numeric)) : lower;
+  // The thumb cannot show a value past either end, e.g. a speed set by other tools.
+  const outside = Number.isFinite(setting.numeric) && value !== setting.numeric;
   const unit = setting.spec?.displayUnit ?? "";
   const intlUnit = INTL_UNITS[unit];
+  const range = `${setting.format(lower)} to ${setting.format(upper)}`;
   return (
-    <Slider
-      aria-label={intlUnit || !unit ? setting.label : `${setting.label} (${unit})`}
-      value={value}
-      minValue={lower}
-      maxValue={upper}
-      step={step ?? setting.spec?.userStep ?? 1}
-      formatOptions={intlUnit ? { style: "unit", unit: intlUnit } : undefined}
-      onChange={(next) => typeof next === "number" && setting.stage(next)}
-      isDisabled={setting.isDisabled}
-      className="w-full"
-      data-testid={testId}
-    >
-      <Slider.Track>
-        <Slider.Fill />
-        <Slider.Thumb />
-      </Slider.Track>
-    </Slider>
+    <>
+      <Slider
+        aria-label={intlUnit || !unit ? setting.label : `${setting.label} (${unit})`}
+        value={value}
+        minValue={lower}
+        maxValue={upper}
+        step={step ?? setting.spec?.userStep ?? 1}
+        formatOptions={intlUnit ? { style: "unit", unit: intlUnit } : undefined}
+        onChange={(next) => typeof next === "number" && setting.stage(next)}
+        isDisabled={setting.isDisabled}
+        className="w-full"
+        aria-describedby={outside ? noteId : undefined}
+        data-testid={testId}
+      >
+        <Slider.Track>
+          <Slider.Fill />
+          <Slider.Thumb />
+        </Slider.Track>
+      </Slider>
+      {outside && (
+        <p id={noteId} className="flex items-start gap-1.5 text-xs text-amber-800" data-testid={`slider-outside-${name}`}>
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            {`The current value, ${setting.format(setting.numeric)}, is outside `}
+            {min === undefined && max === undefined ? `the range cranklink can write (${range})` : `this slider’s range (${range})`}
+            {`, so the slider stops at ${setting.format(value)}.`}
+          </span>
+        </p>
+      )}
+    </>
   );
 }
 

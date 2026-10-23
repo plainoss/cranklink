@@ -414,7 +414,7 @@ class PatcherInputTests(unittest.TestCase):
             source = Path(directory) / "source.bin"
             output = Path(directory) / "patched.bin"
             source.write_bytes(self.image())
-            command = [str(tool), "-i", str(source), "-o", str(output), "--json"]
+            command = [str(tool), "-i", str(source), "-o", str(output), "--json", "--force"]
             for options, expected in (([], 6000), (["-s", "15"], 1500), (["-s", "45.01"], 4501), (["-s", "65"], 6500), (["-s", "99"], 9900)):
                 stdout = StringIO()
                 with patch.object(sys, "argv", command + options), redirect_stdout(stdout):
@@ -427,6 +427,27 @@ class PatcherInputTests(unittest.TestCase):
                         patcher.main()
                 self.assertEqual(failure.exception.code, 2)
                 self.assertFalse(output.exists())
+
+    def test_cli_refuses_to_replace_an_existing_output_without_force(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.bin"
+            output = Path(directory) / "DUEP800-D.4.2.0.dat"
+            source.write_bytes(self.image())
+            output.write_bytes(b"original stock container")
+            argv = ["patch_motor_speed.py", "-i", str(source), "-o", str(output)]
+            with patch.object(sys, "argv", argv), redirect_stderr(StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    patcher.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertEqual(output.read_bytes(), b"original stock container")
+            stdout, stderr = StringIO(), StringIO()
+            with patch.object(sys, "argv", argv + ["--force", "--json"]), redirect_stdout(stdout), redirect_stderr(stderr):
+                patcher.main()
+            # A .dat output is an encrypted container around the patched image.
+            self.assertEqual(patcher.decode_container(output.read_bytes()), patch_binary(self.image(), 6000)[0])
+            self.assertFalse(json.loads(stdout.getvalue())["physically_tested"])
+            self.assertIn("not been run on a physical motor", stderr.getvalue())
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["DUEP800-D.4.2.0.dat", "source.bin"])
 
     def test_cli_unknown_firmware_fails_without_output(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -450,7 +471,7 @@ class PatcherInputTests(unittest.TestCase):
                     if existing:
                         output.parent.mkdir()
                         output.write_bytes(b"existing artifact")
-                    argv = ["patch_motor_speed.py", "-i", str(source), "-o", str(output), "--verify"]
+                    argv = ["patch_motor_speed.py", "-i", str(source), "-o", str(output), "--verify", "--force"]
                     with patch.object(sys, "argv", argv), patch.object(
                         patcher, "verify_in_emulator", side_effect=RuntimeError("forced verification failure")
                     ):

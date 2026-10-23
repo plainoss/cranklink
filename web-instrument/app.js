@@ -173,8 +173,16 @@ async function rpc(message) {
   Atomics.notify(control, 0);
 }
 async function complete(code, error) {
+  // Persist the command's traces and journals even when closing the port fails.
+  if (error && port) {
+    try {
+      await port.close();
+    } catch (e) {
+      code = 1;
+      print(`Port close failed: ${e.message}\n`, "stderr");
+    }
+  }
   try {
-    if (error && port) await port.close();
     await files.syncAll();
   } catch (e) {
     code = 1;
@@ -210,6 +218,7 @@ function startWorker() {
     if (m.type === "ble-disconnected") {
       const pending = pendingBleDisconnect;
       pendingBleDisconnect = null;
+      if (m.trapped) ready = false;
       if (m.code) pending?.reject(new Error(m.error || "Bluetooth cleanup failed; check the bike before reconnecting."));
       else pending?.resolve();
       return;
@@ -241,17 +250,23 @@ function startWorker() {
   };
   worker.postMessage({ type: "init", shared });
 }
+// The passkey belongs to one gateway; another bike must prompt for its own.
 let cachedBlePasskey = null;
+let cachedBlePasskeyDevice = null;
+let activeBleDevice = null;
 try {
   cachedBlePasskey = sessionStorage.getItem("esteps_ble_passkey");
+  cachedBlePasskeyDevice = sessionStorage.getItem("esteps_ble_passkey_device");
 } catch {}
 
 // The UI registers how to ask the operator; the host owns caching and the timeout.
 let passkeyPrompt = null;
+// The UI registers how to show an unplug of the selected adapter.
+let adapterDisconnectHandler = null;
 const PASSKEY_PROMPT_TIMEOUT_MS = 120000;
 
 async function requestBlePasskey(signal) {
-  if (cachedBlePasskey && /^[0-9]{6}$/.test(cachedBlePasskey)) {
+  if (cachedBlePasskey && cachedBlePasskeyDevice === activeBleDevice && /^[0-9]{6}$/.test(cachedBlePasskey)) {
     return cachedBlePasskey;
   }
   if (!passkeyPrompt) throw new Error("No passkey prompt is available");
@@ -261,15 +276,19 @@ async function requestBlePasskey(signal) {
     throw new Error("Bluetooth authentication cancelled or timed out");
   }
   cachedBlePasskey = value;
+  cachedBlePasskeyDevice = activeBleDevice;
   try {
     sessionStorage.setItem("esteps_ble_passkey", value);
+    sessionStorage.setItem("esteps_ble_passkey_device", activeBleDevice ?? "");
   } catch {}
   return value;
 }
 function clearBlePasskey() {
   cachedBlePasskey = null;
+  cachedBlePasskeyDevice = null;
   try {
     sessionStorage.removeItem("esteps_ble_passkey");
+    sessionStorage.removeItem("esteps_ble_passkey_device");
   } catch {}
 }
 async function withDeviceLock(action) {
@@ -295,26 +314,44 @@ async function withDeviceLock(action) {
     }
   }
 }
-async function adoptPort(next, transport) {
-  if (port) {
-    await releaseSelectedPort();
-  }
-  if (transport === "ble") {
-    await new Promise((resolve, reject) => {
-      navigator.locks.request("cranklink-ble-session", { ifAvailable: true }, async (lock) => {
-        if (!lock) {
-          reject(new Error("Another tab has an active Bluetooth session. Disconnect it first."));
-          return;
-        }
-        await new Promise((release) => {
-          releaseBleSessionLock = release;
-          resolve();
-        });
-      }).catch(reject);
-    });
+async function adoptPort(next, transport, simulator = null) {
+  try {
+    if (port) {
+      try {
+        await releaseSelectedPort();
+      } finally {
+        // The old port is closed, forgotten and unlocked even when cleanup failed.
+        port = null;
+        selectedTransport = null;
+        activeSimulator = null;
+        setSimulatorActive(false);
+      }
+    }
+    if (transport === "ble") {
+      await new Promise((resolve, reject) => {
+        navigator.locks.request("cranklink-ble-session", { ifAvailable: true }, async (lock) => {
+          if (!lock) {
+            reject(new Error("Another tab has an active Bluetooth session. Disconnect it first."));
+            return;
+          }
+          await new Promise((release) => {
+            releaseBleSessionLock = release;
+            resolve();
+          });
+        }).catch(reject);
+      });
+    }
+  } catch (error) {
+    // Never adopted: drop the new device's disconnect listener.
+    await next.forget?.();
+    throw error;
   }
   port = next;
   selectedTransport = transport;
+  // Set only here, after the old port was released under its own setting:
+  // the flag makes host_sleep skip the Rust pacing sleeps.
+  activeSimulator = simulator;
+  setSimulatorActive(!!simulator);
   return { transport, ...port.describe() };
 }
 async function releaseSelectedPort() {
@@ -384,7 +421,7 @@ async function run(line) {
   const command = tokens[0];
   if (command === "help") {
     print(
-      "Browser commands: connect [auto|usb|serial|ble|sim [model]], disconnect, usb-info, ble-info, import, files, download FILE, cat FILE, clear\nRust commands: ble authenticate, ble units, probe, boot-probe, rx-probe, inspect FILE, flash-dcas, flash-rx, power-cycle, settings ...\nUse --help after any Rust command. Firmware, backups, traces and journals live in durable browser storage.\nConnect auto prefers Web Serial on Windows; other platforms use WebUSB. Bluetooth is experimental and explicit: connect ble. Simulator mode: connect sim [model]. The selected transport sets --port webserial, webusb or webble. Supported EP800 motor firmware relay requires --ble-firmware; BLE recovery and radio DFU are unavailable. Connecting and reading settings do not enter firmware mode.\n",
+      "Browser commands: connect [auto|usb|serial|ble|sim [model]], disconnect, usb-info, ble-info, import, files, download FILE, cat FILE, clear\nRust commands: units, probe, settings schema|read|set|restore|batch, firmware inspect|probe|flash dcas|rx|ble-pair, adapter status|power-cycle, ble test-link\nUse --help after any Rust command. Firmware, backups, traces and journals live in durable browser storage.\nConnect auto prefers Web Serial on Windows; other platforms use WebUSB. Bluetooth is experimental and explicit: connect ble. Simulator mode: connect sim [model]. The selected transport sets --port webserial, webusb or webble. Over Bluetooth, only the experimental EP800 `firmware flash ble-pair` relay is available; BLE recovery and radio DFU are not. Connecting and reading settings do not enter firmware mode.\n",
     );
     return { code: 0 };
   }
@@ -397,11 +434,9 @@ async function run(line) {
         if (!DeviceSimulator) throw new Error("The simulator is available in development builds only.");
         const model = tokens[2] || "ep800-crg";
         const sim = new DeviceSimulator({ model, ...activeSimulatorOptions });
-        activeSimulator = sim;
-        setSimulatorActive(true);
         const passkeyPrompt = async () => "000000";
         const next = new WebBleGatt(sim, passkeyPrompt);
-        const info = await adoptPort(next, "sim");
+        const info = await adoptPort(next, "sim", sim);
         print(
           `${JSON.stringify(info, null, 2)}\nSelected sim (${model}). Run probe to open the interface.\n`,
         );
@@ -413,20 +448,18 @@ async function run(line) {
         tokens[1] === "ble"
           ? { transport: "ble", selected: await WebBleGatt.choose() }
           : await requestAdapter(tokens[1] || "auto");
-      if (selected?.isSimulator) {
-        activeSimulator = selected;
-        setSimulatorActive(true);
-      } else {
-        activeSimulator = null;
-        setSimulatorActive(false);
-      }
+      if (transport === "ble") activeBleDevice = selected.id ?? null;
       const next =
         transport === "ble"
           ? new WebBleGatt(selected, requestBlePasskey, clearBlePasskey)
           : transport === "serial"
             ? new WebSerialPort(selected)
             : new WebUsbPort(selected);
-      const info = await adoptPort(next, transport);
+      const info = await adoptPort(
+        next,
+        transport,
+        selected?.isSimulator ? selected : null,
+      );
       print(
         `${JSON.stringify(info, null, 2)}\nSelected ${transport}. Run probe to open the interface.\n`,
       );
@@ -435,10 +468,7 @@ async function run(line) {
   }
   if (command === "disconnect") {
     return withDeviceLock(async () => {
-      cachedBlePasskey = null;
-      try {
-        sessionStorage.removeItem("esteps_ble_passkey");
-      } catch {}
+      clearBlePasskey();
       try {
         if (port) {
           await releaseSelectedPort();
@@ -487,7 +517,7 @@ async function run(line) {
   if (command === "cranklink" || command === "esteps") toolArgs = tokens.slice(1);
   if (
     !toolArgs.some(
-      (argument) => argument === "--port" || argument.startsWith("--port="),
+      (argument) => argument === "--port" || argument.startsWith("--port=") || /^-p(?:$|[=\w])/.test(argument),
     )
   )
     toolArgs = [
@@ -548,6 +578,8 @@ navigator.usb?.addEventListener("disconnect", (event) => {
       "USB disconnected; preserve the journal before recovery.\n",
       "stderr",
     );
+    // The UI shows it once no operation runs.
+    adapterDisconnectHandler?.("USB device disconnected");
   }
 });
 navigator.serial?.addEventListener("disconnect", (event) => {
@@ -557,6 +589,7 @@ navigator.serial?.addEventListener("disconnect", (event) => {
       "Serial disconnected; preserve the journal before recovery.\n",
       "stderr",
     );
+    adapterDisconnectHandler?.("Serial device disconnected");
   }
 });
 
@@ -573,6 +606,9 @@ window.estepsTerminal = {
   selectGranted,
   setPasskeyPrompt: (prompt) => {
     passkeyPrompt = prompt;
+  },
+  setAdapterDisconnectHandler: (handler) => {
+    adapterDisconnectHandler = handler;
   },
   ...(import.meta.env.DEV ? {
     get simulator() {

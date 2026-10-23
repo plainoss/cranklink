@@ -108,7 +108,7 @@ export interface JournalSnapshot {
 }
 
 export interface FirmwareMetadata {
-  kind: "DcasX" | "Renesas" | string;
+  kind: "dcas-x" | "dcas2i" | "dcas2" | "renesas";
   series: number;
   unit: number;
   board?: number | null;
@@ -127,6 +127,19 @@ export interface InspectedFirmwareFile {
   error?: string;
 }
 
+/** The outcome of a non-erasing check, kept on the Firmware view. */
+export interface FirmwareCheckResult {
+  passed: boolean;
+  /** The drive unit the check was bound to. */
+  serial: string;
+  /** Firmware the drive unit reported when the check started. */
+  installed: { dcas: string; rx: string };
+  /** Versions of the checked images. */
+  images: { dcas: string; rx: string };
+  /** Why the check stopped, when it failed. */
+  error?: string;
+}
+
 export interface FirmwarePackageState {
   dcasFile: InspectedFirmwareFile | null;
   rxFile: InspectedFirmwareFile | null;
@@ -135,13 +148,21 @@ export interface FirmwarePackageState {
   dryRunPassed: boolean;
   dryRunSerial: string | null;
   lastFlashReceipt: any | null;
+  /** The running firmware operation: the non-erasing check writes nothing. */
+  operation: "check" | "write" | null;
+  lastCheck: FirmwareCheckResult | null;
 }
 
 export interface MCPApprovalRequest {
   id: string;
   tool: string;
   params: any;
-  diff: Array<{ name: string; label: string; before: any; after: any }>;
+  /** `regulated` rows change legal or factory limits and need the operator's acknowledgment. */
+  diff: Array<{ name: string; label: string; before: any; after: any; regulated: boolean }>;
+  /** The component the write would reach, shown to the operator. */
+  target: { model: string; slot: number; serial: string };
+  /** "Label (value)" for current values cranklink could not write back from a backup. */
+  unwritable: string[];
   resolve: (approved: boolean) => void;
   reject: (err: Error) => void;
 }
@@ -153,7 +174,7 @@ export interface LogEntry {
   text: string;
 }
 
-export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect";
+export type OperationKind = "connect" | "read" | "stage" | "save" | "restore" | "capture" | "firmware" | "disconnect" | "adapter";
 
 /** The latest failure with enough context to say what happened to the bike. */
 export interface OperationFailure {
@@ -162,6 +183,10 @@ export interface OperationFailure {
   error: string;
   /** Settings in write order for a failed save. */
   settings?: string[];
+  /** The staged edits were lost with this failure. */
+  stagedDiscarded?: boolean;
+  /** The staged edits are kept for the next connect to this component. */
+  stagedHeld?: { model: string; serial: string };
 }
 
 export interface Toast {

@@ -35,8 +35,14 @@ pub(crate) fn notice(message: &str) {
     eprintln!("{message}");
 }
 
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
+pub use std::thread::sleep;
 #[cfg(not(target_arch = "wasm32"))]
-pub use std::{thread::sleep, time::Instant};
+pub use std::time::Instant;
+/// Protocol pacing and settle delays are real-time waits on hardware. Unit
+/// tests run against scripted ports that answer immediately, so they skip them.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub fn sleep(_: std::time::Duration) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn now_ms() -> u64 {
@@ -251,15 +257,18 @@ pub fn available_ports() -> Result<Vec<PortInfo>> {
             port_type: format!("{:?}", p.port_type),
         })
         .collect();
-    let devices = native_usb::devices()?;
-    if !devices.is_empty() {
-        ports.push(PortInfo {
+    // A missing USB stack (containers, sandboxes) must not hide serial ports.
+    match native_usb::devices() {
+        Ok(devices) if devices.is_empty() => {}
+        Ok(devices) => ports.push(PortInfo {
             port_name: "usb".into(),
             port_type: format!(
                 "Direct SM-PCE02 FTDI USB ({} device(s); no COM driver required)",
                 devices.len()
             ),
-        });
+        }),
+        // Not a port: report it without listing a "usb" adapter that does not exist.
+        Err(error) => notice(&format!("Direct USB enumeration unavailable: {error:#}")),
     }
     Ok(ports)
 }
