@@ -1,5 +1,23 @@
 # Di2 BLE service-session lock investigation
 
+## Failed hardware validation on 2026-10-23
+
+The merged branch (`1f3d16f`, release binary SHA-256
+`2e3f8d02041a5a645cd7fd99ea25d750bdbeb04a19c137d055e90d86384ef963`)
+still fails physical validation on EW-WU111/BT-DN110. Authentication-only
+`ble test-link` completed and the rider confirmed normal shifting and junction
+button operation. Subsequent `units --stock-only` completed without a read
+timeout, settings operation or optional part/model query, but the rider then
+reported that shifting or the junction button was no longer working. Further
+BLE testing was stopped before a component settings read.
+
+The trace contains master stop `00 32 10 00 11 00 00`, matching receipt
+`00 32 12 00 11 ff ff ...`, followed by gateway stop `00 0c 00` and its
+`2c 00 ...` acknowledgement. A missing read reply is therefore not necessary
+to trigger this hardware failure, and matching stop receipts do not establish
+restored shifting. The offline service-mode/receipt regressions still pass;
+they do not reproduce or validate recovery from this physical failure.
+
 ## Observed on 2026-10-22
 
 The bike used an EW-WU111 wireless unit, EW-RS910 bar-end junction and
@@ -14,11 +32,13 @@ the battery restored normal operation.
 
 ## Evidence and confidence
 
-The strongest explanation for the loss of shifting is a PC-link service session
+The initial explanation for the loss of shifting was a PC-link service session
 remaining active on the battery master. This is an inference, not a direct
 reading of the battery's internal state. The recovery after a battery reset
 supports a volatile session-state problem; it does not independently identify
-the failing protocol step.
+the failing protocol step. The 2026-10-23 result shows that explicit master and
+gateway stop receipts are insufficient; the original cleanup omission alone
+does not explain the remaining failure.
 
 Representative credential-free captured frames:
 

@@ -3,6 +3,16 @@
   "full_topology_validated": false,
   "original_missing_reply_cause_reproduced": false,
   "restored_shifting_validated": false,
+  "hardware_validation": {
+    "date": "2026-10-23",
+    "commit": "1f3d16f60197b5747db4b8409d3a86c635430a45",
+    "authentication_only_physical_check_passed": true,
+    "stock_only_cli_succeeded": true,
+    "master_and_gateway_stop_receipts_received": true,
+    "post_inventory_physical_check_passed": false,
+    "component_settings_read_attempted": false,
+    "original_missing_reply_required_for_failure": false
+  },
   "modeled": [
     "zero-initialized RAM and receive ABI",
     "battery JSRV4 send/queue service",
