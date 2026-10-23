@@ -14,6 +14,10 @@ struct State {
     firmware_4110: bool,
     firmware_4111: bool,
     padded_receipt: bool,
+    series: Option<u8>,
+    unit: u8,
+    params: Option<Vec<u8>>,
+    firmware: Option<[u8; 3]>,
 }
 struct Mock(Rc<RefCell<State>>);
 impl Gatt for Mock {
@@ -64,17 +68,21 @@ impl Gatt for Mock {
         match (bytes[1], bytes[2]) {
             (2, 0x14) => {
                 assert_eq!(&bytes[3..], &[13]);
-                reply.extend([13, 0x23, 0]);
+                reply.extend([13, s.series.unwrap_or(0x23), s.unit]);
             }
             (1, 0x3c) => reply.extend([6, 5, 4, 3, 2, 1, 0xff]),
-            (0x16, 0x7c) => reply.extend(if s.malformed_params {
+            (0x16, 0x7c) => reply.extend(if let Some(params) = &s.params {
+                params.as_slice()
+            } else if s.malformed_params {
                 &b"00-CRG\0\0"[..]
             } else if s.wrong_model {
                 &b"00-STD\0"[..]
             } else {
                 &b"00-CRG\0"[..]
             }),
-            (1, 0x2c) => reply.extend(if s.firmware_4110 {
+            (1, 0x2c) => reply.extend(if let Some(firmware) = s.firmware {
+                firmware
+            } else if s.firmware_4110 {
                 [0x41, 10, 0]
             } else if s.firmware_4111 {
                 [0x41, 11, 0]
@@ -369,4 +377,125 @@ fn legacy_family_authentication_accepts_other_firmware_versions() {
     assert_eq!(auth_writes(&state, 0xd8).len(), 1);
     assert_eq!(auth_writes(&state, 0xe0).len(), 3);
     assert!(!state.borrow().writes.iter().any(|p| p[1] == 0x33));
+}
+
+#[test]
+fn ble_e6000_family_selects_authentication_from_live_identity_and_version() {
+    for (series, params, firmware, required) in [
+        (0x08, [0; 7], [0x33, 0, 0], false),
+        (0x08, [0; 7], [0x34, 0, 0], false),
+        (0x08, [0; 7], [0x35, 0, 0], false),
+        (0x0a, [0; 7], [0x34, 0, 0], false),
+        (0x0c, [0, 0x10, 0, 0, 0, 0, 0], [0x34, 7, 0], false),
+        (0x0c, [1, 0, 0, 0, 0, 0, 0], [0x35, 0, 0], false),
+        (0x0c, [5, 0, 0, 0, 0, 0, 0], [0x35, 0, 0], false),
+        (0x15, [0, 0x20, 0, 0, 0, 0, 0], [0x33, 0, 0], false),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x33, 0, 0], false),
+        (0x15, [0, 0x20, 0, 0, 0, 0, 0], [0x34, 0, 0], true),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x34, 0, 0], true),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x35, 7, 0], true),
+    ] {
+        let (mut session, state) = session();
+        {
+            let mut state = state.borrow_mut();
+            state.series = Some(series);
+            state.params = Some(params.to_vec());
+            state.firmware = Some(firmware);
+        }
+        let receipt = session.authenticate_unit_settings("060504030201").unwrap();
+        assert!(!session.poisoned);
+        let writes = state.borrow().writes.clone();
+        assert!(!writes.iter().any(|p| p[1] == 0x33));
+        assert_eq!(
+            writes.iter().any(|p| p[1..3] == [0x16, 0x7c]),
+            !matches!(series, 0x08 | 0x0a)
+        );
+        assert!(writes.iter().any(|p| p[1..3] == [1, 0x3c]));
+        assert!(writes.iter().any(|p| p[1..3] == [1, 0x2c]));
+        if required {
+            assert_eq!(receipt["protocol"], "legacy");
+            let expected_key = hex::decode(fixture()["auth_key_hex"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                auth_writes(&state, 0xd8),
+                vec![[vec![13, 0x16, 0xd8], expected_key].concat()]
+            );
+            assert_eq!(auth_writes(&state, 0xe0).len(), 3);
+        } else {
+            assert_eq!(receipt["unit_authentication_required"], false);
+            assert!(auth_writes(&state, 0xd8).is_empty());
+            assert!(auth_writes(&state, 0xe0).is_empty());
+        }
+        assert!(session.authenticate_unit_settings("060504030201").is_err());
+        assert_eq!(state.borrow().writes.len(), writes.len());
+    }
+}
+
+#[test]
+fn ble_e6000_family_checks_serial_and_active_session_even_without_authentication() {
+    for (series, params) in [
+        (0x08, vec![]),
+        (0x0a, vec![]),
+        (0x0c, vec![0, 0x10, 0, 0, 0, 0, 0]),
+        (0x15, vec![0, 0x20, 0, 0, 0, 0, 0]),
+    ] {
+        for inactive in [false, true] {
+            let (mut session, state) = session();
+            state.borrow_mut().series = Some(series);
+            state.borrow_mut().params = Some(params.clone());
+            state.borrow_mut().firmware = Some([0x33, 0, 0]);
+            if inactive {
+                session.linked_slot = None;
+            }
+            assert!(session.authenticate_unit_settings("FFFFFFFFFFFF").is_err());
+            assert_eq!(state.borrow().writes.len(), usize::from(!inactive));
+            assert!(!session.unit_auth_attempted);
+        }
+    }
+}
+
+#[test]
+fn ble_e6000_family_rejects_unknown_units_and_product_attributes_before_keys() {
+    for (series, unit, params) in [
+        (0x08, 1, vec![]),
+        (0x0a, 1, vec![]),
+        (0x0c, 1, vec![0, 0x10, 0, 0, 0, 0, 0]),
+        (0x0c, 0, vec![0; 7]),
+        (0x15, 1, vec![0, 0x20, 0, 0, 0, 0, 0]),
+        (0x15, 0, vec![2, 0x20, 0, 0, 0, 0, 0]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0, 1]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0, 0, 0]),
+    ] {
+        let (mut session, state) = session();
+        {
+            let mut state = state.borrow_mut();
+            state.series = Some(series);
+            state.unit = unit;
+            state.params = Some(params);
+            state.firmware = Some([0x34, 0, 0]);
+        }
+        assert!(session.authenticate_unit_settings("060504030201").is_err());
+        assert!(!session.unit_auth_attempted);
+        assert!(auth_writes(&state, 0xd8).is_empty());
+        assert!(auth_writes(&state, 0xe0).is_empty());
+        assert!(!state.borrow().writes.iter().any(|p| p[1] == 0x33));
+    }
+}
+
+#[test]
+fn ble_e6002_authentication_failure_does_not_fall_back_or_retry() {
+    for mode in [1, 3, 5, 8] {
+        let (mut session, state) = session();
+        state.borrow_mut().series = Some(0x15);
+        state.borrow_mut().params = Some(vec![0, 0x20, 0, 0, 0, 0, 0]);
+        state.borrow_mut().firmware = Some([0x34, 0, 0]);
+        state.borrow_mut().mode = mode;
+        assert!(session.authenticate_unit_settings("060504030201").is_err());
+        assert!(session.poisoned);
+        assert_eq!(auth_writes(&state, 0xd8).len(), 1);
+        assert!(!state.borrow().writes.iter().any(|p| p[1] == 0x33));
+        let writes = state.borrow().writes.len();
+        assert!(session.authenticate_unit_settings("060504030201").is_err());
+        assert_eq!(state.borrow().writes.len(), writes);
+    }
 }

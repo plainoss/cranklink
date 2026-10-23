@@ -4,7 +4,7 @@ The [E-TUBE guide](etube-protocol.md) explains discovery, routing and component-
 
 The headless simulator executes stock gateway and motor D firmware in separate Unicorn machines and connects them through a deterministic virtual packet bus. Use it for offline protocol development, Cranklink read integration and targeted persistent-write/browser-session regressions. The existing browser GATT simulator remains available for UI tests.
 
-This implementation covers the packet engine, native/Bluetooth transports, targeted persistent-write paths and a separate EP800 resident-bootloader regression. Drive-unit writes require the exact EP800 D4.2.0 profile and support lamp and wheel circumference. Separate component fixtures execute cycle-computer settings and MU-UR500 gear-count changes. Complete board emulation remains outside scope. Firmware is supplied locally and identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
+This implementation covers the packet engine, native/Bluetooth transports, targeted persistent-write paths and a separate EP800 resident-bootloader regression. EP800 drive-unit writes require the exact D4.2.0 profile and support lamp and wheel circumference. Separate component fixtures execute cycle-computer settings and MU-UR500 gear-count changes. A separate E6002 region-storage path executes stock application routines with a modeled resident ROM append service. Complete board emulation remains outside scope. Firmware is identified by decoded SHA-256; an unfamiliar version never inherits another version's addresses.
 
 ## Verified firmware coverage
 
@@ -82,7 +82,54 @@ Firmware containers can be auto-pulled directly by profile ID, model name, or Sh
 
 Repeat `--root` to inventory more directories. Inventory distinguishes profiled, unprofiled and encrypted images; only exact profiled hashes enter the fixture manifest. A matrix executes every supplied profiled gateway/motor pairing and fails if any pairing fails. Relative image paths in a manually written manifest resolve against that manifest. A fixture manifest is an object mapping IDs such as `sc-em800-4.6.0` and `ep800-4.2.0` to local image paths.
 
+For recognizable older DU-E6000, DU-E6001 and DU-E6002 containers, inventory also reads the header at `0xC0`: container kind (`dcas2` or `dcas2i`), firmware and compatibility versions, firmware series/unit, board variant and declared size. It checks the supported header revision, packed version, size and `et` trailer. Versions come from the bytes, not filenames. `firmware_series` is the container identity; it is not necessarily the live device's reported series.
+
+This metadata is descriptive and does not authenticate the image or enable packet execution. Six pinned D images have a verified MN101 instruction subset and isolated CPU probes, described below. They remain outside the ARM packet profiles, contribute no packet fixtures and are rejected by `run`. The container kind alone does not identify the CPU.
+
+### Older-family MN101 CPU probes
+
+`cpu-probe` executes original instructions for E6000 D3.2.3, E6001 D3.4.7 and E6002 D3.3.0/D3.4.0 (both board variants), selected by exact SHA-256:
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py cpu-probe \
+  --motor /path/to/older-motor.decoded.bin --output /tmp/mn101-cpu-probe.json
+```
+
+The MN101 core fetches low-first instruction nibbles, decodes packed half-byte program counters and models register/stack transfers, calls and returns. Its mapping and instruction formats agree with the manufacturer's [MN101C manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf). Unknown instructions, unmapped memory, MMIO access and exhausted instruction budgets trap. It does not skip firmware calls or substitute successful device responses.
+
+Every image runs two probes: a stock interrupt return and a seven-instruction stack allocation/save/restore/interrupt-return wrapper. They verify complete restoration of synthetic registers, status, stack pointer and half-byte state. RAM and the interrupt frame are explicit synthetic fixtures.
+
+The four E6002 images additionally execute their actual region GET reply builders for EU, US and Korea. Original instructions call the selector/cache getter and construct `06 00 16 AE 01 <region> 00 00` in the firmware's reply buffer. The selector and current region cache are explicitly seeded RAM fixtures; there are no substituted firmware calls or injected authorization results. These are isolated reply-builder checks. The separate storage command below adds file-backed SET and cold reload. Inventory keeps both capabilities separate from packet transport support.
+
+The core supports the observed repeated ADDW instruction with the encoded repeat count plus one, charging every execution against the instruction budget. Unsupported repeated operations trap. The persistent profile enables 20-bit byte program addresses for its far ROM call; ordinary probes retain their explicit address width. MULU's data product is executed, while unverified NZC flag effects are tracked: a consumer traps unless another instruction has first redefined those flags.
+
+The MN101 tests also check odd-nibble instruction starts, signed/unsigned immediates, packed return addresses, calls, ROM vector calls, arithmetic/flag behavior and strict memory/budget traps using synthetic instructions. Byte ADDC/SUBC flags cover every operand/carry combination. To include stock probes in the test suite, set `CRANKLINK_MN101_FIXTURES` to a JSON object mapping CPU profile IDs (`e6000-3.2.3`, `e6001-3.4.7`, `e6002-3.3.0-board1`, `e6002-3.3.0-board2`, `e6002-3.4.0-board1`, `e6002-3.4.0-board2`) to local image paths. Relative paths resolve beside the manifest. Missing files, unknown IDs and mismatched image hashes fail; without this variable only the stock MN101 check skips.
+
 The archived [motor inventory](../tools/firmware-sim/inventory-motors.json) and [display inventory](../tools/firmware-sim/inventory-displays.json) record the remaining local coverage gaps. They do not represent every published device/version. Broad support is the target; add a hash-pinned CPU/memory/ABI profile and execute the matrix before extending the support table. New processor families also need a suitable execution backend. SC-EN500/600/610, SC-E8000, SC-M9050, SC-MT800 and unprofiled variants are currently rejected.
+
+### Older-family region storage
+
+`region-storage` supports the four exact E6002 D3.3.0/D3.4.0 images (both board variants). It executes the OEM-region SET storage helper, reopens the saved byte store into a new CPU with fresh RAM, runs stock record scanning/checksum validation/cache loading and region hydration, then executes stock GET:
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py region-storage \
+  --motor /path/to/DUE6002-D.decoded.bin --state /tmp/virtual-bike-nvm.bin \
+  --region 0 --output /tmp/region-eu.json
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py region-storage \
+  --motor /path/to/DUE6002-D.decoded.bin --state /tmp/virtual-bike-nvm.bin \
+  --region 1 --output /tmp/region-us.json
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/sim.py region-storage \
+  --motor /path/to/DUE6002-D.decoded.bin --state /tmp/virtual-bike-nvm.bin \
+  --region 4 --output /tmp/region-korea.json
+```
+
+The state file contains synthetic NVM, starts erased when absent, and retains its contents across commands. The four available region-record slots admit four changed writes; an unchanged value does not consume a slot. Erase/bank rollover is unsupported and fails closed. An existing state file is never reset by this command. Reports distinguish stock instruction counts from modeled ROM calls and list the remaining validation limits. Report paths must differ from the firmware and state paths, including symlink and hardlink aliases. The report is opened before executing a save, so an invalid output path cannot consume a storage slot.
+
+The downloaded application calls an unavailable resident ROM append routine. Its **modeled API** accepts only the exact prepared region descriptor: source RAM, byte count, slot address, bank selection, checksum, completed keyed sequence and setup state must agree. It programs the file-backed byte store and returns the status expected by the stock caller. Application code prepares the checksum, handles completion and updates its live cache. The model enters the storage helper below the protected-session policy. Authentication is not invoked or injected in this isolated test. It does not test D3.4's authorization exchange or a complete client session.
+
+After saving, the new CPU receives only the storage bytes and an explicit bank-five fixture. Stock scanning selects checksum-valid records; the cache loader and region hydration execute before GET. No previous CPU RAM is copied. This verifies application persistence under the declared ROM model, **not execution of the ROM's physical programming algorithm, reset-to-main boot, real flash timing/endurance, power-loss durability or hardware behavior**. The modeled key/setup writes do not claim an identified physical MCU variant.
+
+Tests cover repeated `0 → 1 → 4 → 0` changes with a fresh CPU after each save, no-op writes, malformed service requests, completed, failed and unconfirmed service statuses, corrupt records, storage-file errors and slot exhaustion. File save failure publishes neither changed in-memory storage nor a successful receipt; the stock failure path may remain polling until the instruction budget, and the simulator reports that error. The additive checksum is not general torn-write protection: programming only byte `01` into an erased two-byte slot leaves `01 FF`, which is already valid. Negative tests preserve that firmware behavior rather than promising rejection of every interrupted write.
 
 ## Run the real native CLI offline
 

@@ -2622,9 +2622,12 @@ fn resolve_settings_model(
         return crate::settings::SettingsModel::from_name(name);
     }
     let params = crate::motor_support::read_params(session, id.slot, identity.model_series)?;
-    crate::motor_support::for_motor_params(identity.model_series, identity.model_unit, &params)?
-        .settings
-        .context("named settings are not implemented for this motor")
+    crate::motor_support::settings_for_motor(
+        identity.model_series,
+        identity.model_unit,
+        &params,
+        &id.dcas_version,
+    )
 }
 
 fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleRoutingDecision {
@@ -2880,31 +2883,25 @@ fn execute_settings(
                 // callers can load settings without a separate probe connection.
                 let mut identity = serde_json::to_value(id)?;
                 identity["serial"] = serde_json::json!(serial);
-                identity["model_series"] = serde_json::json!(model.series());
+                let stock = session.model_identity(id.slot)?;
+                ensure!(
+                    stock.len() >= 3 && stock[0] == id.slot,
+                    "invalid component identity in settings snapshot"
+                );
+                identity["model_series"] = serde_json::json!(stock[1]);
                 identity["settings_model"] = serde_json::json!(model.slug());
-                let (model_name, model_unit) =
-                    if let crate::settings::SettingsModel::Component(name) = model {
-                        let entry = crate::unit_models::UNIT_MODELS
-                            .iter()
-                            .find(|entry| entry.name == name)
-                            .expect("catalog model");
-                        (name, entry.unit)
-                    } else {
-                        let name =
-                            crate::motor_support::read_params(session, id.slot, model.series())
-                                .ok()
-                                .and_then(|params| {
-                                    crate::unit_models::identify(
-                                        model.series(),
-                                        0,
-                                        None,
-                                        Some(&params),
-                                    )
-                                });
-                        (name.unwrap_or(model.name()), 0)
-                    };
+                let model_name = if let crate::settings::SettingsModel::Component(name) = model {
+                    name
+                } else {
+                    crate::motor_support::read_params(session, id.slot, stock[1])
+                        .ok()
+                        .and_then(|params| {
+                            crate::unit_models::identify(stock[1], stock[2], None, Some(&params))
+                        })
+                        .unwrap_or(model.name())
+                };
                 identity["model_name"] = serde_json::json!(model_name);
-                identity["model_unit"] = serde_json::json!(model_unit);
+                identity["model_unit"] = serde_json::json!(stock[2]);
                 snapshot["identity"] = identity;
                 snapshot
             };
@@ -3674,6 +3671,90 @@ fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyh
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn e6000_snapshot_keeps_live_identity_when_schema_is_shared() {
+        use crate::device::{Identity, UnitCommands};
+        struct Motor {
+            series: u8,
+            params: Vec<u8>,
+        }
+        impl UnitCommands for Motor {
+            fn model_identity(&mut self, slot: u8) -> anyhow::Result<Vec<u8>> {
+                Ok(vec![slot, self.series, 0])
+            }
+            fn command(
+                &mut self,
+                _: u8,
+                group: u8,
+                command: u8,
+                _: &[u8],
+                _: u8,
+            ) -> anyhow::Result<Vec<u8>> {
+                Ok(match (group, command) {
+                    (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                    (0x16, 0x7c) => {
+                        assert!(!matches!(self.series, 0x08 | 0x0a));
+                        self.params.clone()
+                    }
+                    (0x10, 0x14) => vec![0],
+                    (0x35, 4) => vec![0xe8, 3, 0, 0],
+                    (0x16, 0x5c) => vec![0, 0],
+                    (0x16, 0xac) => vec![1, 0, 255, 255],
+                    _ => anyhow::bail!("unexpected query {group:02x}/{command:02x}"),
+                })
+            }
+        }
+        for (series, params, version, slug, name) in [
+            (0x08, vec![], "3.4.0.0", "e6000", "DU-E6000"),
+            (0x0a, vec![], "3.4.0.0", "e6001", "DU-E6001"),
+            (
+                0x0c,
+                vec![1, 0, 0, 0, 0, 0, 0],
+                "3.4.0.0",
+                "e6001",
+                "DU-E6010",
+            ),
+            (
+                0x15,
+                vec![1, 0x20, 0, 0, 0, 0, 0],
+                "3.2.0.0",
+                "e6002-pre33",
+                "DU-E6012",
+            ),
+            (
+                0x15,
+                vec![0, 0x20, 0, 0, 0, 0, 0],
+                "3.3.0.0",
+                "e6002",
+                "DU-E6002",
+            ),
+        ] {
+            let id = Identity {
+                slot: 13,
+                cargo: String::new(),
+                dcas_version: version.into(),
+                rx_version: version.into(),
+            };
+            let snapshot = super::execute_settings(
+                &mut Motor { series, params },
+                &id,
+                &super::SettingsCommand::Read {
+                    name: None,
+                    output: None,
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(snapshot["identity"]["model_series"], series);
+            assert_eq!(snapshot["identity"]["settings_model"], slug);
+            assert_eq!(snapshot["identity"]["model_name"], name);
+            assert_eq!(
+                snapshot["values"].get("destination").is_some(),
+                slug == "e6002"
+            );
+            assert!(snapshot["values"].get("speed-limit").is_none());
+        }
+    }
     use super::*;
 
     #[test]

@@ -39,8 +39,15 @@ export function clampSettingValue(setting: EnrichedSetting, value: number): numb
   return Math.min(setting.userMax, Math.max(setting.userMin, snapped));
 }
 
+export const E6002_DESTINATION_LABELS: Record<number, string> = {
+  0: "Europe (EU)",
+  1: "United States (US)",
+  4: "Korea",
+};
+
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
+  if (model === "e6000" || model === "e6001" || model === "e6002-pre33" || model === "e6002") return undefined;
   const modern = isModernModel(model);
   if (destination === 1) return { min: 19, max: 32 };
   if (destination === 0 || destination === 3 || (!modern && destination === 4)) {
@@ -439,9 +446,11 @@ function enrichSetting(
   }
 
   if (spec.name === "destination") {
-    // Labelled by the speed range the core enforces, as the CLI prints them:
-    // the vendor region names are unverified.
+    if (modelSlug === "e6002") description = "Motor market selection. Choose the region that applies where the bike is ridden.";
+    // E6002 exposes verified markets without a separate speed-limit setting.
+    // Other motors use the range enforced by the core, as the CLI prints it.
     choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
+      if (modelSlug === "e6002") return E6002_DESTINATION_LABELS[choice] ? [[choice, E6002_DESTINATION_LABELS[choice]]] : [];
       const range = destinationSpeedRange(modelSlug, choice);
       return range ? [[choice, `${choice} (${range.min}–${range.max} km/h)`]] : [];
     }));

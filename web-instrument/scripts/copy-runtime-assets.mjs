@@ -23,5 +23,6 @@ for (const name of [
   "pkg/cranklink.js", "pkg/cranklink_bg.wasm",
   "schemas/ep800-crg.json", "schemas/ep600.json", "schemas/ep801.json", "schemas/ep500.json",
   "schemas/e5100.json", "schemas/e8000.json", "schemas/e7000.json", "schemas/e6100.json", "schemas/e6000.json",
+  "schemas/e6001.json", "schemas/e6002-pre33.json", "schemas/e6002.json",
 ]) copy(name);
 console.log("Copied required runtime assets.");

@@ -3,12 +3,14 @@ import hashlib
 import json
 from pathlib import Path
 from .profiles import PROFILES
-
-MARKER = bytes.fromhex('6f1b529d847c17dbd72af3d337cb3cc3')
+from .metadata import ENCRYPTED_MARKER as MARKER, legacy_metadata, unsupported_detail
+from .mn101 import CPU_PROFILES
+from .mn101_storage import STORAGE_PROFILES
 
 
 def inventory(roots):
     by_hash = {p['sha256']:p for p in PROFILES}
+    cpu_by_hash = {p[1]: p[0] for p in CPU_PROFILES}
     seen, rows, fixtures = set(), [], {}
     for root in roots:
         root = Path(root)
@@ -30,6 +32,23 @@ def inventory(roots):
                        profile=profile['id'] if profile else None,
                        reason=None if profile else 'encrypted container: provide decoded image' if encrypted else
                        'no verified CPU, memory and protocol entry-point profile for these exact bytes')
+            metadata = None if encrypted else legacy_metadata(data)
+            if metadata:
+                row['container'] = metadata
+                row['execution'] = dict(supported=bool(profile),
+                                        cpu='profiled' if profile else 'unverified',
+                                        backend='profiled' if profile else 'unsupported')
+                if not profile:
+                    row['reason'] = unsupported_detail(metadata)
+                if digest in cpu_by_hash:
+                    row['execution'].update(cpu='MN101 instruction subset', backend='isolated-cpu-probe',
+                                            cpu_probe=cpu_by_hash[digest])
+                    row['reason'] = 'isolated MN101 CPU/region GET probes available; no transport or settings write profile'
+                    if digest in STORAGE_PROFILES:
+                        row['region_storage'] = dict(supported=True, profile=STORAGE_PROFILES[digest],
+                                                     resident_rom='modeled', transport=False,
+                                                     authentication=False, erase_rollover=False)
+                        row['reason'] = 'MN101 CPU/GET and modeled-ROM region persistence available; no packet transport profile'
             rows.append(row)
             if profile: fixtures[profile['id']] = str(path.resolve())
     return dict(scope='supplied local images only; profiled is not a claim of full-board emulation',

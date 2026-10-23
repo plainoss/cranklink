@@ -5,6 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 struct State {
     mode: u8,
     series: Option<u8>,
+    unit: u8,
     firmware: Option<[u8; 3]>,
     params: Option<Vec<u8>>,
     pending: VecDeque<u8>,
@@ -42,7 +43,7 @@ impl Write for AuthPort {
                 } else {
                     state.series.unwrap_or(0x23)
                 },
-                0,
+                state.unit,
                 0xff,
                 0xff,
             ]),
@@ -435,6 +436,17 @@ fn wired_older_families_respect_authorization_introduction_without_protocol_gues
         (0x20, [0x18, 1, 0, 0, 0, 0, 0], [0x40, 0, 0], true),
         (0x38, [0x10, 0, 0, 0, 0, 0, 0], [0x41, 0, 0], true),
         (0x08, [0; 7], [0x33, 0, 0], false),
+        (0x08, [0; 7], [0x34, 0, 0], false),
+        (0x08, [0; 7], [0x35, 0, 0], false),
+        (0x0a, [0; 7], [0x34, 0, 0], false),
+        (0x0c, [0, 0x10, 0, 0, 0, 0, 0], [0x34, 7, 0], false),
+        (0x0c, [1, 0, 0, 0, 0, 0, 0], [0x35, 0, 0], false),
+        (0x0c, [5, 0, 0, 0, 0, 0, 0], [0x35, 0, 0], false),
+        (0x15, [0, 0x20, 0, 0, 0, 0, 0], [0x33, 0, 0], false),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x33, 0, 0], false),
+        (0x15, [0, 0x20, 0, 0, 0, 0, 0], [0x34, 0, 0], true),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x34, 0, 0], true),
+        (0x15, [1, 0x20, 0, 0, 0, 0, 0], [0x35, 7, 0], true),
     ] {
         let (mut session, state) = session(0);
         state.borrow_mut().series = Some(series);
@@ -444,6 +456,11 @@ fn wired_older_families_respect_authorization_introduction_without_protocol_gues
         let writes = state.borrow().writes.clone();
         let auth: Vec<_> = writes.iter().filter(|p| p[1..3] == [0x16, 0xd8]).collect();
         assert!(!writes.iter().any(|p| p[1] == 0x33));
+        assert_eq!(
+            writes.iter().any(|p| p[1..3] == [0x16, 0x7c]),
+            !matches!(series, 0x08 | 0x0a),
+            "product attributes must only be queried for families that define them"
+        );
         if required {
             assert_eq!(receipt["protocol"], "legacy");
             assert_eq!(auth.len(), 1);
@@ -462,35 +479,71 @@ fn wired_older_families_respect_authorization_introduction_without_protocol_gues
 }
 
 #[test]
-fn wired_ambiguous_e6000_sends_no_authentication_material() {
-    let (mut session, state) = session(0);
-    state.borrow_mut().series = Some(0x08);
-    state.borrow_mut().params = Some(vec![0; 7]);
-    state.borrow_mut().firmware = Some([0x34, 0, 0]);
-    let error = session
-        .authenticate_unit_settings("010203040506")
-        .unwrap_err();
-    assert!(error.to_string().contains("unambiguous"));
-    assert!(!state
-        .borrow()
-        .writes
-        .iter()
-        .any(|p| { p[1] == 0x33 || (p[1] == 0x16 && matches!(p[2], 0xd8 | 0xe0)) }));
-    session.normal_stop().unwrap();
+fn wired_e6000_family_rejects_unknown_units_and_product_attributes_before_keys() {
+    for (series, unit, params) in [
+        (0x08, 1, vec![]),
+        (0x0a, 1, vec![]),
+        (0x0c, 1, vec![0, 0x10, 0, 0, 0, 0, 0]),
+        (0x0c, 0, vec![0; 7]),
+        (0x15, 1, vec![0, 0x20, 0, 0, 0, 0, 0]),
+        (0x15, 0, vec![2, 0x20, 0, 0, 0, 0, 0]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0, 1]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0]),
+        (0x15, 0, vec![0, 0x20, 0, 0, 0, 0, 0, 0]),
+    ] {
+        let (mut session, state) = session(0);
+        {
+            let mut state = state.borrow_mut();
+            state.series = Some(series);
+            state.unit = unit;
+            state.params = Some(params);
+            state.firmware = Some([0x34, 0, 0]);
+        }
+        assert!(session.authenticate_unit_settings("010203040506").is_err());
+        assert!(!session.unit_auth_attempted);
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|p| { p[1] == 0x33 || (p[1] == 0x16 && matches!(p[2], 0xd8 | 0xe0)) }));
+    }
 }
 
 #[test]
 fn wired_no_auth_required_still_requires_active_session_and_matching_serial() {
-    for inactive in [false, true] {
-        let (mut session, state) = session(0);
-        state.borrow_mut().series = Some(0x12);
-        state.borrow_mut().params = Some(vec![0; 7]);
-        state.borrow_mut().firmware = Some([0x46, 99, 0]);
-        if inactive {
-            session.normal_slot = None;
+    for (series, params) in [
+        (0x08, vec![]),
+        (0x0a, vec![]),
+        (0x0c, vec![0, 0x10, 0, 0, 0, 0, 0]),
+        (0x15, vec![0, 0x20, 0, 0, 0, 0, 0]),
+    ] {
+        for inactive in [false, true] {
+            let (mut session, state) = session(0);
+            state.borrow_mut().series = Some(series);
+            state.borrow_mut().params = Some(params.clone());
+            state.borrow_mut().firmware = Some([0x33, 0, 0]);
+            if inactive {
+                session.normal_slot = None;
+            }
+            assert!(session.authenticate_unit_settings("FFFFFFFFFFFF").is_err());
+            assert_eq!(state.borrow().writes.len(), usize::from(!inactive));
+            assert!(!session.unit_auth_attempted);
         }
-        assert!(session.authenticate_unit_settings("FFFFFFFFFFFF").is_err());
-        assert_eq!(state.borrow().writes.len(), usize::from(!inactive));
-        assert!(!session.unit_auth_attempted);
+    }
+}
+
+#[test]
+fn wired_e6002_authentication_failure_does_not_fall_back_or_retry() {
+    for mode in [1, 3, 4, 6] {
+        let (mut session, state) = session(mode);
+        state.borrow_mut().series = Some(0x15);
+        state.borrow_mut().params = Some(vec![0, 0x20, 0, 0, 0, 0, 0]);
+        state.borrow_mut().firmware = Some([0x34, 0, 0]);
+        assert!(session.authenticate_unit_settings("010203040506").is_err());
+        let writes = state.borrow().writes.clone();
+        assert_eq!(writes.iter().filter(|p| p[1..3] == [0x16, 0xd8]).count(), 1);
+        assert!(!writes.iter().any(|p| p[1] == 0x33));
+        assert!(session.authenticate_unit_settings("010203040506").is_err());
+        assert_eq!(state.borrow().writes.len(), writes.len());
     }
 }

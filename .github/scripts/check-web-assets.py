@@ -23,6 +23,9 @@ def check(root: pathlib.Path) -> list[str]:
         "schemas/e7000.json",
         "schemas/e6100.json",
         "schemas/e6000.json",
+        "schemas/e6001.json",
+        "schemas/e6002-pre33.json",
+        "schemas/e6002.json",
     )
     for name in required:
         path = root / name
