@@ -67,6 +67,69 @@ Firmware containers can be auto-pulled directly by profile ID, model name, or Sh
 - `sim.py pull --all --fixtures-output /tmp/firmware-fixtures.json`: Pulls all 18 profiled firmware images and generates a fixture manifest ready for `sim.py matrix`.
 - `sim.py run` and `sim.py serve` accept `--hardware <model>` or profile names directly in `--gateway` / `--motor`, automatically fetching and decoding missing images on demand. Existing local `.decoded.bin` or plaintext `.dat` file paths remain fully supported.
 
+### Di2 research inputs
+
+`acquire_di2.py` downloads six SHA-256-pinned research files from Shimano's
+published firmware endpoint. It verifies DCAS2i main-image headers and Intel HEX
+records without registering any executable profiles or connecting to hardware.
+Downloaded binaries stay outside Git. The default directory is ignored:
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/acquire_di2.py
+
+# Revalidate cached inputs without network access.
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/acquire_di2.py --offline
+
+# Include the acquired-input checks in the simulator test suite.
+CRANKLINK_DI2_IMAGES="$PWD/tools/firmware-sim/.cache/di2" \
+  /tmp/cranklink-firmware-sim/bin/python -m unittest discover \
+  -s tools/firmware-sim -p 'test_di2_images.py'
+```
+
+Use `--output /path/to/cache` to choose a different directory. A missing offline
+file or a mismatched hash fails without replacing the input. The generated
+`di2-acquisition.json` and [recorded assessment](../tools/firmware-sim/di2-acquisition.json)
+explicitly report zero new executable profiles and no validated topology.
+
+| Research input | Purpose | Current execution gap |
+| --- | --- | --- |
+| `BTDN110.4.5.0.dat` | BT-DN110 board 1 master application | MN101-family instruction/mapping evidence; no reviewed execution backend or service entry points. |
+| `2BTDN110.4.5.0.dat` | BT-DN110 board 2 master application | A separate hash and board; same execution gap. |
+| `EWWU101.4.6.0.dat` | WU101/WU111 main application family | Same legacy CPU gap; model-family mapping comes from the E-TUBE application declaration, not the filename alone. |
+| `UPDATENRF-DI2-ap.4.7.1.hex` | Separate Nordic radio application | Plausible mapped Thumb reset vector; no recovered gateway handler profile. |
+| `UPDATENRF-DI2-bt.1.4.0.hex` | Nordic bootloader | Acquired and format-checked only. |
+| `UPDATENRF-sd.3.0.0.hex` | Nordic SoftDevice package | Acquired and format-checked only; RF behavior is not emulated. |
+
+The public catalogue at `https://api.shimano.com/etube/firmware/5.4.6` supplied
+the filenames, sizes, MD5 values and download URLs. Initial acquisition checked
+those sizes and MD5 values, then pinned the raw SHA-256 values used by the tool.
+The endpoint's `5.4.6` is not an assertion about the app or installed bike version.
+
+The separate mapping evidence is the inspected E-TUBE application constructor
+`com.shimano.etubeproject.sharedcode.domain.model.unit.category.eww.EWWU111Unit`:
+its main firmware declaration selects `EWWU101` and its wireless-chip declaration
+selects the `UPDATENRF-DI2` family. The inspected APK SHA-256 is
+`2b16e03a73d06997ac15962813bffd8a8e95e2a823bfc73a81d5d46a4fbbefe5`.
+This does not identify which board, radio revision or firmware is installed on a
+particular bike. No proprietary firmware or decompiled application is bundled.
+
+Legacy main-image vectors corroborate low-first nibble decoding at byte origin
+`0x4000`: the exact board-1 battery, board-2 battery and WU-family images have
+19, 18 and 21 vectors respectively beginning with MN101-family RTI encoding.
+This is static mapping evidence, not service-handler execution or identification
+of a specific physical MCU. The instruction-family reference is Panasonic's
+[MN101Cx49x manual](https://bitsavers.org/components/panasonic/panaXseries/21449-041E_MN101Cx49x.pdf).
+The current public execution backend is ARM-only. A separate experimental
+decoder/executor can return isolated interrupt stubs but has unresolved ISA
+semantics and is not admitted as a verified protocol backend.
+
+To obtain topology coverage, first validate a strict MN101 backend, recover the
+exact PC-link/discovery handlers and their RAM/transport context in both main
+images, then connect those stock handlers through explicit modeled bus/radio
+boundaries. Tests must distinguish a gateway acknowledgement from a master
+stop and retain master state over radio disconnects. Executing only the Nordic
+radio cannot establish the battery master's ownership or shifting behavior.
+
 ### Inventory and test a local collection
 
 ```sh

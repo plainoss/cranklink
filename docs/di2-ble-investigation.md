@@ -82,3 +82,18 @@ There is no hash-pinned EW-WU111/BT-DN110 executable profile in the current
 simulator. The new master-stop sequence needs validation on that exact hardware
 before claiming that it restores shifting. No hardware was accessed during
 this offline investigation.
+
+## Firmware acquisition follow-up
+
+Official images for both BT-DN110 board variants, the WU111 main firmware family
+(`EWWU101`) and the separate Nordic application/bootloader/SoftDevice have now
+been acquired and hash-pinned. The main images are legacy DCAS2i with corroborated
+MN101-family vector mapping, which the simulator's ARM backend cannot execute.
+The radio application is a separate Thumb image, not a replacement for the main
+MCUs' service-state logic. No new executable topology coverage is claimed.
+
+The [acquisition guide](firmware-simulator.md#di2-research-inputs) records the
+source/model-mapping evidence, exact hashes, repeatable checks and the remaining
+CPU/handler work. This improves input provenance and makes the coverage gap
+reproducible; it does not increase confidence that the proposed stop command
+works on the physical BT-DN110 until the relevant handlers actually execute.
