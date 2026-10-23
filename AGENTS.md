@@ -25,6 +25,6 @@ Always prefer fast local tooling over slow manual loops:
 - **Scratch Scripts**: When doing firmware analysis, disassembly, or complex data processing, write temporary scripts in `scratch/` at the repository root (gitignored) instead of executing fragile inline multi-line Python snippets in shell commands.
 
 ## 5. Concurrent PRs & Merge Queue Protocol
-- **Never Queue Your Own PR**: After creating a PR, do not enable auto-merge or add it to the merge queue (`gh pr merge --auto`, `./tools/queue-pr.sh`). Ask for review; a maintainer, or a review agent they set up, approves and queues it. `tools/queue-pr.sh` is for maintainers.
+- **Don't Queue Unless Asked**: After creating a PR, do not enable auto-merge or add it to the merge queue (`gh pr merge --auto`, `./tools/queue-pr.sh`) unless a maintainer asks you to. By default, ask for review; a maintainer, or a review agent they set up, approves and queues it.
 - **Speculative Merge Testing**: The repository enforces a Merge Queue on `main`. Once a PR is queued and required checks pass, GitHub speculatively tests it in a batch and merges it to `main` without manual intervention.
 - **No Manual Rebase Stampedes**: If another PR merges while yours is in flight, do not frantically rebase in loops. The merge queue automatically handles ordering and speculative merges.
