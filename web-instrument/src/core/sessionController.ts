@@ -76,6 +76,7 @@ export class SessionController {
   private activeCapture: { stdout: string; stderr: string; echo: string } | null = null;
   private execQueue: Promise<any> = Promise.resolve();
   private pendingPasskey: ((value: string | null) => void) | null = null;
+  private pendingBluetoothSystem: ((value: "steps" | "di2" | null) => void) | null = null;
   private syncInProgress: Promise<DeviceIdentity | null> | null = null;
   private speedDestinationBeforeAuto: { staged: number | string | undefined } | null = null;
   /** An unplug of the selected adapter during an operation, and the failure shown when it came. */
@@ -105,7 +106,11 @@ export class SessionController {
         initialPreset: "eu_default",
         fault: "none",
       },
-      bluetoothBike: "steps",
+      bluetoothBike: "auto",
+      bluetoothSystem: null,
+      bluetoothSystemSource: null,
+      bluetoothMasterSeries: null,
+      bluetoothSystemPrompt: null,
       identity: null,
       units: [],
       schema: [],
@@ -133,8 +138,8 @@ export class SessionController {
   public getState(): InstrumentState {
     return this.state;
   }
-  public setBluetoothBike(bike: "steps" | "di2"): void {
-    if (this.state.transport || !["disconnected", "error"].includes(this.state.phase)) {
+  public setBluetoothBike(bike: "auto" | "steps" | "di2"): void {
+    if (!["disconnected", "error"].includes(this.state.phase)) {
       throw new Error("Disconnect before choosing a different bike type.");
     }
     this.update({ bluetoothBike: bike });
@@ -274,6 +279,43 @@ export class SessionController {
     this.pendingPasskey?.(value);
   }
 
+  public answerBluetoothSystem(system: "steps" | "di2" | null): void {
+    this.pendingBluetoothSystem?.(system);
+  }
+
+  private async detectBluetoothSystem(): Promise<void> {
+    if (this.state.bluetoothBike !== "auto") {
+      this.update({ bluetoothSystem: this.state.bluetoothBike, bluetoothSystemSource: "manual" });
+      return;
+    }
+    this.update({ statusMessage: "Detecting the bike system before entering connection mode…" });
+    const result = await this.exec("ble detect-system");
+    if (result.code !== 0) throw new Error(`${result.stderr || "Bike-system detection failed."}\nDetection did not start a service session. For an unsupported gateway, choose a manual override in Bluetooth options before reconnecting.`);
+    const detected = this.extractLastJsonObject(result.stdout);
+    if (!["steps", "shifting-only", "unknown"].includes(detected?.system)
+        || detected.service_started !== false
+        || !(Number.isInteger(detected.master_series) && detected.master_series >= 0 && detected.master_series <= 255)) {
+      throw new Error("Bike-system detection returned an invalid result; no service mode was started.");
+    }
+    this.update({ bluetoothMasterSeries: detected.master_series });
+    if (detected.system !== "unknown") {
+      this.update({ bluetoothSystem: detected.system === "steps" ? "steps" : "di2", bluetoothSystemSource: "detected" });
+      return;
+    }
+    const system = await new Promise<"steps" | "di2" | null>((resolve) => {
+      this.pendingBluetoothSystem = (value) => {
+        this.pendingBluetoothSystem = null;
+        this.update({ bluetoothSystemPrompt: null });
+        resolve(value);
+      };
+      this.update({ bluetoothSystemPrompt: "The gateway did not identify a supported bike system. Choose the system before starting a service session. Bluetooth will stay connected." });
+    });
+    if (!system) {
+      throw new Error("Connection cancelled before entering service mode.");
+    }
+    this.update({ bluetoothSystem: system, bluetoothSystemSource: "manual" });
+  }
+
   public appendLog(stream: "stdout" | "stderr" | "notice" | "cmd", text: string): void {
     const trimmed = text.replace(/\n$/, "");
     if (!trimmed) return;
@@ -370,6 +412,7 @@ export class SessionController {
     transport: TransportType,
     simOpts?: Partial<SimulatorOptions>,
   ): Promise<DeviceIdentity | null> {
+    let bluetoothOpened = false;
     const mergedSim: SimulatorOptions = {
       ...this.state.simulatorOptions,
       ...simOpts,
@@ -381,6 +424,10 @@ export class SessionController {
     this.startOperation({
       phase: "connecting",
       bluetoothDisconnectNotice: false,
+      bluetoothSystem: null,
+      bluetoothSystemSource: null,
+      bluetoothMasterSeries: null,
+      bluetoothSystemPrompt: null,
       transport,
       linkLost: false,
       simulatorOptions: mergedSim,
@@ -407,8 +454,10 @@ export class SessionController {
         if (conn.code !== 0) {
           throw new Error(conn.stderr || `Connection failed (${conn.code})`);
         }
+        bluetoothOpened = transport === "ble";
       }
 
+      if (transport === "ble") await this.detectBluetoothSystem();
       this.update({
         phase: "probing",
         statusMessage: "Discovering connected components…",
@@ -424,6 +473,14 @@ export class SessionController {
       // inventory: the operator can choose another component.
       return await this.doSelectComponent(preferred).catch(() => null);
     } catch (err: any) {
+      if (bluetoothOpened) {
+        try {
+          const closed = await this.exec("disconnect");
+          if (closed.code !== 0) throw new Error(closed.stderr || "Bluetooth cleanup was not confirmed.");
+        } catch (cleanup: any) {
+          err = new Error(`${err?.message || err}\nCleanup also failed: ${cleanup?.message || cleanup}`);
+        }
+      }
       this.fail("connect", err, { phase: "error", status: (error) => `Handshake failed: ${error}` });
       // A cancelled chooser or a failed connection loses nothing: the next
       // connect to the same component restores the held edits.
@@ -534,6 +591,15 @@ export class SessionController {
       slots.add(unit.slot);
       return unit as ComponentUnit;
     });
+    if (this.state.transport === "ble" && this.state.bluetoothSystemSource === "detected") {
+      const series = this.state.bluetoothMasterSeries;
+      if (this.state.bluetoothSystem === "steps" && !units.some((unit) => unit.model_series === series && unit.model_unit === 0)) {
+        throw new Error("Component inventory disagrees with the detected STEPS master. Disconnect before reconnecting.");
+      }
+      if (this.state.bluetoothSystem === "di2" && units.some((unit) => isMotorStock(unit.model_series, unit.model_unit))) {
+        throw new Error("A drive unit appeared in a system detected as shifting only. Disconnect before reconnecting.");
+      }
+    }
     this.update({ units });
     return units;
   }
@@ -719,7 +785,7 @@ export class SessionController {
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
     const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
-    const target = `${this.state.transport === "ble" && this.state.bluetoothBike === "di2" ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
+    const target = `${this.state.transport === "ble" && this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
     }
@@ -731,10 +797,12 @@ export class SessionController {
     // command; protected writes must not switch a retained normal connection.
     if (this.state.transport === "sim") return "--ble-master=master ";
     if (this.state.transport !== "ble") return "";
-    return this.state.bluetoothBike === "di2" ? "--ble-master=normal " : "--ble-master=master ";
+    if (!this.state.bluetoothSystem) throw new Error("Choose the Bluetooth bike system before discovering components.");
+    return this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : "--ble-master=master ";
   }
 
   public async disconnect(): Promise<void> {
+    if (this.pendingBluetoothSystem) throw new Error("Choose the bike system or cancel the open connection prompt first.");
     if (this.disconnecting) return;
     const wasBluetooth = this.state.transport === "ble";
     let cleanupError: string | null = null;

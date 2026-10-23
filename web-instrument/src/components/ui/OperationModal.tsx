@@ -45,7 +45,7 @@ function guidance(phase: SessionPhase, transport: TransportType | null, check: b
 export function OperationModal({ state }: { state: InstrumentState }) {
   const busy = ["connecting", "disconnecting", "probing", "reading", "committing", "flashing"].includes(state.phase);
   // Steps aside for the passkey prompt so focus and the on-screen keyboard go to its field.
-  const open = busy && !state.passkeyPromptOpen;
+  const open = busy && !state.passkeyPromptOpen && !state.bluetoothSystemPrompt;
   const check = state.phase === "flashing" && state.firmware.operation === "check";
   const title = state.phase === "connecting"
     ? connectingTitle(state.transport)

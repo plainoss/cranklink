@@ -69,11 +69,14 @@ not full topology recognition or a cold-boot sequence. The WU111 hardware trace
 also contains unsolicited master metadata before service mode; explicit
 pre-service querying on SC-EM800 still needs hardware validation.
 
-Automatic detection is not implemented by this research. A query timeout currently
-poisons the generic gateway transaction path. Any optional detector must bound
-the probe, handle late replies, and define fallback before service without
-blanket clearing a failed session's poison state. The gateway-maintained identity
-must also agree with subsequent live discovery before privileged operations.
+The preview implementation adds `ble detect-system` and uses it before browser
+inventory. A valid unknown family prompts before service on the original link;
+invalid metadata and timeouts fail and close GATT. The implementation preserves
+timeout poison and does not retry or clear it for a manual fallback. A pre-connect
+manual override remains available. Detected identity is checked against later
+inventory and selected motor stock before settings access. This implementation
+still needs the explicit pre-service physical query test described in the
+[phone validation sequence](bluetooth.md#validate-automatic-detection-on-a-phone).
 
 ## Failed hardware validation on 2026-10-23
 

@@ -47,6 +47,7 @@ describe("E600x motor settings support", () => {
       [0x15, "DU-E6012", "3.3.0.0", "e6002", 4],
     ] as const) {
       const controller = new SessionController();
+      controller.setBluetoothBike("steps"); // Historical master families require an explicit choice.
       const commands: string[] = [];
       controller.attachTerminal({
         setPasskeyPrompt: () => {},
