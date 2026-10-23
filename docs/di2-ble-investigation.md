@@ -20,6 +20,24 @@ to trigger this hardware failure, and matching stop receipts do not establish
 restored shifting. The offline service-mode/receipt regressions still pass;
 they do not reproduce or validate recovery from this physical failure.
 
+### STEPS comparison on the same day
+
+A separate SC-EM800 gateway with an EP800-family logical master passed
+authentication-only testing, with the display and buttons confirmed normal.
+The first stock-only attempt disconnected during normal-mode checking, before
+PC-link start or any FREE command. A rider-requested retry completed inventory
+and received both stop acknowledgements, but the display remained on the
+Shimano logo instead of returning to riding mode. A normal power-off/power-on
+cycle restored operation. No settings or firmware operation was sent.
+
+The successful inventory stopped logical master owner `13` hex and received
+`00 32 12 00 13 ff ff ...`. Gateway stop was transmitted one millisecond later
+and acknowledged. The equivalent Di2 interval was zero milliseconds. This makes
+post-receipt housekeeping or shutdown ordering a hypothesis to investigate,
+not a validated fix; no settling-time experiment has been performed. The
+shared symptom also means the remaining problem cannot be treated as specific
+to WU111/BT-DN110 alone. Both bikes were restored and hardware testing stopped.
+
 ## Observed on 2026-10-22
 
 The bike used an EW-WU111 wireless unit, EW-RS910 bar-end junction and

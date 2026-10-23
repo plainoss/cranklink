@@ -15,6 +15,18 @@
     "component_settings_read_attempted": false,
     "original_missing_reply_required_for_failure": false
   },
+  "steps_hardware_comparison": {
+    "date": "2026-10-23",
+    "gateway": "SC-EM800",
+    "logical_master_family": "EP800",
+    "authentication_only_physical_check_passed": true,
+    "first_inventory_disconnected_before_pc_link_start": true,
+    "requested_inventory_retry_succeeded": true,
+    "master_and_gateway_stop_receipts_received": true,
+    "display_returned_to_riding_mode": false,
+    "normal_power_cycle_restored_operation": true,
+    "settings_or_firmware_operation_sent": false
+  },
   "modeled": [
     "zero-initialized RAM and receive ABI",
     "battery JSRV4 send/queue service",
