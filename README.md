@@ -41,7 +41,7 @@ All families support component discovery and identification. Field availability 
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 
-Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md).
+Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and partial BT-DN110/WU111 PC-link handler execution are described in the [firmware simulator documentation](docs/firmware-simulator.md). Di2 identity-read timeouts allow one owner-checked cleanup attempt while keeping ordinary commands blocked; [recovery scope and limits](docs/bluetooth.md#disconnect-and-di2-recovery) apply.
 
 ¹ CLI only, with `--allow-unverified-model`. Covered by protocol tests, not run on hardware.
 

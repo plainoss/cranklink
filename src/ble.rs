@@ -218,6 +218,9 @@ pub struct BleSession {
     gateway_mode: bool,
     authenticated: bool,
     poisoned: bool,
+    wait_timed_out: bool,
+    read_timeout_cleanup: bool,
+    cleanup_in_progress: bool,
     unit_auth_attempted: bool,
     master_routing: bool,
     master_routing_active: bool,
@@ -247,6 +250,9 @@ impl BleSession {
             gateway_mode: false,
             authenticated: false,
             poisoned: false,
+            wait_timed_out: false,
+            read_timeout_cleanup: false,
+            cleanup_in_progress: false,
             unit_auth_attempted: false,
             master_routing: false,
             master_routing_active: false,
@@ -334,9 +340,37 @@ impl BleSession {
         }
         Ok(())
     }
+    fn poison(&mut self) {
+        self.poisoned = true;
+        self.read_timeout_cleanup = false;
+    }
+    fn cleanup_write_allowed(&self, id: u16, bytes: &[u8]) -> bool {
+        if !self.cleanup_in_progress || self.master_routing || !self.gateway_mode {
+            return false;
+        }
+        let target = |slot| slot == 0 || self.linked_slot == Some(slot);
+        let owns_master = self.slave_master_link
+            == (SlaveMasterLink::Active {
+                owner: self.pc_slot,
+            });
+        match id {
+            PCE_COMMAND => {
+                (owns_master && bytes.len() == 3 && bytes[..2] == [0, 6] && target(bytes[2]))
+                    || (bytes == [0, 0x0c, 0]
+                        && self.slave_master_link == SlaveMasterLink::Inactive)
+            }
+            FREE_COMMAND => {
+                owns_master
+                    && bytes.len() == 7
+                    && target(bytes[0])
+                    && bytes[1..] == [0x32, 0x10, 0, self.pc_slot, 0, 0]
+            }
+            _ => false,
+        }
+    }
     fn write(&mut self, id: u16, bytes: &[u8]) -> Result<()> {
         ensure!(
-            !self.poisoned,
+            !self.poisoned || self.cleanup_write_allowed(id, bytes),
             "BLE session failed; disconnect and reconnect before another command"
         );
         ensure!(
@@ -360,17 +394,21 @@ impl BleSession {
         self.log("tx", id, bytes)?;
         let result = self.io.write(id, bytes, without_response);
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         result.context("BLE write failed; outcome may be uncertain")
     }
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>> {
         let result = self.io.receive(timeout);
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         let n = result?;
         if let Some(n) = &n {
+            if n.value.len() > 20 {
+                self.poison();
+                bail!("unsupported oversized BLE notification");
+            }
             self.log("rx", n.characteristic, &n.value)?;
             if !self.master_routing
                 && self.gateway_mode
@@ -400,29 +438,28 @@ impl BleSession {
                 return Ok(());
             }
         }
-        self.poisoned = true;
+        self.poison();
         bail!("BLE unsolicited notification overflow")
     }
     fn wait(&mut self, check: impl Fn(&Notification) -> bool) -> Result<Notification> {
+        self.wait_timed_out = false;
         let start = Instant::now();
         for _ in 0..256 {
             let remaining = TIMEOUT.saturating_sub(start.elapsed());
             if remaining.is_zero() {
+                self.wait_timed_out = true;
                 break;
             }
             if let Some(n) = self.receive(remaining)? {
-                if n.value.len() > 20 {
-                    self.poisoned = true;
-                    bail!("unsupported oversized BLE notification");
-                }
                 if check(&n) {
                     return Ok(n);
                 }
             } else {
+                self.wait_timed_out = true;
                 break;
             }
         }
-        self.poisoned = true;
+        self.poison();
         bail!("BLE response timeout or notification overflow; reconnect before another command")
     }
     pub fn authenticate(&mut self) -> Result<()> {
@@ -861,14 +898,27 @@ impl BleSession {
         })
     }
     /// Release motor ownership, restore/confirm slave mode, then stop the
-    /// gateway PC-link before closing GATT. A timeout fences further traffic;
-    /// after that, disconnect cannot stand in for an acknowledged motor stop.
+    /// gateway PC-link before closing GATT. Identity GET timeouts may permit
+    /// one cleanup-only attempt; ordinary commands remain fenced. Disconnect
+    /// cannot stand in for an acknowledged component/master stop.
     pub fn stop(&mut self) -> Result<()> {
         ensure!(
             !self.firmware_active,
             "motor firmware session remains active; inspect journal before recovery"
         );
         if self.poisoned {
+            if self.read_timeout_cleanup {
+                // A missing identity GET reply cannot be confused with the
+                // distinct, owner-checked PC stop receipt. Keep ordinary traffic
+                // poisoned; grant one cleanup-only attempt, never a read retry.
+                self.read_timeout_cleanup = false;
+                self.cleanup_in_progress = true;
+                let result = self
+                    .stop_pc_link()
+                    .and_then(|_| self.stop_gateway_pc_link());
+                self.cleanup_in_progress = false;
+                return result.context("BLE cleanup after identity read timeout failed");
+            }
             bail!("BLE session failed; PC-link stop could not be confirmed; disconnect and inspect bike state");
         }
         let was_master = self.master_routing_active;
@@ -913,10 +963,23 @@ impl BleSession {
             // discovery reply. Account for them before deciding what to stop.
             self.drain()?;
         }
+        if self.cleanup_in_progress {
+            ensure!(
+                self.slave_master_link
+                    == (SlaveMasterLink::Active {
+                        owner: self.pc_slot
+                    }),
+                "BLE logical master ownership changed; timeout cleanup is unconfirmed"
+            );
+        }
         if let Some(slot) = self.linked_slot {
             if slot != 0 {
                 let p = self.command(slot, 0x32, 0x10, &[0, self.pc_slot, 0, 0], 0x12)?;
-                ensure!(p.first() == Some(&0), "BLE unit PC-link stop rejected");
+                ensure!(
+                    p.first() == Some(&0)
+                        && (!self.cleanup_in_progress || p.get(1) == Some(&self.pc_slot)),
+                    "BLE unit PC-link stop rejected or unconfirmed"
+                );
             }
             self.gateway_started_slots.remove(&slot);
             self.master_pc_start_receipts.remove(&slot);
@@ -1044,7 +1107,7 @@ impl BleSession {
         if let Some(product) = product {
             let result = self.authenticate_modern(slot, &serial, &product, model[1], &firmware);
             if result.is_err() {
-                self.poisoned = true;
+                self.poison();
             }
             return result;
         }
@@ -1099,7 +1162,7 @@ impl BleSession {
                 "firmware":firmware,"protocol":"legacy","scope":"regulation-setting authentication; per-setting validation still required"}))
         })();
         if result.is_err() {
-            self.poisoned = true;
+            self.poison();
         }
         result
     }
@@ -1205,13 +1268,32 @@ impl UnitCommands for BleSession {
         // FREE_RESPONSE carries the addressed component slot, independently
         // of the gateway's bus PC-link slot. Local gateway queries use slot 0.
         let pc = slot;
-        let n = self.wait(|n| {
+        let response = self.wait(|n| {
             n.characteristic == FREE_RESPONSE
                 && n.value.len() >= 3
                 && n.value[0] == pc
                 && n.value[1] == group
                 && (n.value[2] == response_cmd || n.value[2] == response_cmd.wrapping_add(1))
-        })?;
+        });
+        if response.is_err()
+            && self.wait_timed_out
+            && !self.cleanup_in_progress
+            && !self.master_routing
+            && !self.firmware_active
+            && self.slave_master_link
+                == (SlaveMasterLink::Active {
+                    owner: self.pc_slot,
+                })
+            && params == [0]
+            && response_cmd == command.wrapping_add(2)
+            && matches!(
+                (group, command),
+                (1, 0x14 | 0x1c | 0x2c | 0x84 | 0x3c | 0xa4 | 0xac) | (0x32, 0x9c)
+            )
+        {
+            self.read_timeout_cleanup = true;
+        }
+        let n = response?;
         ensure!(
             n.value[2] == response_cmd,
             "unit/gateway rejected BLE group {group:02X} command {command:02X}: reply {}",
@@ -1262,6 +1344,9 @@ mod tests {
         reject_destination_write: bool,
         reject_lamp: bool,
         timeout_lamp: bool,
+        drop_query: Option<(u8, u8)>,
+        flood_query: bool,
+        fail_receive: bool,
         invalid_nonce: bool,
         bad_mode: bool,
         unit_bitmap: Option<[u8; 4]>,
@@ -1449,6 +1534,15 @@ mod tests {
                 notify(&mut s, PCE_RESPONSE, response);
             }
             if id == FREE_COMMAND {
+                if s.drop_query == Some((data[1], data[2])) {
+                    if s.flood_query {
+                        for _ in 0..256 {
+                            notify(&mut s, FREE_RESPONSE, vec![31, 0xff, 0xff]);
+                        }
+                    }
+                    return Ok(());
+                }
+
                 if data[0] == 0 {
                     assert!(
                         s.target.is_none() || s.target == Some(0),
@@ -1552,6 +1646,8 @@ mod tests {
                         });
                         if s.master_mode {
                             response.extend([if s.wrong_pc_owner { 19 } else { 0 }, 0xff, 0xff]);
+                        } else {
+                            response.extend([data[4], 0xff, 0xff]);
                         }
                     }
                     (0x16, 0x7c) => {
@@ -1632,6 +1728,10 @@ mod tests {
             Ok(())
         }
         fn receive(&mut self, _: Duration) -> Result<Option<Notification>> {
+            ensure!(
+                !self.0.borrow().fail_receive,
+                "modeled GATT receive failure"
+            );
             Ok(self.0.borrow_mut().pending.pop_front())
         }
         fn close(&mut self) -> Result<()> {
@@ -3096,6 +3196,156 @@ mod tests {
         let before = state.borrow().writes.len();
         assert!(crate::settings::read(&mut s, 13, "lamp").is_err());
         assert_eq!(state.borrow().writes.len(), before);
+    }
+    fn slave_with_known_master() -> (BleSession, Rc<RefCell<State>>) {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_info = Some(vec![1, 0x11, 1]);
+        state.borrow_mut().master_stock_reply = Some(vec![0x11, 0, 0xff]);
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        (session, state)
+    }
+    #[test]
+    fn identity_timeout_permits_one_owner_checked_cleanup_but_no_further_queries() {
+        let (mut session, state) = slave_with_known_master();
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        assert!(session.command(4, 0x32, 0x9c, &[0], 0x9e).is_err());
+        assert!(session.poisoned && session.read_timeout_cleanup);
+        let before = state.borrow().writes.len();
+        assert!(session.command(0, 1, 0x1c, &[0], 0x1e).is_err());
+        assert_eq!(before, state.borrow().writes.len());
+        session.stop().unwrap();
+        assert!(!state.borrow().slave_master_connected);
+        assert!(session.poisoned);
+        let writes = state.borrow().writes[before..].to_vec();
+        assert_eq!(
+            writes,
+            &[
+                (PCE_COMMAND, vec![0, 6, 0]),
+                (FREE_COMMAND, vec![0, 0x32, 0x10, 0, 3, 0, 0]),
+                (PCE_COMMAND, vec![0, 0x0c, 0]),
+            ]
+        );
+        let before = state.borrow().writes.len();
+        assert!(session.stop().is_err());
+        assert!(session.command(0, 1, 0x1c, &[0], 0x1e).is_err());
+        assert_eq!(before, state.borrow().writes.len());
+    }
+    #[test]
+    fn identity_timeout_cleanup_stops_selected_component_before_logical_master() {
+        let (mut session, state) = slave_with_known_master();
+        session.linked_slot = Some(13);
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        assert!(session.command(13, 0x32, 0x9c, &[0], 0x9e).is_err());
+        let before = state.borrow().writes.len();
+        session.stop().unwrap();
+        let writes = state.borrow().writes[before..].to_vec();
+        assert_eq!(
+            writes,
+            vec![
+                (FREE_COMMAND, vec![13, 0x32, 0x10, 0, 3, 0, 0]),
+                (PCE_COMMAND, vec![0, 6, 0]),
+                (FREE_COMMAND, vec![0, 0x32, 0x10, 0, 3, 0, 0]),
+                (PCE_COMMAND, vec![0, 0x0c, 0]),
+            ]
+        );
+        assert!(!state.borrow().slave_master_connected);
+    }
+    #[test]
+    fn write_timeouts_foreign_owners_and_notification_floods_never_grant_cleanup() {
+        for case in 0..3 {
+            let (mut session, state) = slave_with_known_master();
+            let (group, command, params): (u8, u8, &[u8]) = match case {
+                0 => (0x10, 0x10, &[1]),
+                _ => (0x32, 0x9c, &[0]),
+            };
+            state.borrow_mut().drop_query = Some((group, command));
+            if case == 1 {
+                session.slave_master_link = SlaveMasterLink::Active { owner: 19 };
+            }
+            state.borrow_mut().flood_query = case == 2;
+            assert!(session
+                .command(4, group, command, params, command + 2)
+                .is_err());
+            assert!(session.poisoned && !session.read_timeout_cleanup);
+            let before = state.borrow().writes.len();
+            assert!(session.stop().is_err());
+            assert_eq!(before, state.borrow().writes.len());
+        }
+    }
+    #[test]
+    fn later_transport_error_or_overflow_revokes_identity_timeout_cleanup() {
+        for case in 0..3 {
+            let (mut session, state) = slave_with_known_master();
+            state.borrow_mut().drop_query = Some((0x32, 0x9c));
+            assert!(session.command(4, 0x32, 0x9c, &[0], 0x9e).is_err());
+            assert!(session.read_timeout_cleanup);
+            state.borrow_mut().fail_receive = case == 1;
+            if case == 0 {
+                for _ in 0..256 {
+                    notify(&mut state.borrow_mut(), FREE_RESPONSE, vec![31, 0xff, 0xff]);
+                }
+            }
+            if case == 2 {
+                notify(&mut state.borrow_mut(), FREE_RESPONSE, vec![0; 21]);
+                assert!(session.stop().is_err());
+            } else {
+                assert!(session.command(0, 1, 0x1c, &[0], 0x1e).is_err());
+            }
+            assert!(!session.read_timeout_cleanup);
+            let before = state.borrow().writes.len();
+            assert!(session.stop().is_err());
+            assert_eq!(before, state.borrow().writes.len());
+        }
+    }
+    #[test]
+    fn timeout_cleanup_checks_current_owner_at_every_write_boundary() {
+        let (mut session, state) = slave_with_known_master();
+        session.linked_slot = Some(13);
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        assert!(session.command(13, 0x32, 0x9c, &[0], 0x9e).is_err());
+        session.cleanup_in_progress = true;
+        session.slave_master_link = SlaveMasterLink::Active { owner: 19 };
+        let before = state.borrow().writes.len();
+        for (id, bytes) in [
+            (PCE_COMMAND, vec![0, 6, 0]),
+            (PCE_COMMAND, vec![0, 6, 13]),
+            (FREE_COMMAND, vec![0, 0x32, 0x10, 0, 3, 0, 0]),
+            (FREE_COMMAND, vec![13, 0x32, 0x10, 0, 3, 0, 0]),
+            (PCE_COMMAND, vec![0, 0x0c, 0]),
+        ] {
+            assert!(session.write(id, &bytes).is_err());
+        }
+        assert_eq!(before, state.borrow().writes.len());
+        session.cleanup_in_progress = false;
+    }
+    #[test]
+    fn late_foreign_master_start_prevents_even_selected_component_timeout_stop() {
+        let (mut session, state) = slave_with_known_master();
+        session.linked_slot = Some(13);
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        assert!(session.command(13, 0x32, 0x9c, &[0], 0x9e).is_err());
+        notify(
+            &mut state.borrow_mut(),
+            FREE_RESPONSE,
+            vec![0, 0x32, 0x12, 1, 19, 0xff, 0xff],
+        );
+        let before = state.borrow().writes.len();
+        assert!(session.stop().is_err());
+        assert_eq!(before, state.borrow().writes.len());
+    }
+    #[test]
+    fn timeout_cleanup_rejects_wrong_owner_and_never_proceeds_to_gateway_stop() {
+        let (mut session, state) = slave_with_known_master();
+        state.borrow_mut().drop_query = Some((0x32, 0x9c));
+        assert!(session.command(4, 0x32, 0x9c, &[0], 0x9e).is_err());
+        state.borrow_mut().slave_master_stop_reply = Some(vec![0, 19, 0xff, 0xff]);
+        assert!(session.stop().is_err());
+        assert!(session.poisoned && !session.cleanup_in_progress);
+        assert!(!state
+            .borrow()
+            .writes
+            .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
     }
     #[test]
     fn firmware_and_mode_switching_are_rejected_before_gatt_dispatch() {

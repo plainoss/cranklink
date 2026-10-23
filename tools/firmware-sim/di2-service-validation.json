@@ -1,0 +1,86 @@
+{
+  "scope": "partial PC-link service execution and CLI identity-timeout cleanup regression",
+  "full_topology_validated": false,
+  "original_missing_reply_cause_reproduced": false,
+  "restored_shifting_validated": false,
+  "modeled": [
+    "zero-initialized RAM and receive ABI",
+    "battery JSRV4 send/queue service",
+    "BLE authentication, gateway PCE replies, metadata and notification delivery",
+    "deliberately lost identity GET reply"
+  ],
+  "not_executed": [
+    "battery housekeeping after directed stop receipt",
+    "complete WU111 stop",
+    "Nordic RF firmware",
+    "complete boot/NVM initialization",
+    "derailleur settings/shifting"
+  ],
+  "baseline_commit": "6f5683ef3a99840d64a1bf059e7f616919dd4312",
+  "baseline_cli_sha256": "6898fbe5d58bc55b10327fae6dfebc472a79b9d209d756400b998a5d089eda3e",
+  "fixed_cli_sha256": "0126ffac071b9dd72b3962917ab0b8c9768ad092c6b885b09010438aa272bf83",
+  "tested_source_sha256": {
+    "src/ble.rs": "d059adb38ae843bcef2179caea4dcc064ecc5b00ad989e658f2fbbe1a48d1cab",
+    "tools/firmware-sim/fw_sim/mn101.py": "c1c4c0f53b7de98cb7479da3d476c5a46a5790307db28dd72e44349d34be5a59",
+    "tools/firmware-sim/fw_sim/mn101_decode.py": "a8db8dda136cf3fc90fabf055aaa20d1a0863439f8af3664c37a6c6f209fe382",
+    "tools/firmware-sim/fw_sim/di2_service.py": "550b57fd0e3edbf3b595f4d19811c51284681039c72d0fa067e74913d00e08f0",
+    "tools/firmware-sim/fw_sim/di2_gatt.py": "36bd02ee6d9b7b69143c98863b716d8c31665983481d1774731a23509fe1f106",
+    "tools/firmware-sim/verify_di2.py": "00024f6ebc3dd6a2d147cf96db32f8b7a55eb0ec1d71c05f1a41a10d6ca72bb2"
+  },
+  "battery_cases": [
+    {
+      "filename": "BTDN110.4.5.0.dat",
+      "sha256": "65af4a0e68d52b43bc94660ab3e5d14c97021d59f528ac3846c8f221364c9f3b",
+      "before": {
+        "cli_exit_code": 1,
+        "battery_service_active": true,
+        "firmware_start_returned": true
+      },
+      "after": {
+        "cli_exit_code": 1,
+        "battery_service_active": false,
+        "firmware_start_returned": true,
+        "firmware_stop_receipt_reached": true,
+        "firmware_stop_handler_returned": false,
+        "firmware_start_instructions": 128,
+        "firmware_stop_instructions_to_receipt": 224
+      },
+      "passed": true
+    },
+    {
+      "filename": "2BTDN110.4.5.0.dat",
+      "sha256": "46d1b37f00f5d9d1b54cb7112c4d8841f996438b05f614b4a9947366781a76ef",
+      "before": {
+        "cli_exit_code": 1,
+        "battery_service_active": true,
+        "firmware_start_returned": true
+      },
+      "after": {
+        "cli_exit_code": 1,
+        "battery_service_active": false,
+        "firmware_start_returned": true,
+        "firmware_stop_receipt_reached": true,
+        "firmware_stop_handler_returned": false,
+        "firmware_start_instructions": 128,
+        "firmware_stop_instructions_to_receipt": 224
+      },
+      "passed": true
+    }
+  ],
+  "wu_main": {
+    "filename": "EWWU101.4.6.0.dat",
+    "sha256": "1e68ca8b0fc07d2fc8dc831f6564e27e60d57670409829104636a4d4c7183183",
+    "start_returned": true,
+    "start_instructions": 30,
+    "stop_returned": false,
+    "stop_error": "unmodeled memory write 0x3ff4/1"
+  },
+  "checks": {
+    "rust_tests": 285,
+    "web_unit_tests": 64,
+    "simulator_tests": 164,
+    "simulator_skipped": 5,
+    "independent_review": "no remaining scoped blockers",
+    "fresh_wasm_production_smoke": true
+  }
+}

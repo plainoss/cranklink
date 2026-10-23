@@ -56,8 +56,13 @@ reports an unknown state rather than claiming success. Foreign-owner and late
 start receipts also cannot pass as confirmed cleanup. This includes inventory
 sessions with no selected component. Missing, rejected or mismatched stop
 receipts cannot report successful cleanup.
-Timeouts still fence further protocol traffic; this change does not attempt
-automatic recovery after a poisoned session.
+A subsequent offline reproduction found that unconditional timeout fencing
+prevented this stop sequence from running after the observed identity-read
+failures. Identity GET timeouts now allow one cleanup-only attempt, provided
+normal/slave discovery established a master owned by the local PC. Ordinary
+commands remain poisoned. Write/auth/firmware failures, unknown/foreign owners,
+transport errors and notification overflow do not receive this exception. A
+later transport error, oversized notification or flood revokes it.
 
 Rust regressions model the battery-master start remaining active after a gateway
 acknowledgement. They check explicit stop ordering, partial discovery failures,
@@ -78,22 +83,49 @@ remote firmware remains in PC-link, including after GATT closes. This reproduces
 the acknowledgement-without-release failure class; it does not establish that
 bus packet loss caused the observed hardware failure.
 
-There is no hash-pinned EW-WU111/BT-DN110 executable profile in the current
-simulator. The new master-stop sequence needs validation on that exact hardware
-before claiming that it restores shifting. No hardware was accessed during
-this offline investigation.
+Partial, hash-pinned Di2 service execution is now available as described below.
+The new master-stop sequence still needs validation on the physical bike before
+claiming that it restores shifting. No hardware was accessed during this offline
+investigation.
 
 ## Firmware acquisition follow-up
 
 Official images for both BT-DN110 board variants, the WU111 main firmware family
 (`EWWU101`) and the separate Nordic application/bootloader/SoftDevice have now
 been acquired and hash-pinned. The main images are legacy DCAS2i with corroborated
-MN101-family vector mapping, which the simulator's ARM backend cannot execute.
+MN101-family vector mapping. A separate bounded MN101 interpreter now executes
+selected service handlers; the ARM backend remains unchanged.
 The radio application is a separate Thumb image, not a replacement for the main
 MCUs' service-state logic. No new executable topology coverage is claimed.
 
 The [acquisition guide](firmware-simulator.md#di2-research-inputs) records the
 source/model-mapping evidence, exact hashes, repeatable checks and the remaining
-CPU/handler work. This improves input provenance and makes the coverage gap
-reproducible; it does not increase confidence that the proposed stop command
-works on the physical BT-DN110 until the relevant handlers actually execute.
+CPU/peripheral work.
+
+## Firmware-backed timeout reproduction
+
+`di2_service.py` executes the original PC-link handler in both battery images
+(board 1 entry `0x6749`, board 2 `0x678c`) and WU-family main firmware
+(`0x5854`). The fixture models the receive ABI and zero-initialized RAM. The
+battery's JSRV4 send service is an explicit modeled queue boundary; packet
+construction and service mode changes execute original instructions.
+
+Both battery start handlers return after 128 original instructions and retain
+mode 1 / the supplied owner. Both stop paths clear the mode and produce the
+actual directed `32/12 00 <requester> FF FF` packet. Execution pauses at that
+receipt, BEFORE the remaining battery housekeeping; it is not a completed stop
+handler or proof of restored shifting. The receipt echoes the requester's byte,
+even if it differs from the stored owner, so the client's observed-owner
+precondition is essential. The WU-family start handler returns, but its stop
+traps at an unmodeled `0x3FF4` peripheral write. RF, Nordic firmware, bus timing,
+complete boot, derailleurs and shifting remain outside this execution scope.
+
+`verify_di2.py` runs the actual CLI against this battery service and a narrowly
+modeled normal/slave gateway. It deliberately drops the first master stock GET
+reply. PR base `6f5683e` leaves the actual battery service mode active after the
+CLI closes. The fix issues the explicit stop, consumes the firmware-produced
+receipt and then stops the modeled gateway; both battery variants pass. The
+original read still reports an error and is not retried. This establishes an
+offline reproduction and regression check for the cleanup omission. It does
+not establish why the bike's component reads stopped responding or validate
+the complete WU111/BT-DN110 topology.
