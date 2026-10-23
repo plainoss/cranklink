@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 const schemasDir = resolve(root, "web-instrument", "schemas");
 
-const models = ["ep800-crg", "ep600", "ep801", "ep500", "e5100", "e8000", "e7000", "e6100", "e6000"];
+const models = ["ep800-crg", "ep600", "ep801", "ep500", "e5100", "e8000", "e7000", "e6100", "e6000", "e6001", "e6002-pre33", "e6002"];
 
 for (const model of models) {
   const output = execFileSync(

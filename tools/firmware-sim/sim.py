@@ -18,6 +18,14 @@ from fw_sim.pull import (
 )
 
 
+def reject_output_aliases(parser, output, inputs):
+    """A report must never overwrite an image or persistent storage file."""
+    for name, source in inputs:
+        if (output.resolve() == source.resolve()
+                or (output.exists() and source.exists() and output.samefile(source))):
+            parser.error(f'--output must not refer to the {name} file')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -39,6 +47,14 @@ def main():
     pull_cmd.add_argument('--force', action='store_true', help='re-download and overwrite cached files')
     pull_cmd.add_argument('--fixtures-output', type=Path, help='write fixture manifest JSON for matrix')
 
+    cpu = sub.add_parser('cpu-probe', help='execute hash-pinned MN101 CPU/region GET probes (no transport or writes)')
+    cpu.add_argument('--motor', required=True, type=Path)
+    cpu.add_argument('--output', required=True, type=Path)
+    storage = sub.add_parser('region-storage', help='stock E6002 SET/cold reload with a modeled resident ROM write service')
+    storage.add_argument('--motor', required=True, type=Path)
+    storage.add_argument('--state', required=True, type=Path, help='synthetic file-backed NVM; existing contents are preserved')
+    storage.add_argument('--region', required=True, type=int, choices=(0, 1, 4))
+    storage.add_argument('--output', required=True, type=Path)
     catalog = sub.add_parser('inventory', help='classify all supplied images and expose coverage gaps')
     catalog.add_argument('--root', type=Path, action='append', required=True)
     catalog.add_argument('--output', type=Path, required=True)
@@ -67,6 +83,15 @@ def main():
     serve.add_argument('--drop-replies', action='store_true', help='drop normal GET replies for client timeout testing')
 
     args = parser.parse_args()
+
+    if args.command == 'resident':
+        reject_output_aliases(parser, args.output, [('image', args.image)])
+
+    if args.command in ('cpu-probe', 'region-storage'):
+        inputs = [('motor', args.motor)]
+        if args.command == 'region-storage':
+            inputs.append(('state', args.state))
+        reject_output_aliases(parser, args.output, inputs)
 
     if args.command == 'profiles':
         print(json.dumps(PROFILES, indent=2))
@@ -104,6 +129,29 @@ def main():
         print(json.dumps(results, indent=2))
         return
 
+    if args.command == 'region-storage':
+        from fw_sim.mn101_storage import verify_region
+        # Opening the report first detects path/permission errors before a save.
+        with args.output.open('w') as stream:
+            try:
+                report = verify_region(args.motor, args.state, args.region)
+            except Exception as error:
+                report = dict(passed=False, hardware_access=False,
+                              level='isolated stock storage routines with modeled resident ROM', error=str(error))
+            stream.write(json.dumps(report, indent=2)+'\n')
+        print(json.dumps({key: report[key] for key in ('passed', 'hardware_access')}))
+        if not report['passed']: raise SystemExit(1)
+        return
+    if args.command == 'cpu-probe':
+        from fw_sim.mn101 import probe
+        try:
+            report = probe(args.motor)
+        except Exception as error:
+            report = dict(passed=False, hardware_access=False, cases=[], error=str(error))
+        args.output.write_text(json.dumps(report, indent=2)+'\n')
+        print(json.dumps({key: report[key] for key in ('passed', 'hardware_access')}))
+        if not report['passed']: raise SystemExit(1)
+        return
     if args.command == 'inventory':
         from fw_sim.inventory import inventory
         report, fixtures = inventory(args.root)

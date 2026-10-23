@@ -36,13 +36,14 @@ Firmware images are not bundled.
 | EP800 | Profiles, speed, wheel, lamp | Yes² | No |
 | EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Profiles, speed, wheel, lamp | Opt-in¹ | No |
 | E5100 | Common settings, speed | Opt-in¹ | No |
-| E8000, E7000, E6100, E6000 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
+| E8000, E7000, E6100, E6000, E6001 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
+| E6002, E6012 | Wheel, mounting angle, lamp; EU/US/Korea region from D3.3.0 | Opt-in¹ | No |
 
 All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 
-Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md).
+Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and remaining component coverage gaps are described in the [firmware simulator documentation](docs/firmware-simulator.md). E6002 D3.3.0/D3.4.0 additionally execute region SET and fresh-CPU storage reload under an explicit resident ROM model; this does not validate protected sessions or physical hardware.
 
 ¹ CLI only, with `--allow-unverified-model`. Not run on hardware. D (DCAS) writes have protocol tests; the RX (M) writer is documented for the EP800 family only and is untested for others.
 
