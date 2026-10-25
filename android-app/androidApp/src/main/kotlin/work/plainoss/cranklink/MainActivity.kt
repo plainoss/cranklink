@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -97,6 +98,14 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     var exportFile by remember { mutableStateOf<String?>(null) }
     val busy = state.phase !in listOf(AppPhase.Ready, AppPhase.Disconnected)
     val connected = state.identity != null
+    BackHandler(enabled = connected || busy || page != 0) {
+        when (state.phase) {
+            AppPhase.Saving, AppPhase.Restoring, AppPhase.Disconnecting ->
+                vm.showNotice("Wait for the current operation to finish before disconnecting.")
+            AppPhase.Connecting, AppPhase.Reading -> vm.cancelConnection()
+            else -> if (page == 2) page = 0 else if (connected) disconnect = true else page = 0
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event ->

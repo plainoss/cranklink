@@ -62,6 +62,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var scanner: BleScanner? = null
     private var scanJob: Job? = null
     private var sessionJob: Job? = null
+    private var disconnectQueued = false
 
     private val backend = object : AppBackend {
         override suspend fun execute(request: JsonObject): JsonObject = withContext(nativeDispatcher) {
@@ -91,11 +92,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 reply["error"]?.let { error(it.jsonPrimitive.content) }
                 reply["result"]?.jsonObject ?: error("The motor returned an empty result.")
             } catch (error: Throwable) {
-                // Drop the radio immediately, then clear the thread-local Rust session on this worker.
-                transport?.close()
+                // Release any retained master session before closing a healthy
+                // radio. Native failures may already have performed this cleanup.
                 if (error !is LinkageError && transport != null) {
                     runCatching { NativeCore.invoke(transport, "{\"op\":\"disconnect\"}", backupDir.absolutePath) }
                 }
+                transport?.close()
                 if (error is LinkageError) throw IllegalStateException(
                     "This app build is missing Bluetooth support. Install a complete APK for this device.", error,
                 )
@@ -169,11 +171,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun restore(file: String) = run { controller.restore(file) }
     fun disconnect() = run { releaseSession() }
 
-    /** Abort only a read/connect wait; normal disconnect keeps the protocol cleanup path intact. */
+    /** Finish the bounded read/connect, then release master routing before closing GATT. */
     fun cancelConnection() {
-        if (controller.state.value.phase !in setOf(AppPhase.Connecting, AppPhase.Reading)) return
-        gatt?.close() // Wakes JNI immediately instead of queuing behind its blocked operation.
-        sessionJob = viewModelScope.launch { releaseSession() }
+        if (disconnectQueued || controller.state.value.phase !in setOf(AppPhase.Connecting, AppPhase.Reading)) return
+        disconnectQueued = true
+        val message = "Finishing the current operation before disconnecting…"
+        _notice.value = message
+        sessionJob = viewModelScope.launch {
+            try {
+                releaseSession()
+            } finally {
+                disconnectQueued = false
+                if (_notice.value == message) _notice.value = null
+            }
+        }
     }
     fun showNotice(message: String?) { _notice.value = message }
 
@@ -304,17 +315,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         stopScan()
-        val transport = gatt
-        gatt = null
-        transport?.close() // Cancellation must wake an in-flight native GATT wait immediately.
-        // A view-model cleanup must outlive viewModelScope cancellation.
+        // Let any bounded native operation finish before closing a healthy
+        // radio: master routing must be restored through that connection.
+        // Outlive viewModelScope cancellation and wait for the controller's
+        // operation lock before releasing master routing on its JNI worker.
         CoroutineScope(SupervisorJob() + nativeDispatcher).launch {
             try {
-                transport?.let {
-                    runCatching { NativeCore.invoke(transport, "{\"op\":\"disconnect\"}", backupDir.absolutePath) }
-                }
+                releaseSession()
             } finally {
-                transport?.close()
                 nativeDispatcher.close()
             }
         }

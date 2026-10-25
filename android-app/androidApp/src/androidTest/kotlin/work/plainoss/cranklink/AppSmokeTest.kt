@@ -18,6 +18,25 @@ import java.util.concurrent.TimeUnit
 class AppSmokeTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 
+    @Test fun systemBackConfirmsDisconnectWithoutLosingPendingEdits() {
+        ui.onNodeWithText("Open demo").performScrollTo().performClick()
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Assist profiles").fetchSemanticsNodes().isNotEmpty() }
+        ui.onAllNodesWithText("Peak torque").onFirst().performClick()
+        ui.onNode(hasSetTextAction()).performTextClearance()
+        ui.onNode(hasSetTextAction()).performTextInput("55")
+        ui.onNodeWithText("Stage change").performClick()
+        ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
+        ui.onNodeWithText("Disconnect bike?").assertIsDisplayed()
+        ui.onNodeWithText("1 pending change will be discarded.").assertIsDisplayed()
+        ui.onNodeWithText("Cancel").performClick()
+        ui.onNodeWithText("1 pending change").assertIsDisplayed()
+        assertFalse(ui.activity.isFinishing)
+        ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
+        ui.onNodeWithText("Disconnect", useUnmergedTree = true).performClick()
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Open demo").fetchSemanticsNodes().isNotEmpty() }
+        assertFalse(ui.activity.isFinishing)
+    }
+
     @Test fun explicitlyClosedGattCannotBeRevivedByAQueuedConnect() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val gatt = AndroidGatt(context, "00:00:00:00:00:00", "000000")

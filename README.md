@@ -34,7 +34,7 @@ Firmware images are not bundled.
 
 The [Android app](android-app/README.md) provides a native Kotlin interface with a Kotlin Multiplatform session layer and the same Rust tuning engine as the web app. It connects to **Shimano STEPS e-bikes over Bluetooth LE only**, with staged edits, verified saves, and local backup import/export. Di2 component configuration and firmware flashing are outside the Android app's scope.
 
-Requires Android 8.0 or later. Build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. The Android BLE path has automated protocol and session tests; it has not been tested on a physical bike.
+Requires Android 8.0 or later. Build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. System Back confirms disconnect and waits for active writes. The Android BLE path has automated protocol and session tests; it has not been tested on a physical bike.
 
 ## Supported motors
 

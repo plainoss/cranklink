@@ -50,6 +50,8 @@ The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/acti
 4. Change values locally, review the pending edits, and save. Discarding changes sends no setting writes.
 5. Use backups to export or import a setting backup and restore it to the matching drive unit. Disconnect when finished so the app can release the motor's PC-link session.
 
+System Back asks before disconnecting a connected bike and discarding pending edits. During a save or restore it keeps the app open until the operation finishes. Cancelling a connection or read waits for the current bounded operation before disconnecting. Cleanup releases the motor and gateway session before closing Bluetooth; cancelled operations also complete this cleanup before returning.
+
 **Demo mode** uses a separate in-memory EP800 bike. Demo reads and edits do not call JNI, scan for devices, connect to Bluetooth, or write bike settings. Its values and changes are temporary.
 
 ## Settings and backups

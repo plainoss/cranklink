@@ -2,6 +2,9 @@ package work.plainoss.cranklink.shared
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -20,6 +23,84 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SessionControllerTest {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun cancellingQueuedDisconnectStillWaitsForTheSaveAndReleasesTheSession() = runTest {
+        val backend = FakeBackend()
+        val controller = SessionController(backend)
+        controller.connect()
+        controller.stage("lamp", "1")
+        val saving = CompletableDeferred<Unit>()
+        val finishSave = CompletableDeferred<Unit>()
+        val cleanedUp = CompletableDeferred<Unit>()
+        backend.handler = { request ->
+            when (request.string("op")) {
+                "commit" -> { saving.complete(Unit); finishSave.await(); null }
+                "disconnect" -> { delay(1); cleanedUp.complete(Unit); null }
+                else -> null
+            }
+        }
+        val save = launch { controller.commit() }
+        saving.await()
+        val disconnect = launch { controller.disconnect() }
+        runCurrent()
+        disconnect.cancel()
+        runCurrent()
+        assertFalse(cleanedUp.isCompleted)
+        assertEquals(AppPhase.Saving, controller.state.value.phase)
+        finishSave.complete(Unit)
+        save.join()
+        disconnect.join()
+        assertTrue(cleanedUp.isCompleted)
+        assertEquals("1", backend.snapshot["snapshot"]!!.jsonObject["values"]!!.jsonObject["lamp"]!!.jsonObject.string("value"))
+        assertEquals(AppPhase.Disconnected, controller.state.value.phase)
+        assertEquals(1, backend.requests.count { it.string("op") == "commit" })
+        assertEquals(1, backend.requests.count { it.string("op") == "disconnect" })
+    }
+
+    @Test
+    fun cancelledOperationsCompleteCleanupBeforeReturning() = runTest {
+        for (operation in listOf("connect", "read", "commit", "restore")) {
+            val backend = FakeBackend().apply { backups = listOf("test.backup.json") }
+            val controller = SessionController(backend)
+            if (operation != "connect") controller.connect()
+            if (operation == "commit") controller.stage("lamp", "1")
+            val entered = CompletableDeferred<Unit>()
+            val cleanedUp = CompletableDeferred<Unit>()
+            backend.handler = { request ->
+                when (request.string("op")) {
+                    operation -> {
+                        entered.complete(Unit)
+                        awaitCancellation()
+                    }
+                    "disconnect" -> {
+                        // Cleanup must finish even though its caller was cancelled.
+                        delay(1)
+                        cleanedUp.complete(Unit)
+                        null
+                    }
+                    else -> null
+                }
+            }
+            val job = launch {
+                when (operation) {
+                    "connect" -> controller.connect()
+                    "read" -> controller.refresh()
+                    "commit" -> controller.commit()
+                    "restore" -> controller.restore("test.backup.json")
+                }
+            }
+            entered.await()
+            job.cancelAndJoin()
+            assertTrue(job.isCancelled, operation)
+            assertTrue(cleanedUp.isCompleted, "$operation left the native session open")
+            assertEquals(1, backend.requests.count { it.string("op") == "disconnect" }, operation)
+            assertEquals(AppPhase.Disconnected, controller.state.value.phase, operation)
+            assertTrue(controller.state.value.staged.isEmpty(), operation)
+            assertEquals(null, controller.state.value.identity, operation)
+        }
+    }
+
     @Test
     fun newE600xIdentitiesSelectTheirFirmwareBoundSchema() {
         for ((series, name, version, slug) in listOf(

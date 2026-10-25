@@ -1,11 +1,13 @@
 package work.plainoss.cranklink.shared
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -156,18 +158,20 @@ class SessionController(private val backend: AppBackend) {
         }
     }
 
-    suspend fun disconnect() = operation.withLock {
-        mutableState.value = state.value.copy(phase = AppPhase.Disconnecting, error = null,
-            status = "Disconnecting from the motor and Bluetooth…")
-        try {
-            val result = execute("disconnect")
-            mutableState.value = AppState(backups = parseBackups(result) ?: state.value.backups,
-                status = "Disconnected.")
-        } catch (error: Throwable) {
-            val backups = state.value.backups
-            mutableState.value = AppState(backups = backups, error = error.message ?: "Disconnect failed.",
-                status = "Could not confirm the motor disconnected. Check the bike before reconnecting.")
-            if (error is CancellationException) throw error
+    suspend fun disconnect() = withContext(NonCancellable) {
+        operation.withLock {
+            mutableState.value = state.value.copy(phase = AppPhase.Disconnecting, error = null,
+                status = "Disconnecting from the motor and Bluetooth…")
+            try {
+                val result = execute("disconnect")
+                mutableState.value = AppState(backups = parseBackups(result) ?: state.value.backups,
+                    status = "Disconnected.")
+            } catch (error: Throwable) {
+                val backups = state.value.backups
+                mutableState.value = AppState(backups = backups, error = error.message ?: "Disconnect failed.",
+                    status = "Could not confirm the motor disconnected. Check the bike before reconnecting.")
+                if (error is CancellationException) throw error
+            }
         }
     }
 
@@ -187,15 +191,15 @@ class SessionController(private val backend: AppBackend) {
     private suspend fun failUncertain(error: Throwable, status: String) {
         val oldBackups = state.value.backups
         mutableState.value = AppState(backups = oldBackups, error = error.message ?: "The operation failed.", status = status)
+        // Cancellation invalidates the live state, but must not skip releasing
+        // the native master session. Keep the original error after cleanup.
+        withContext(NonCancellable) {
+            // An interrupted batch may have produced new backups before failing.
+            val backups = try { parseBackups(execute("backups")) } catch (_: Exception) { null }
+            if (backups != null) mutableState.value = state.value.copy(backups = backups)
+            try { execute("disconnect") } catch (_: Exception) { /* The original error explains recovery. */ }
+        }
         if (error is CancellationException) throw error
-        // An interrupted batch may have produced new backups before failing.
-        val backups = try { parseBackups(execute("backups")) } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) { null }
-        if (backups != null) mutableState.value = state.value.copy(backups = backups)
-        try { execute("disconnect") } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) { /* The original error explains recovery. */ }
     }
 
     private suspend fun execute(op: String, identity: MotorIdentity? = null): JsonObject = execute(buildJsonObject {
