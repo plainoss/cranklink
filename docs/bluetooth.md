@@ -34,7 +34,7 @@ Writes that need gateway master routing (destination, wheel circumference, lamp,
 
 ## Disconnect and Di2 recovery
 
-Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware to handle its radio-disconnect event. They do not send an explicit logical-master `32/10` stop, gateway `0C/00` stop or gateway reset. This matches the recovered vendor normal-disconnect path. Explicit stop acknowledgements did not restore either tested bike; closing GATT alone preserved normal operation on both EW-WU111/BT-DN110 Di2 and SC-EM800/EP800 STEPS hardware.
+Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware to handle its radio-disconnect event. They do not send an explicit logical-master `32/10` stop, gateway `0C/00` stop or gateway reset. This matches the standard client normal-disconnect path. Explicit stop acknowledgements did not restore either tested bike; closing GATT alone preserved normal operation on both EW-WU111/BT-DN110 Di2 and SC-EM800/EP800 STEPS hardware.
 
 The browser retains its normal/slave service session between commands without stopping the logical master. Final Disconnect closes GATT. Changing routing roles on an active retained session requires disconnect/reconnect. Explicit master-routing sessions keep their acknowledged component stop and routing-restoration sequence.
 
@@ -48,7 +48,7 @@ A complete reply with valid battery status but an unknown family opens a choice 
 
 ### Validate automatic detection on a phone
 
-The pre-service metadata handler has offline firmware coverage and vendor bytecode establishes the ordering. Explicit pre-service queries still need physical validation. Use the PR preview for testing; do not use the production URL until that change is merged and deployed.
+The pre-service metadata handler has offline firmware coverage and client packet sequencing establishes the ordering. Explicit pre-service queries still need physical validation. Use the PR preview for testing; do not use the production URL until that change is merged and deployed.
 
 1. Close E-TUBE and any other app connected to the bike. Open the preview in Chrome on Android or Bluefy on iPhone. Leave **Bluetooth options → Bike system override** at **Detect automatically**.
 2. On the shifting-only bike, enable Bluetooth and connect once. Expect **Di2 shifting only detected** above the settings. Read one component's settings without saving anything.

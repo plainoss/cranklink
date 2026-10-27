@@ -19,7 +19,7 @@ RECORD_TABLE, RECORD_STATE, COMMIT = 0x10DFC, 0x20001220, 0x284CA
 HYDRATE = {0x23:(0x20002EA7,1), 0x20:(0x20002CDE,2), 0x0D:(0x20002D59,1),
            0x29:(0x2000047C,2)}
 
-# Wear-leveling flash journal configuration from D4.2.0 reverse engineering
+# Wear-leveling flash journal configuration for D4.2.0
 JOURNAL_BANKS = 3
 JOURNAL_BANK_SIZE = 6144  # 6 KiB per bank
 # Retention limits per record across compaction: records 0x05, 0x06, 0x0A retain history
