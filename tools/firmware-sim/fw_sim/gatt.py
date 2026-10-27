@@ -25,6 +25,37 @@ USER_PROOF = bytes.fromhex('013a72c6d6f29630be3ec9dd85f5bd6be3')
 APP_PROOF = bytes.fromhex('02e1b6c78c19964a801c0bbf1c6cc7cea8')
 
 
+def generate_challenge_nonce(identity: bytes, sequence: int) -> bytes:
+    """Generate 16-byte challenge nonce matching D4.2.0 stock algorithm at 0x2F214.
+
+    Combines 6 component identity bytes with wrapping 16-bit sequence counter.
+    """
+    if len(identity) < 6:
+        identity = identity.ljust(6, b'\x00')
+    a, b, c, d, e, f = identity[:6]
+    counter = sequence & 0xFFFF
+    shift = 8 if (counter % 2 == 0) else 0
+
+    def inv(x):
+        return (~x) & 0xFFFFFFFF
+
+    words = [
+        ((a << 8) + inv(b) + (c << 8) + inv(d) + (e << 8) + inv(f) + ((counter << shift) & 0xFFFFFFFF)) & 0xFFFFFFFF,
+        (inv(a << 8) + inv(b) + inv(c << 8) + d + (e << 8) + f + inv((counter + 1) << shift)) & 0xFFFFFFFF,
+        ((a << 8) + b + inv(c << 8) + inv(d) + inv(e << 8) + f + (((counter + 2) << shift) & 0xFFFFFFFF)) & 0xFFFFFFFF,
+        ((f << 8) + inv(e) + (d << 8) + inv(c) + (b << 8) + inv(a) + inv((counter + 3) << shift)) & 0xFFFFFFFF,
+        (inv(f << 8) + inv(e) + inv(d << 8) + c + (b << 8) + a + (((counter + 4) << shift) & 0xFFFFFFFF)) & 0xFFFFFFFF,
+        ((e + (f << 8)) + inv(d << 8) + inv(c) + inv(b << 8) + a + inv((counter + 5) << shift)) & 0xFFFFFFFF,
+        ((a << 8) + inv(c) + (e << 8) + inv(b) + (d << 8) + inv(f) + (((counter + 6) << shift) & 0xFFFFFFFF)) & 0xFFFFFFFF,
+        (inv(b << 8) + inv(d) + inv(f << 8) + a + (c << 8) + e + inv((counter + 7) << shift)) & 0xFFFFFFFF,
+    ]
+    output = bytearray(16)
+    for index in range(8):
+        output[index * 2] = words[index] & 0xFF
+        output[index * 2 + 1] = (words[index] >> 8) & 0xFF
+    return bytes(output)
+
+
 class GattDevice:
     """Powered virtual bike state shared across radio connections.
 

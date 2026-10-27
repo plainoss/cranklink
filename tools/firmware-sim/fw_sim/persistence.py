@@ -19,6 +19,13 @@ RECORD_TABLE, RECORD_STATE, COMMIT = 0x10DFC, 0x20001220, 0x284CA
 HYDRATE = {0x23:(0x20002EA7,1), 0x20:(0x20002CDE,2), 0x0D:(0x20002D59,1),
            0x29:(0x2000047C,2)}
 
+# Wear-leveling flash journal configuration from D4.2.0 reverse engineering
+JOURNAL_BANKS = 3
+JOURNAL_BANK_SIZE = 6144  # 6 KiB per bank
+# Retention limits per record across compaction: records 0x05, 0x06, 0x0A retain history
+JOURNAL_HISTORY_LIMITS = {0x05: 7, 0x06: 3, 0x0A: 7}
+JOURNAL_PAGE_COUNTER_ADDR = 0x20002E2E
+
 
 def record_bytes(payload):
     body = payload.ljust(7,b'\xff')
@@ -31,6 +38,10 @@ class PersistentRecords:
         require(self.firmware_sha256 == SHA or speed_patch_ceiling(motor._image) is not None,
                 'persistent writes require exact EP800 D4.2.0 profile or supported eight-byte patch')
         self.motor, self.path, self.commits = motor, Path(path) if path is not None else None, 0
+        self.history = {}
+        self.active_bank = 0
+        self.compactions = 0
+        self.profile_mirrors = 0
         self.metadata = {}
         for index in range(63):
             length = motor.byte(RECORD_TABLE+16*index+4)
@@ -69,12 +80,20 @@ class PersistentRecords:
                     lamp=self.motor.byte(0x20002EA7),
                     tire_circumference=int.from_bytes(self.motor.u.mem_read(0x20002CDE,2),"little"),
                     auth_failures=self.motor.byte(0x20002D59),
-                    persisted_record_ids=sorted(self.records))
+                    persisted_record_ids=sorted(self.records),
+                    journal_bank=self.active_bank,
+                    journal_history={str(k):len(v) for k,v in sorted(self.history.items()) if v},
+                    compactions=self.compactions,
+                    profile_mirrors=self.profile_mirrors)
 
     def save(self, records):
         if self.path is None: return
         payload = json.dumps(dict(schema_version=1,firmware_sha256=self.firmware_sha256,
-                                  records={str(k):v.hex() for k,v in sorted(records.items())}),indent=2)+'\n'
+                                  records={str(k):v.hex() for k,v in sorted(records.items())},
+                                  journal_history={str(k):[item.hex() for item in v] for k,v in sorted(self.history.items()) if v},
+                                  active_bank=self.active_bank,
+                                  compactions=self.compactions,
+                                  profile_mirrors=self.profile_mirrors),indent=2)+'\n'
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode='w',dir=self.path.parent,prefix='.sim-state-',delete=False) as stream:
@@ -93,7 +112,29 @@ class PersistentRecords:
             if motor.byte(RECORD_STATE+index*10+6) == 1:
                 data = bytes(motor.u.mem_read(pointer,length))
                 require(sum(data)&255 == 0,'stock EEPROM checksum invalid')
-                pending.append(index);records[index] = data
+                pending.append(index)
+                if index in self.records and self.records[index] != data:
+                    if index not in self.history:
+                        self.history[index] = []
+                    self.history[index].insert(0, self.records[index])
+                    if len(self.history[index]) > 64:
+                        self.history[index] = self.history[index][:64]
+                    if index in (0x16, 0x17, 0x18):
+                        self.profile_mirrors += 1
+                records[index] = data
+
+        cur_page = (motor.byte(JOURNAL_PAGE_COUNTER_ADDR) + 1) & 0xFF
+        motor.write_byte(JOURNAL_PAGE_COUNTER_ADDR, cur_page)
+        if cur_page > 0 and (cur_page % 32 == 0):
+            self.active_bank = (self.active_bank + 1) % JOURNAL_BANKS
+            self.compactions += 1
+            for rec_id in list(self.history.keys()):
+                limit = JOURNAL_HISTORY_LIMITS.get(rec_id, 0)
+                if limit == 0:
+                    del self.history[rec_id]
+                else:
+                    self.history[rec_id] = self.history[rec_id][:limit]
+
         # A failed modeled commit cannot acknowledge a setting as persisted.
         self.save(records)
         self.records = records
