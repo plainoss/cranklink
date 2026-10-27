@@ -86,7 +86,7 @@ def main():
                      < next(i for i, e in enumerate(result['events'])
                             if e.get('bytes') == '000c00'))
     elif args.expect in ('radio-close', 'stock'):
-        # Hardware and the recovered vendor close path establish this traffic
+        # Hardware and official client traffic analysis establish this traffic
         # policy. This partial peer deliberately does NOT implement the gateway
         # radio-disconnect callback or manufacture a firmware stop/RAM reset.
         lifecycle = (len(executions) == 1 and result['battery_connected']

@@ -26,12 +26,12 @@ bytes in the bounded six/seven-parameter reply shapes. Motor firmware and
 authentication retain the strict DCAS parser. This parser correction is
 covered by captured-shape regressions, not a completed physical settings GET.
 
-Recovered vendor bytecode establishes the ordinary Home disconnect chain:
+Analysis of the mobile client establishes the ordinary Home disconnect chain:
 `BleConnectingCanceler` closes `ETubeDataLinksPort`, clears connected units with
 reset disabled, and closes the BLE link. The all-nonbattery-slave stop loop is
 firmware-update preparation; the reset/unlock helper is a separate operation.
 Neither is the ordinary disconnect recipe. Earlier interpretations of the
-partially decompiled methods incorrectly conflated those paths.
+client disconnect methods incorrectly conflated those paths.
 
 The one-second post-stop settling experiment also failed on STEPS. A separate
 gateway-reset experiment acknowledged `PCE 10` but turned off only the display;
@@ -46,7 +46,7 @@ into the motor-oriented master workflow.
 
 ## Pre-service routing detection research on 2026-10-23
 
-The recovered E-TUBE APK's actual `UnitRecognition.recognizeUnits` bytecode
+The official client's `UnitRecognition.recognizeUnits` routine
 orders `changeToPceSlave`, `validateMasterUnit`, `checkMasterUnitNext`,
 `checkConnectedUnits`, then `startPcConnectMode`. `validateMasterUnit` obtains
 cached master metadata or calls `BleManager.getMasterUnitInfo`, which sends
