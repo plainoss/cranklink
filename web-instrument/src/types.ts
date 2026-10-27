@@ -158,7 +158,7 @@ export interface MCPApprovalRequest {
   id: string;
   tool: string;
   params: any;
-  /** `regulated` rows change legal or factory limits and need the operator's acknowledgment. */
+  /** `regulated` rows change legal or factory limits and are marked for the operator. */
   diff: Array<{ name: string; label: string; before: any; after: any; regulated: boolean }>;
   /** The component the write would reach, shown to the operator. */
   target: { model: string; slot: number; serial: string };

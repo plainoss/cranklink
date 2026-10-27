@@ -54,7 +54,7 @@ The page answers a small Model Context Protocol surface for in-page agents: JSON
 | `cranklink_list_components`, `cranklink_select_component` | Inventory and target selection; refused while edits are staged or an operation runs |
 | `cranklink_probe`, `cranklink_get_schema` | Active component identity and schema |
 | `cranklink_read_settings`, `cranklink_create_backup` | Read values or save a snapshot; refused unless the component is connected and idle |
-| `cranklink_set_setting`, `cranklink_batch_settings` | Request writes; nothing is sent until the operator authorizes them in a banner that names the target model, slot and serial. A change to a setting the core marks OEM, such as destination, tire circumference or a factory limit, also needs the same acknowledgment as the save review |
+| `cranklink_set_setting`, `cranklink_batch_settings` | Request writes; nothing is sent until the operator authorizes them in a banner that names the target model, slot and serial. A change to a setting the core marks OEM, such as destination, tire circumference or a factory limit, is marked as regulated, as in the save review |
 
 `esteps_*` names are aliases. Agent writes are refused while operator edits are staged, while another review is pending, or when the link is lost; a pending review is rejected on disconnect. Approved writes go through the same backed-up, verified batch save as the UI.
 

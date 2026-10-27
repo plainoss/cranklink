@@ -25,7 +25,7 @@ import { TuneView } from "./components/views/TuneView.tsx";
 import { FirmwareView } from "./components/views/FirmwareView.tsx";
 import { BackupView } from "./components/views/BackupView.tsx";
 import { DiagnosticsView } from "./components/views/DiagnosticsView.tsx";
-import { ChangesRail, RegulatedAcknowledgment, ReviewDialog } from "./components/ChangesReview.tsx";
+import { ChangesRail, ReviewDialog } from "./components/ChangesReview.tsx";
 import { FailureBanner } from "./components/FailureBanner.tsx";
 import { ConfirmDialog } from "./components/ui/ConfirmDialog.tsx";
 import { OperationModal } from "./components/ui/OperationModal.tsx";
@@ -51,8 +51,6 @@ export function App({ controller }: AppProps) {
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [disconnectAfterSave, setDisconnectAfterSave] = useState(false);
-  // Keyed by request so a new agent review never inherits an earlier acknowledgment.
-  const [mcpAcknowledgedId, setMcpAcknowledgedId] = useState<string | null>(null);
   const [selectingSlot, setSelectingSlot] = useState<number | null>(null);
   const [refreshingUnits, setRefreshingUnits] = useState(false);
   const [targetError, setTargetError] = useState<string | null>(null);
@@ -167,8 +165,8 @@ export function App({ controller }: AppProps) {
     else controller.disconnect().catch(() => {});
   };
 
-  // Saving goes through the review, which lists every change and asks for the
-  // regulated-setting acknowledgment; it disconnects only after a successful save.
+  // Saving goes through the review, which lists every change; it disconnects
+  // only after a successful save.
   const saveAndDisconnect = () => {
     setDisconnectConfirmOpen(false);
     setDisconnectAfterSave(true);
@@ -179,8 +177,6 @@ export function App({ controller }: AppProps) {
     if (!open) setDisconnectAfterSave(false);
   }, []);
 
-  const mcpRegulated = state.mcpApproval?.diff.filter((change) => change.regulated) ?? [];
-  const mcpAcknowledged = state.mcpApproval !== null && mcpAcknowledgedId === state.mcpApproval.id;
   const approvalBanner = state.mcpApproval && (
     <Alert
       status="warning"
@@ -210,26 +206,12 @@ export function App({ controller }: AppProps) {
             {unwritableNotice(state.mcpApproval.unwritable)}
           </Alert.Description>
         )}
-        {mcpRegulated.length > 0 && (
-          <div className="mt-2">
-            <RegulatedAcknowledgment
-              labels={mcpRegulated.map((change) => change.label)}
-              isSelected={mcpAcknowledged}
-              onChange={(selected) => setMcpAcknowledgedId(selected ? state.mcpApproval?.id ?? null : null)}
-              data-testid="mcp-ack-regulated"
-            />
-          </div>
-        )}
       </Alert.Content>
       <div className="flex shrink-0 gap-2 self-end sm:self-auto">
         <Button variant="tertiary" onPress={() => controller.respondMcpApproval(false)} data-testid="btn-mcp-reject">
           Reject
         </Button>
-        <Button
-          isDisabled={mcpRegulated.length > 0 && !mcpAcknowledged}
-          onPress={() => controller.respondMcpApproval(true)}
-          data-testid="btn-mcp-approve"
-        >
+        <Button onPress={() => controller.respondMcpApproval(true)} data-testid="btn-mcp-approve">
           Authorize write
         </Button>
       </div>
