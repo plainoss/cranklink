@@ -133,20 +133,7 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
 
         <Card aria-label="Connect" className="gap-4">
           {canUseBluetooth && (
-            <OptionSelect
-              label="Bike system"
-              value={state.bluetoothBike}
-              onChange={(bike) => controller.setBluetoothBike(bike as "steps" | "di2")}
-              options={[
-                { id: "steps", label: "STEPS e-bike" },
-                { id: "di2", label: "Di2 shifting only (no STEPS motor)" },
-              ]}
-              isDisabled={isBusy || state.transport !== null}
-              data-testid="bluetooth-bike-select"
-            />
-          )}
-          {canUseBluetooth && (
-            <p className="text-xs text-muted">STEPS e-bikes can also have Di2 components. Choose based on whether your bike has a STEPS motor.</p>
+            <p className="text-xs text-muted">The bike system is detected automatically before starting a service session.</p>
           )}
           <Button
             size="lg"
@@ -195,6 +182,29 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
           </p>
 
           <TransportSupport platform={platform} bluetooth={canUseBluetooth} />
+
+          {canUseBluetooth && (
+            <Disclosure>
+              <Disclosure.Heading>
+                <Disclosure.Trigger className="w-full min-h-11 flex items-center justify-between text-sm text-muted" data-testid="btn-bluetooth-options">
+                  Bluetooth options<Disclosure.Indicator />
+                </Disclosure.Trigger>
+              </Disclosure.Heading>
+              <Disclosure.Content>
+                <Disclosure.Body className="flex flex-col gap-2">
+                  <OptionSelect label="Bike system override" value={state.bluetoothBike}
+                    onChange={(bike) => controller.setBluetoothBike(bike as "auto" | "steps" | "di2")}
+                    options={[
+                      { id: "auto", label: "Detect automatically" },
+                      { id: "steps", label: "STEPS e-bike" },
+                      { id: "di2", label: "Di2 shifting only (no STEPS motor)" },
+                    ]}
+                    isDisabled={isBusy} data-testid="bluetooth-bike-select" />
+                  <p className="text-xs text-muted">Use an override only if detection fails. STEPS bikes can also have Di2 components; choose based on the motor.</p>
+                </Disclosure.Body>
+              </Disclosure.Content>
+            </Disclosure>
+          )}
 
           {hasOtherOptions && (
             <Disclosure>

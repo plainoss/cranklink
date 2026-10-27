@@ -65,6 +65,7 @@ export class DeviceSimulator extends EventTarget {
     logWirePackets = true,
     components = false,
     hubActuation = true,
+    bikeSystem = "steps",
   } = {}) {
     super();
 
@@ -81,6 +82,8 @@ export class DeviceSimulator extends EventTarget {
     }[model];
 
     this.model = model;
+    this.bikeSystem = bikeSystem;
+    this.masterInfo = [1, bikeSystem === "di2" ? 0x11 : ({ "ep800-crg": 0x23, ep600: 0x30, ep801: 0x35 }[model]), 1];
     this.authFailure = authFailure || (fault === "auth_reject" ? "status" : null);
     this.paddedProductSerial = paddedProductSerial || model === "ep801";
     this.fault = fault;
@@ -98,6 +101,14 @@ export class DeviceSimulator extends EventTarget {
       adjustmentPolls: 0,
     }]));
     this.componentWrites = [];
+    if (bikeSystem === "di2" && this.components.has(7)) {
+      const battery = this.components.get(7);
+      this.components.delete(7);
+      battery.slot = 0;
+      battery.connected = true;
+      battery.owner = 3;
+      this.components.set(0, battery);
+    }
 
     this.authStart = [];
     this.authProof = [];
@@ -273,7 +284,7 @@ export class DeviceSimulator extends EventTarget {
 
   _inventoryBitmap(includePc = false) {
     const bitmap = [0, 0, 0, 0];
-    for (const slot of [13, ...this.components.keys(), ...(includePc ? [3] : [])]) {
+    for (const slot of [...(this.bikeSystem === "di2" ? [] : [13]), ...this.components.keys(), ...(includePc ? [3] : [])]) {
       bitmap[Math.floor(slot / 8)] |= 1 << (slot % 8);
     }
     return bitmap;
@@ -438,7 +449,7 @@ export class DeviceSimulator extends EventTarget {
         5: [0x25, 4, 4, 0],
         6: [0x26, 0],
         12: [0x2c, 0],
-        13: [0x2d, 1, 0xff, 0],
+        13: [0x2d, ...this.masterInfo],
         19: [0x33, 1, 0x1e, gatewaySeries, 2, 0xff, 0xff],
         27: [0x3b, ...this._inventoryBitmap(!this.masterMode)],
         29: [0x3d, 0, 0],
@@ -479,7 +490,7 @@ export class DeviceSimulator extends EventTarget {
         return;
       }
       if (b[0] === 0 && b[1] === 1 && b[2] === 0x1c) {
-        const series = { "ep800-crg": 0x23, ep600: 0x30, ep801: 0x35 }[this.model];
+        const series = this.masterInfo[1];
         this.emit(0x2afd, [0, 1, 0x1e, series, 0]);
         return;
       }

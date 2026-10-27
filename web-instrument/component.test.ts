@@ -71,6 +71,7 @@ type Receipt = { setting: string; before?: number; after?: number; changed?: boo
 
 function harness() {
   const controller = new SessionController();
+  controller.setBluetoothBike("steps"); // These fixtures exercise explicit component routing, not detection.
   const commands: string[] = [];
   const files = new Map<string, Uint8Array>();
   const replies = new Map<number, Snapshot>(units.map((unit) => [unit.slot, snapshot(unit)]));

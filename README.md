@@ -26,6 +26,8 @@ The core compiled to WebAssembly; all protocol work runs in the browser. Require
 
 When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
 
+Bluetooth detects supported STEPS and shifting-only master families before entering service mode, using the original connection. An unknown valid identity asks for a choice; **Bluetooth options** contains a manual override. This detection flow is awaiting phone/hardware validation; see the [validation sequence](docs/bluetooth.md#validate-automatic-detection-on-a-phone).
+
 After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.
@@ -67,6 +69,8 @@ The [rolling prerelease](https://github.com/plainoss/cranklink/releases/tag/roll
 
 Pushing a `v*` tag publishes a separate versioned [release](https://github.com/plainoss/cranklink/releases). To refresh the rolling release manually, run **Build & Release CLI** with **Run workflow** on `main`. Pull requests and merge queue runs validate builds without publishing.
 
+The web validation and CLI release-preparation tests select the latest Node.js 22.x release, with 22.23.4 as the minimum to include the [Broccoli2Shell fix (CVE-2026-111497)](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). This selection controls workflow shell commands; JavaScript actions use the GitHub runner's separate embedded runtime.
+
 To build from source (Rust 1.90+):
 
 ```sh
@@ -101,6 +105,7 @@ cranklink scan                 # attached USB adapters (add --ble for Bluetooth 
 cranklink --port usb units     # components on the E-TUBE bus
 cranklink --port usb units --stock-only  # stock identities/candidates; skip optional part queries
 cranklink --port usb probe     # drive unit model, serial, firmware versions
+cranklink --port 'ble:DEVICE_ID' --read-only ble detect-system # master family, before service mode
 ```
 
 ```text

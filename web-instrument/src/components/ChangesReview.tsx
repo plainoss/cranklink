@@ -2,16 +2,16 @@
  * ChangesReview.tsx - Staged-change rail and the review dialog that every save uses.
  *
  * Every save goes through the review dialog: it lists each change in plain
- * words, lets the operator undo single rows, and asks for an explicit
- * acknowledgment when a change alters legal or factory limits.
+ * words, marks changes to legal or factory limits, and lets the operator undo
+ * single rows.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { AlertTriangle, RotateCcw, ShieldCheck } from "lucide-react";
 import type { InstrumentState } from "../types.ts";
 import type { SessionController } from "../core/sessionController.ts";
 import { formatSetting, isRegulatedSetting, settingLabel, unwritableNotice, unwritableValues } from "../domain/settingFormat.ts";
-import { Alert, Button, Card, Checkbox, Label, Modal } from "@heroui/react";
+import { Button, Card, Modal } from "@heroui/react";
 
 interface StagedChange {
   name: string;
@@ -76,31 +76,6 @@ export function ChangesRail({ state, controller, onReview }: ChangesRailProps) {
   );
 }
 
-interface RegulatedAcknowledgmentProps {
-  labels: string[];
-  isSelected: boolean;
-  onChange: (selected: boolean) => void;
-  "data-testid": string;
-}
-
-/** The explicit acknowledgment a write of regulated settings needs, from this review or an agent's. */
-export function RegulatedAcknowledgment({ labels, isSelected, onChange, "data-testid": testId }: RegulatedAcknowledgmentProps) {
-  return (
-    <Checkbox isSelected={isSelected} onChange={onChange} data-testid={testId}>
-      <Checkbox.Control>
-        <Checkbox.Indicator />
-      </Checkbox.Control>
-      <Checkbox.Content>
-        <Label className="text-xs leading-relaxed">
-          {labels.join(" and ")} {labels.length === 1 ? "changes" : "change"} legal
-          or factory limits. I confirm this is allowed where the bike is ridden and within what the manufacturer
-          approved.
-        </Label>
-      </Checkbox.Content>
-    </Checkbox>
-  );
-}
-
 interface ReviewDialogProps {
   state: InstrumentState;
   controller: SessionController;
@@ -114,19 +89,14 @@ interface ReviewDialogProps {
 export function ReviewDialog({ state, controller, open, onOpenChange, disconnectAfterSave = false }: ReviewDialogProps) {
   const changes = stagedChanges(state);
   const count = changes.length;
-  const regulated = changes.filter((change) => change.regulated);
   // A backup of a value cranklink cannot write is not a way back.
   const unwritable = unwritableValues(state.schema, changes.map((change) => [change.name, state.liveValues[change.name]?.value]),
     { model: state.identity?.modelSlug, live: state.liveValues });
-  const [acknowledged, setAcknowledged] = useState(false);
   const saving = state.phase === "committing";
 
   useEffect(() => {
     if (count === 0) onOpenChange(false);
   }, [count, onOpenChange]);
-  useEffect(() => {
-    if (!open) setAcknowledged(false);
-  }, [open]);
 
   const save = async () => {
     // Closing the dialog clears the caller's disconnect request.
@@ -182,19 +152,6 @@ export function ReviewDialog({ state, controller, open, onOpenChange, disconnect
                 ))}
               </ul>
 
-              {regulated.length > 0 && (
-                <Alert status="warning">
-                  <Alert.Content>
-                    <RegulatedAcknowledgment
-                      labels={regulated.map((change) => change.label)}
-                      isSelected={acknowledged}
-                      onChange={setAcknowledged}
-                      data-testid="ack-regulated"
-                    />
-                  </Alert.Content>
-                </Alert>
-              )}
-
               {unwritable.length === 0 ? (
                 <p className="flex items-start gap-2 text-xs text-muted">
                   <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
@@ -224,7 +181,7 @@ export function ReviewDialog({ state, controller, open, onOpenChange, disconnect
                 Keep editing
               </Button>
               <Button
-                isDisabled={saving || state.linkLost || (regulated.length > 0 && !acknowledged)}
+                isDisabled={saving || state.linkLost}
                 onPress={save}
                 data-testid="btn-commit-batch"
               >

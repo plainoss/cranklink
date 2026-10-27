@@ -499,6 +499,8 @@ enum BleCommand {
     },
     /// Authenticate with Bluetooth gateway and verify radio link
     TestLink,
+    /// Read the bus-master family before entering service mode (no component start)
+    DetectSystem,
 }
 
 pub fn execute(args: Vec<String>) -> Result<()> {
@@ -1950,7 +1952,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     let result = (|| -> Result<Option<serde_json::Value>> {
         if reused {
             #[cfg(target_arch = "wasm32")]
-            session.resume_browser_command(routing_decision.is_master())?;
+            session.resume_settings_command(routing_decision.is_master())?;
         } else {
             session.authenticate()?;
         }
@@ -1958,13 +1960,28 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
             && !matches!(
                 cli.command,
                 Command::Ble {
-                    command: BleCommand::TestLink
+                    command: BleCommand::TestLink | BleCommand::DetectSystem
                 }
             )
         {
             session.set_master_routing(routing_decision.is_master())?;
         }
         match cli.command {
+            Command::Ble {
+                command: BleCommand::DetectSystem,
+            } => {
+                let detection = session.detect_system()?;
+                if is_json {
+                    Ok(Some(serde_json::to_value(detection)?))
+                } else {
+                    out_println!(
+                        "Bluetooth system: {} ({})",
+                        detection.system,
+                        detection.reason
+                    );
+                    Ok(None)
+                }
+            }
             Command::Ble {
                 command: BleCommand::TestLink,
             } => {
@@ -2071,7 +2088,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     })();
     #[cfg(target_arch = "wasm32")]
     let result: Result<Option<serde_json::Value>> = match result {
-        Ok(value) => match session.pause_browser_command() {
+        Ok(value) => match session.pause_settings_command() {
             Ok(()) => {
                 crate::wasm::retain_ble_session(session);
                 if let Some(value) = value {
@@ -2224,7 +2241,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     let result = (|| -> Result<serde_json::Value> {
         if reused {
             #[cfg(target_arch = "wasm32")]
-            session.resume_browser_command(true)?;
+            session.resume_settings_command(true)?;
         } else {
             session.authenticate()?;
         }
@@ -2664,7 +2681,10 @@ fn read_only_command_allowed(command: &Command) -> bool {
         ),
         Command::Adapter { command } => matches!(command, AdapterCommand::Status),
         Command::Ble { command } => {
-            matches!(command, BleCommand::Scan { .. } | BleCommand::TestLink)
+            matches!(
+                command,
+                BleCommand::Scan { .. } | BleCommand::TestLink | BleCommand::DetectSystem
+            )
         }
     }
 }
@@ -2681,7 +2701,9 @@ fn ble_command_allowed(command: &Command) -> bool {
                 ..
             }
         ),
-        Command::Ble { command } => matches!(command, BleCommand::TestLink),
+        Command::Ble { command } => {
+            matches!(command, BleCommand::TestLink | BleCommand::DetectSystem)
+        }
         _ => false,
     }
 }
@@ -4848,6 +4870,7 @@ mod cli_tests {
             &["probe"][..],
             &["units"],
             &["ble", "test-link"],
+            &["ble", "detect-system"],
             &["settings", "read"],
         ] {
             assert!(ble_command_allowed(&command(args)), "{args:?}");
@@ -4962,6 +4985,7 @@ mod cli_tests {
 
         // Read-only allows discovery and reads
         for args in [
+            vec!["ble", "detect-system"],
             vec!["scan"],
             vec!["units"],
             vec!["probe"],
