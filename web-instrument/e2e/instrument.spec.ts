@@ -439,7 +439,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
 // Only the browser chooser is replaced. The selected device is the production
 // GATT simulator; WebBleGatt, Rust authentication, probing and settings run intact.
-async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false, di2Bike = false) {
+async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication = false, cachePasskey = true, deferAuthenticationFailure = false, di2Bike = false, masterInfo?: number[], stepsWithComponents = false) {
   // Headless Chromium on Linux (CI) has no Web Bluetooth, and the connect view
   // decides on first render whether to offer it. Stand in before the app loads;
   // the simulator's chooser replaces this below.
@@ -459,14 +459,16 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     }, `simulated-etube-${rejectAuthentication ? "ep801" : "ep800-crg"}`);
   }
   await openInstrument(page);
-  const setup = await page.evaluate(async ({ reject, defer, di2 }) => {
+  const setup = await page.evaluate(async ({ reject, defer, di2, masterInfo, stepsWithComponents }) => {
     const simulatorModule = "/simulator.js";
     const { DeviceSimulator } = await import(simulatorModule);
     const device = new DeviceSimulator({
       model: reject ? "ep801" : "ep800-crg",
       fault: reject && !defer ? "auth_reject" : "none",
-      components: di2,
+      components: di2 || stepsWithComponents,
+      bikeSystem: di2 ? "di2" : "steps",
     });
+    if (masterInfo) device.masterInfo = masterInfo;
     const connect = device.gatt.connect;
     let radioShutdown = false;
     device.gatt.connect = async () => {
@@ -492,12 +494,8 @@ async function selectSimulatedBluetoothDevice(page: Page, rejectAuthentication =
     });
     (window as any).testBluetoothChooserCalls = () => chooserCalls;
     return { hasSimulator: Boolean(device) };
-  }, { reject: rejectAuthentication, defer: deferAuthenticationFailure, di2: di2Bike });
+  }, { reject: rejectAuthentication, defer: deferAuthenticationFailure, di2: di2Bike, masterInfo, stepsWithComponents });
   expect(setup).toEqual({ hasSimulator: true });
-  if (di2Bike) {
-    await page.getByTestId("bluetooth-bike-select").getByRole("button").click();
-    await page.getByRole("option", { name: "Di2 shifting only (no STEPS motor)", exact: true }).click();
-  }
   await expect(page.getByTestId("btn-connect-ble")).toBeEnabled();
   await page.getByTestId("btn-connect-ble").click();
 }
@@ -544,12 +542,21 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
   expect(commands).toEqual([
     "cranklink> connect ble",
+    "cranklink> ble detect-system",
     "cranklink> --ble-master=master units",
     "cranklink> --ble-master=master --slot 13 --component 'DU-EP800-CRG' settings read",
   ]);
   expect(state.logs.filter((entry) => entry.stream === "stderr")).toEqual([]);
   expect(state.logs.some((entry) => entry.stream === "notice" && /Bluetooth/i.test(entry.text))).toBe(true);
   expect(state.logs.map((entry) => entry.text).join("\n")).not.toMatch(/firmware operations disabled/i);
+  await expect(page.getByTestId("bluetooth-routing-status")).toContainText("STEPS detected");
+  expect(await page.evaluate(() => {
+    const writes = (window as any).testBluetoothDevice.writes;
+    const detect = writes.findIndex((w: any) => w.id === 0x2afa && w.bytes[1] === 0x0d);
+    const master = writes.findIndex((w: any) => w.id === 0x2afa && w.bytes[1] === 3 && w.bytes[2] === 0x20);
+    const start = writes.findIndex((w: any) => w.id === 0x2afa && w.bytes[1] === 0x0c && w.bytes[2] === 1);
+    return detect >= 0 && master > detect && start > master;
+  })).toBe(true);
   await expect(page.getByTestId("param-row-tire-circumference")).toBeVisible();
   await page.getByTestId("nav-section-diagnostics").click();
   await expect(page.getByTestId("console-body")).toBeVisible();
@@ -589,6 +596,7 @@ test("Bluetooth connect reads every setting and keeps routine notices out of err
 test("Di2 Bluetooth retains ordinary service mode across reads and closes without stop or reset", async ({ page }, testInfo) => {
   await selectSimulatedBluetoothDevice(page, false, true, false, true);
   await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
+  await expect(page.getByTestId("bluetooth-routing-status")).toContainText("Di2 shifting only detected");
   await page.evaluate(async () => {
     const device = (window as any).testBluetoothDevice;
     // A fixed-width notification can carry one byte beyond the six-byte unit serial.
@@ -609,6 +617,12 @@ test("Di2 Bluetooth retains ordinary service mode across reads and closes withou
     };
   });
   expect(retained).toEqual({ connected: true, connections: 1, model: "RD-R9150", masterModes: 0, stops: 0, componentStarts: 1 });
+  expect(await page.evaluate(() => {
+    const writes = (window as any).testBluetoothDevice.writes;
+    const detect = writes.findIndex((w: any) => w.id === 0x2afa && w.bytes[1] === 0x0d);
+    const start = writes.findIndex((w: any) => w.id === 0x2afa && w.bytes[1] === 0x0c && w.bytes[2] === 1);
+    return detect >= 0 && start > detect;
+  })).toBe(true);
   // Disconnect stays directly reachable on a phone, without opening the menu.
   await page.setViewportSize({ width: 393, height: 851 });
   const disconnect = page.getByTestId("btn-disconnect");
@@ -646,6 +660,60 @@ test("Di2 Bluetooth retains ordinary service mode across reads and closes withou
   await expect(page.getByTestId("btn-connect-ble")).toBeVisible();
 });
 
+test("STEPS with Di2 components still detects the motor system", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page, false, true, false, false, undefined, true);
+  await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
+  await expect(page.getByTestId("bluetooth-routing-status")).toContainText("STEPS detected");
+  await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+  expect(await page.evaluate(() => ({ connected: (window as any).testBluetoothDevice.connections,
+    components: (window as any).cranklinkInstrumentController.getState().units.length })))
+    .toEqual({ connected: 1, components: 7 });
+});
+
+test("unknown master asks for routing before service and keeps the original connection", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 851 });
+  await selectSimulatedBluetoothDevice(page, false, true, false, false, [1, 0x08, 1]);
+  const choice = page.getByTestId("bluetooth-system-dialog");
+  await expect(choice).toBeVisible();
+  await expect(choice).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath("phone-system-choice.png"), animations: "disabled" });
+  await expect(page.getByTestId("operation-modal")).toBeHidden();
+  expect(await page.evaluate(() => {
+    const device = (window as any).testBluetoothDevice;
+    return { connections: device.connections, serviceStarted: device.writes.some((w: any) =>
+      w.id === 0x2afa && ((w.bytes[1] === 3 && w.bytes[2] === 0x20) || (w.bytes[1] === 0x0c && w.bytes[2] === 1))) };
+  })).toEqual({ connections: 1, serviceStarted: false });
+  await choice.getByRole("button", { name: "STEPS e-bike", exact: true }).click();
+  await expect(page.getByTestId("bluetooth-routing-status")).toContainText("STEPS selected manually");
+  await expect(page.getByTestId("param-row-tire-circumference")).toBeVisible();
+  expect(await page.evaluate(() => (window as any).testBluetoothDevice.connections)).toBe(1);
+});
+
+test("cancelling unknown detection closes Bluetooth without entering service", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page, false, true, false, false, [1, 0xaa, 1]);
+  await expect(page.getByTestId("bluetooth-system-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("bluetooth-system-dialog")).toBeHidden();
+  await expect(page.getByTestId("error-banner")).toContainText("cancelled before entering service mode");
+  expect(await page.evaluate(() => {
+    const device = (window as any).testBluetoothDevice;
+    return { connected: device.gatt.connected, pcLink: device.writes.some((w: any) =>
+      w.id === 0x2afa && w.bytes[1] === 0x0c) };
+  })).toEqual({ connected: false, pcLink: false });
+});
+
+test("invalid master metadata closes Bluetooth before service without a manual-choice prompt", async ({ page }) => {
+  await selectSimulatedBluetoothDevice(page, false, true, false, false, [0, 0x23, 1]);
+  await expect(page.getByTestId("error-banner")).toContainText("invalid BLE master metadata");
+  await expect(page.getByTestId("bluetooth-system-dialog")).toBeHidden();
+  expect(await page.evaluate(() => {
+    const device = (window as any).testBluetoothDevice;
+    return { connected: device.gatt.connected, serviceStarted: device.writes.some((w: any) =>
+      w.id === 0x2afa && w.bytes[1] === 0x0c) };
+  })).toEqual({ connected: false, serviceStarted: false });
+});
+
 test("Bluetooth drive-unit authentication rejection closes the session and retains staged changes", async ({ page }) => {
   await selectSimulatedBluetoothDevice(page, true, true, true);
   await expect(page.getByTestId("identity-strip")).toContainText("DU-EP801");
@@ -672,11 +740,11 @@ test("Bluetooth drive-unit authentication rejection closes the session and retai
   expect(state.settings.length).toBeGreaterThan(0);
   expect(state.chooserCalls).toBe(1);
   const commands = state.logs.filter((entry) => entry.stream === "cmd").map((entry) => entry.text);
-  expect(commands).toHaveLength(4);
-  expect(commands.slice(0, 2)).toEqual(["cranklink> connect ble", "cranklink> --ble-master=master units"]);
-  expect(commands[2]).toContain("--component 'DU-EP801'");
-  expect(commands[2]).toContain("settings read");
-  expect(commands[3]).toContain("settings batch");
+  expect(commands).toHaveLength(5);
+  expect(commands.slice(0, 3)).toEqual(["cranklink> connect ble", "cranklink> ble detect-system", "cranklink> --ble-master=master units"]);
+  expect(commands[3]).toContain("--component 'DU-EP801'");
+  expect(commands[3]).toContain("settings read");
+  expect(commands[4]).toContain("settings batch");
   expect(await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().stagedValues)).toEqual({ "walk-assist": 0 });
   expect(state.logs.some((entry) => entry.stream === "stderr" && /error:.*(?:auth|reject|status|challenge)/is.test(entry.text)))
     .toBe(true);

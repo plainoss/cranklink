@@ -194,6 +194,41 @@ fn auth_packets(passkey: &str, nonce: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
 mod firmware;
 pub use firmware::MotorFirmware;
 
+/// Gateway-maintained master metadata, read before entering PC-link mode.
+#[derive(Debug, Serialize)]
+pub struct SystemDetection {
+    pub system: &'static str,
+    pub master_series: Option<u8>,
+    pub reason: &'static str,
+    pub service_started: bool,
+}
+
+impl SystemDetection {
+    fn from_metadata(metadata: &[u8]) -> Self {
+        let series = metadata.get(1).copied();
+        let (system, reason) = match series {
+            Some(0x12 | 0x20 | 0x21 | 0x22 | 0x23 | 0x30 | 0x35 | 0x37 | 0x38) => (
+                "steps",
+                "The bus master identifies a STEPS drive-unit family.",
+            ),
+            Some(0x10 | 0x11 | 0x25) => (
+                "shifting-only",
+                "The bus master identifies a Di2 power-unit family.",
+            ),
+            _ => (
+                "unknown",
+                "This master family needs an explicit routing choice.",
+            ),
+        };
+        Self {
+            system,
+            master_series: series,
+            reason,
+            service_started: false,
+        }
+    }
+}
+
 pub struct BleSession {
     io: Box<dyn Gatt>,
     chars: BTreeMap<u16, CharacteristicInfo>,
@@ -201,6 +236,7 @@ pub struct BleSession {
     pc_slot: u8,
     target_slot: Option<u8>,
     master_stock: Option<[u8; 2]>,
+    detected_master_series: Option<u8>,
     linked_slot: Option<u8>,
     gateway_mode: bool,
     closed: bool,
@@ -231,6 +267,7 @@ impl BleSession {
             pc_slot: 0,
             target_slot: None,
             master_stock: None,
+            detected_master_series: None,
             linked_slot: None,
             gateway_mode: false,
             closed: false,
@@ -261,6 +298,31 @@ impl BleSession {
     }
     pub fn is_master_routing(&self) -> bool {
         self.master_routing
+    }
+    /// Read only the gateway's master cache. No PC-link start, PnP, component
+    /// command or role switch is sent. A timeout retains the usual poison gate.
+    pub fn detect_system(&mut self) -> Result<SystemDetection> {
+        ensure!(
+            self.authenticated && !self.closed && !self.poisoned,
+            "authenticate a fresh BLE connection before system detection"
+        );
+        ensure!(
+            !self.gateway_mode
+                && !self.master_routing_active
+                && self.linked_slot.is_none()
+                && !self.firmware_active,
+            "detect the BLE system before entering service mode"
+        );
+        let metadata = self.gateway(0x0d, &[0], 0x2d)?;
+        if metadata.len() < 3 || metadata[0] != 1 {
+            self.poison();
+            bail!("invalid BLE master metadata or no connected battery; service mode was not started; reconnect before another command");
+        }
+        let detection = SystemDetection::from_metadata(&metadata);
+        self.detected_master_series = (detection.system != "unknown")
+            .then_some(detection.master_series)
+            .flatten();
+        Ok(detection)
     }
     #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn configure_command_trace(&mut self, path: Option<&Path>) -> Result<()> {
@@ -576,6 +638,11 @@ impl BleSession {
         // omit this master even when it is the motor we need to read.
         let master = self.gateway(0x0d, &[0], 0x2d)?;
         ensure!(master.len() >= 3, "truncated BLE master identity");
+        ensure!(
+            self.detected_master_series
+                .is_none_or(|series| master[1] == series),
+            "BLE master identity changed after system detection; disconnect before another command"
+        );
         // This handler's battery-present status is not evidence of a complete
         // traction BMS handshake or assist readiness.
         ensure!(master[0] == 1, "BLE master reports no connected battery");
@@ -796,6 +863,10 @@ impl BleSession {
             );
         }
         let stock = [unit.model_series, unit.model_unit];
+        if unit.is_motor() {
+            ensure!(self.detected_master_series.is_none_or(|series| series == unit.model_series),
+                "motor identity disagrees with BLE system detection; disconnect before another command");
+        }
         if !self.master_routing {
             ensure!(
                 self.slave_component_links
@@ -1730,6 +1801,121 @@ pub(crate) mod tests {
             state,
         )
     }
+    #[test]
+    fn system_detection_reads_only_pre_service_metadata_and_keeps_the_connection() {
+        for (series, system) in [
+            (0x23, "steps"),
+            (0x35, "steps"),
+            (0x11, "shifting-only"),
+            (0x10, "shifting-only"),
+            (0x25, "shifting-only"),
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(vec![1, series, 1, 0xaa, 0xbb]);
+            session.authenticate().unwrap();
+            let before = state.borrow().writes.len();
+            let detected = session.detect_system().unwrap();
+            assert_eq!(detected.system, system);
+            assert_eq!(detected.master_series, Some(series));
+            assert!(!detected.service_started);
+            assert_eq!(
+                &state.borrow().writes[before..],
+                &[(PCE_COMMAND, vec![0, 0x0d, 0])]
+            );
+            session.pause_browser_command().unwrap();
+            session.resume_browser_command(system == "steps").unwrap();
+            assert!(!state.borrow().closed);
+            assert!(!session.gateway_mode);
+        }
+    }
+
+    #[test]
+    fn unknown_and_historical_master_metadata_never_guesses_shifting_only() {
+        for metadata in [
+            vec![1, 0, 1],
+            vec![1, 0xff, 1],
+            vec![1, 0x08, 1],
+            vec![1, 0x0a, 1],
+            vec![1, 0x0b, 1],
+            vec![1, 0x0c, 1],
+            vec![1, 0x0d, 1],
+            vec![1, 0x15, 1],
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(metadata);
+            session.authenticate().unwrap();
+            assert_eq!(session.detect_system().unwrap().system, "unknown");
+            assert!(session.detected_master_series.is_none());
+            assert!(!session.gateway_mode);
+            session.set_master_routing(true).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_detection_metadata_fences_the_connection_before_service() {
+        for metadata in [vec![], vec![1], vec![1, 0x11], vec![0, 0x23, 1]] {
+            let (mut session, state) = mock();
+            state.borrow_mut().master_info = Some(metadata);
+            session.authenticate().unwrap();
+            assert!(session.detect_system().is_err());
+            assert!(session.poisoned);
+            assert!(session.resume_browser_command(true).is_err());
+            session.stop().unwrap();
+            assert!(state.borrow().closed);
+            assert!(!state
+                .borrow()
+                .writes
+                .iter()
+                .any(|(id, b)| *id == PCE_COMMAND && b[1] == 0x0c));
+        }
+    }
+
+    #[test]
+    fn detection_timeout_is_not_cleared_for_a_manual_fallback_or_late_reply() {
+        let (mut session, state) = mock();
+        session.authenticate().unwrap();
+        state.borrow_mut().drop_master_metadata = true;
+        assert!(session.detect_system().is_err());
+        assert!(session.poisoned);
+        notify(
+            &mut state.borrow_mut(),
+            PCE_RESPONSE,
+            vec![0x2d, 1, 0x23, 1],
+        );
+        assert!(session.detect_system().is_err());
+        assert!(session.resume_browser_command(true).is_err());
+        session.stop().unwrap();
+        assert!(state.borrow().closed);
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, bytes)| *id == FREE_COMMAND
+                || (*id == PCE_COMMAND && matches!(bytes[1], 0x0c | 0x1d))));
+    }
+
+    #[test]
+    fn detected_motor_family_must_match_the_selected_motor_before_settings_start() {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_info = Some(vec![1, 0x23, 1]);
+        session.authenticate().unwrap();
+        session.detect_system().unwrap();
+        session.set_master_routing(true).unwrap();
+        state.borrow_mut().component_stock.insert(13, [0x35, 0]);
+        let error = session.start(Some(13)).unwrap_err().to_string();
+        assert!(
+            error.contains("disagrees with BLE system detection"),
+            "{error}"
+        );
+        assert!(session.linked_slot.is_none());
+        assert!(!state
+            .borrow()
+            .writes
+            .iter()
+            .any(|(id, b)| *id == FREE_COMMAND && b[1] == 0x32 && b[2] == 0x30));
+        assert!(session.detect_system().is_err());
+    }
+
     fn path(label: &str) -> std::path::PathBuf {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         std::env::temp_dir().join(format!(
