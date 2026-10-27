@@ -170,3 +170,33 @@ class PersistentFirmwareTests(unittest.TestCase):
         if 'ep800-4.1.10' in self.fixtures:
             image,profile = identify(self.fixtures['ep800-4.1.10'],'motor')
             with self.assertRaisesRegex(RuntimeError,'exact EP800'): Motor(image,profile).install_storage()
+
+    def test_journal_wear_leveling_and_history_retention(self):
+        m = self.motor
+        s = m.storage
+        self.assertEqual(s.active_bank, 0)
+        self.assertEqual(s.compactions, 0)
+
+        # Update lamp state (record 0x23) to generate history
+        m.receive(bytes.fromhex('101002'), 0)
+        self.assertEqual(len(s.history.get(0x23, [])), 1)
+
+        # Simulate wear-leveling page counter advancement past 32 to trigger bank rotation
+        m.write_byte(0x20002E2E, 31)
+        m.receive(bytes.fromhex('101001'), 0)
+        self.assertEqual(s.active_bank, 1)
+        self.assertEqual(s.compactions, 1)
+        # Non-whitelisted record 0x23 history should be pruned on compaction
+        self.assertNotIn(0x23, s.history)
+
+        # Populate whitelisted record 0x05 history
+        s.history[0x05] = [b'\x01'*8] * 10
+        # Trigger another compaction (page counter at 63 -> 64)
+        m.write_byte(0x20002E2E, 63)
+        m.receive(bytes.fromhex('101002'), 0)
+        self.assertEqual(s.active_bank, 2)
+        self.assertEqual(s.compactions, 2)
+        # Record 0x05 must retain exactly 7 historical versions
+        self.assertEqual(len(s.history[0x05]), 7)
+
+

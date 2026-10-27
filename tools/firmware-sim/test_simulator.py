@@ -13,8 +13,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from fw_sim.bus import Bus
+from fw_sim.bus import (Bus, packet_fragments_count,
+                        LANE_PRIMARY_CAPACITY, LANE_SECONDARY_CAPACITY)
 from fw_sim.gateway import Gateway, fragments
+from fw_sim.gatt import generate_challenge_nonce
 from fw_sim.machine import (Machine, INPUT, RETURN, UC_ARM_REG_R0, UC_ARM_REG_R1,
                             UC_ARM_REG_R4, UC_ARM_REG_SP, UC_ARM_REG_LR)
 from fw_sim.motor import Motor
@@ -123,6 +125,58 @@ class BusTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'event budget exhausted'):
             bus.drain()
         self.assertEqual(len(bus.trace), 1000)
+
+    def test_fragment_lane_admission_capacity(self):
+        bus = Bus(VirtualGateway(), VirtualMotor())
+        self.assertEqual(bus.lane_primary.capacity, 15)
+        self.assertEqual(bus.lane_secondary.capacity, 5)
+
+        # Fragment counts based on payload length
+        self.assertEqual(packet_fragments_count(2), 1)
+        self.assertEqual(packet_fragments_count(3), 1)
+        self.assertEqual(packet_fragments_count(4), 2)
+        self.assertEqual(packet_fragments_count(6), 2)
+        self.assertEqual(packet_fragments_count(7), 3)
+
+        # Admitting into primary lane (capacity 15)
+        # 4 3-fragment packets (12 fragments)
+        for _ in range(4):
+            bus.enqueue(packet('01020304050607'), check_lane=True)
+        self.assertEqual(bus.lane_primary.count, 12)
+
+        # Another 3-fragment packet should fit (12 + 3 = 15)
+        bus.enqueue(packet('01020304050607'), check_lane=True)
+        self.assertEqual(bus.lane_primary.count, 15)
+
+        # 16th fragment should fail admission atomically
+        with self.assertRaisesRegex(RuntimeError, 'fragment queue admission failed: primary lane full'):
+            bus.enqueue(packet('0102'), check_lane=True)
+
+        # Secondary lane (capacity 5)
+        bus_sec = Bus(VirtualGateway(), VirtualMotor())
+        bus_sec.enqueue(packet('01020304050607'), lane='secondary', check_lane=True)  # 3 fragments
+        bus_sec.enqueue(packet('01020304'), lane='secondary', check_lane=True)        # 2 fragments -> 5 total
+        self.assertEqual(bus_sec.lane_secondary.count, 5)
+        with self.assertRaisesRegex(RuntimeError, 'secondary lane full'):
+            bus_sec.enqueue(packet('01'), lane='secondary', check_lane=True)
+
+        # Draining releases lane occupancy
+        bus.drain()
+        self.assertEqual(bus.lane_primary.count, 0)
+
+    def test_d420_challenge_nonce_generator(self):
+        identity = b'CRANK1'
+        # Generated nonces are exactly 16 bytes
+        nonce0 = generate_challenge_nonce(identity, 0)
+        self.assertEqual(len(nonce0), 16)
+        # Deterministic for same identity and counter
+        self.assertEqual(generate_challenge_nonce(identity, 0), nonce0)
+        # Different sequence counter yields different challenge
+        nonce1 = generate_challenge_nonce(identity, 1)
+        self.assertNotEqual(nonce0, nonce1)
+        # Different identity yields different challenge
+        nonce_alt = generate_challenge_nonce(b'OTHER1', 0)
+        self.assertNotEqual(nonce0, nonce_alt)
 
 
 class MachineTests(unittest.TestCase):
