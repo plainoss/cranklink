@@ -71,8 +71,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("btn-review-save").click();
     const review = page.getByTestId("review-dialog");
     await expect(review.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
-    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
-    await review.getByTestId("ack-regulated").click();
+    await expect(review.getByLabel("Regulated setting")).toBeVisible();
     await review.getByTestId("btn-commit-batch").click();
 
     // Transaction rail clears, live value updates, and a confirmation names the backup
@@ -124,8 +123,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
 
     await page.getByTestId("btn-review-save").click();
     await expect(page.getByTestId("review-link-lost")).toBeVisible();
-    // Tire circumference is regulated; with it acknowledged, only the lost link blocks saving.
-    await page.getByTestId("ack-regulated").click();
+    // Only the lost link blocks saving.
     await expect(page.getByTestId("btn-commit-batch")).toBeDisabled();
     await page.getByRole("button", { name: "Keep editing" }).click();
 
@@ -172,7 +170,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
     await page.getByTestId("stepper-plus-tire-circumference").click();
     await page.getByTestId("btn-review-save").click();
-    await page.getByTestId("ack-regulated").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
 
@@ -394,8 +391,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(approvalBanner).toBeVisible();
     await expect(approvalBanner).toContainText("Tire Circumference: 2280 mm → 2150 mm");
 
-    // Operator acknowledges the regulated change and clicks Authorize Write
-    await page.getByTestId("mcp-ack-regulated").click();
+    // Operator clicks Authorize Write
     await page.getByTestId("btn-mcp-approve").click();
 
     const rpcResult: any = await rpcPromise;
@@ -406,12 +402,12 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(page.getByTestId("param-row-tire-circumference")).toContainText("Live: 2150 mm");
   });
 
-  test("a regulated change needs its acknowledgment on every save path", async ({ page }) => {
+  test("a regulated change is marked on every save path", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
 
-    // An agent's region change waits for the review's acknowledgment. Region 0
+    // An agent's region change is marked as regulated. Region 0
     // keeps the simulator's 25 km/h and has no power cap, so the core accepts it.
     const rpcPromise = page.evaluate(() => (window as any).webMcpServer.handleRequest("tools/call", {
       name: "cranklink_set_setting",
@@ -419,8 +415,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     }));
     const approvalBanner = page.getByTestId("mcp-approval-banner");
     await expect(approvalBanner.getByLabel("Regulated setting")).toBeVisible();
-    await expect(page.getByTestId("btn-mcp-approve")).toBeDisabled();
-    await page.getByTestId("mcp-ack-regulated").click();
     await page.getByTestId("btn-mcp-approve").click();
     expect(((await rpcPromise) as any).completed).toBe(1);
 
@@ -429,9 +423,7 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await page.getByTestId("btn-disconnect").click();
     await page.getByTestId("btn-save-disconnect").click();
     const review = page.getByTestId("review-dialog");
-    await expect(review.getByTestId("review-item-destination")).toBeVisible();
-    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
-    await review.getByTestId("ack-regulated").click();
+    await expect(review.getByTestId("review-item-destination").getByLabel("Regulated setting")).toBeVisible();
     await review.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("btn-connect-sim")).toBeVisible();
   });

@@ -1455,7 +1455,7 @@ describe("Setting value formatting", () => {
     assert.deepEqual([listText(["A"]), listText(["A", "B"]), listText(["A", "B", "C"])], ["A", "A and B", "A, B and C"]);
   });
 
-  it("asks for the regulated-change acknowledgment for every oem setting", () => {
+  it("marks every oem setting as regulated", () => {
     for (const file of fs.readdirSync(path.join(import.meta.dirname, "schemas"))) {
       const model = path.basename(file, ".json") as SettingsModel;
       const specs = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", file), "utf8")), model);

@@ -121,7 +121,6 @@ test("phone touch workflow and responsive bounds through recovery views", async 
   await expect(reviewDialog.getByTestId("review-item-tire-circumference")).toContainText("2282 mm");
   // Measure after the dialog's entry animation settles.
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
-  await reviewDialog.getByTestId("ack-regulated").tap();
   await checkTouchTarget(page.getByTestId("btn-commit-batch"));
   await page.getByTestId("btn-commit-batch").tap();
   await expect(reviewDialog).toBeHidden();

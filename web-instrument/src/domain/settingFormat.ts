@@ -52,7 +52,7 @@ export function formatSetting(schema: EnrichedSetting[], name: string, value: Va
 }
 
 /**
- * Changes that alter legal or factory limits need an explicit acknowledgment.
+ * Changes that alter legal or factory limits are marked in every review.
  * The core's oem flag decides, since annotations file oem settings such as
  * tire circumference under geometry or drivetrain.
  */
