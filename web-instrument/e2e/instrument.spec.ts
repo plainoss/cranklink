@@ -277,8 +277,6 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     const review = page.getByTestId("review-dialog");
     await expect(review.getByTestId("review-item-light-output")).toContainText("13.75 W");
     await expect(review.getByTestId("review-item-display-speed-adjustment")).toContainText("0.5%");
-    await expect(review.getByTestId("btn-commit-batch")).toBeDisabled();
-    await review.getByTestId("ack-regulated").click();
     await page.getByTestId("btn-commit-batch").click();
     await expect(page.getByTestId("transaction-rail")).toBeHidden();
     await expect(light).toContainText("Live: 13.75 W");

@@ -49,6 +49,7 @@ jobs:
         if: steps.filter.outputs.has_changes == 'true'
         with:
           targets: aarch64-linux-android,x86_64-linux-android
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         if: steps.filter.outputs.has_changes == 'true'
         with:
