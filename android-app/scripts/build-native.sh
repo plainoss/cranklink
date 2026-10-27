@@ -51,7 +51,7 @@ export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
 export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
 
 for TARGET in aarch64-linux-android x86_64-linux-android; do
-  if ! rustup target list --installed | rg -qx "$TARGET"; then
+  if ! rustup target list --installed | grep -qx "$TARGET"; then
     rustup target add "$TARGET"
   fi
   CARGO_ARGUMENTS=(build --locked --manifest-path "$APP_ROOT/native/Cargo.toml" --target "$TARGET")

@@ -462,3 +462,16 @@ fn private_backup_restore_rejects_paths_journals_and_symlinks() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn only_shifting_only_systems_are_refused_before_service_mode() {
+    let detection = |system| SystemDetection {
+        system,
+        master_series: None,
+        reason: "",
+        service_started: false,
+    };
+    assert!(require_steps_system(&detection("steps")).is_ok());
+    assert!(require_steps_system(&detection("unknown")).is_ok());
+    assert!(require_steps_system(&detection("shifting-only")).is_err());
+}

@@ -4,7 +4,7 @@ mod java_gatt;
 
 use anyhow::{bail, ensure, Context, Result};
 use cranklink::{
-    ble::BleSession,
+    ble::{BleSession, SystemDetection},
     device::{Identity, UnitCommands, UnitIdentity},
     motor_support,
     settings::{self, batch::Operation, ParsedRestore, SettingSpec, SettingsModel},
@@ -293,6 +293,16 @@ fn snapshot(active: &mut Active, directory: &Path, report: Option<Value>) -> Res
     Ok(result)
 }
 
+/// Older STEPS masters are not all catalogued, so an unrecognized family
+/// proceeds to the motor identity checks; only a Di2 power unit is refused.
+fn require_steps_system(detection: &SystemDetection) -> Result<()> {
+    ensure!(
+        detection.system != "shifting-only",
+        "this bike reports a Di2 shifting system without a STEPS drive unit; the Android app supports STEPS drive units only"
+    );
+    Ok(())
+}
+
 fn close_active() -> Result<()> {
     ACTIVE.with(|cell| {
         let Some(mut active) = cell.borrow_mut().take() else {
@@ -337,6 +347,9 @@ fn execute(
         let connected = (|| -> Result<Motor> {
             session.set_master_routing(master)?;
             session.authenticate()?;
+            // Read the gateway's master cache before service mode so a
+            // shifting-only system never enters master routing.
+            require_steps_system(&session.detect_system()?)?;
             let identity = session.start(None)?;
             let motor = read_identity(&mut session, &identity)?;
             if modern(motor.model) {
@@ -494,7 +507,8 @@ pub extern "system" fn Java_work_plainoss_cranklink_NativeCore_invoke(
         Ok(Ok(response)) => response,
         Ok(Err(error)) => json!({"error":format!("{error:#}")}),
         Err(_) => {
-            let _ = close_active();
+            // Cleanup must not unwind across the JNI boundary either.
+            let _ = std::panic::catch_unwind(close_active);
             json!({"error":"native settings operation failed; reconnect before continuing"})
         }
     };

@@ -59,6 +59,20 @@ class SessionControllerTest {
     }
 
     @Test
+    fun disconnectAfterAFailedConnectKeepsTheFailureReason() = runTest {
+        val backend = FakeBackend()
+        val controller = SessionController(backend)
+        backend.handler = { request ->
+            if (request.string("op") == "connect") error("this bike reports a Di2 shifting system") else null
+        }
+        controller.connect()
+        controller.disconnect()
+        assertEquals(AppPhase.Disconnected, controller.state.value.phase)
+        assertEquals("this bike reports a Di2 shifting system", controller.state.value.error)
+        assertEquals(1, backend.requests.count { it.string("op") == "disconnect" })
+    }
+
+    @Test
     fun cancelledOperationsCompleteCleanupBeforeReturning() = runTest {
         for (operation in listOf("connect", "read", "commit", "restore")) {
             val backend = FakeBackend().apply { backups = listOf("test.backup.json") }

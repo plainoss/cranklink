@@ -108,6 +108,9 @@ class SessionController(private val backend: AppBackend) {
         } catch (error: IllegalArgumentException) {
             localError(error.message ?: "Review the pending values.")
             return@withLock
+        } catch (error: IllegalStateException) {
+            localError(error.message ?: "Review the pending values.")
+            return@withLock
         }
         // Region must precede speed so the native validator sees the selected market.
         val ordered = before.staged.entries.sortedBy { if (it.key == "destination") 0 else 1 }
@@ -160,6 +163,8 @@ class SessionController(private val backend: AppBackend) {
 
     suspend fun disconnect() = withContext(NonCancellable) {
         operation.withLock {
+            // A failed operation already released the native session; keep its error visible.
+            if (state.value.phase == AppPhase.Disconnected) return@withLock
             mutableState.value = state.value.copy(phase = AppPhase.Disconnecting, error = null,
                 status = "Disconnecting from the motor and Bluetooth…")
             try {

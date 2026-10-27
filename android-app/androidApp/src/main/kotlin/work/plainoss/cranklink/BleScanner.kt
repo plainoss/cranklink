@@ -8,9 +8,12 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.location.LocationManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.provider.Settings
 
 data class NearbyBike(val address: String, val name: String, val rssi: Int)
 
@@ -40,6 +43,10 @@ class BleScanner(
             val adapter = applicationContext.getSystemService(BluetoothManager::class.java)?.adapter
                 ?: error("Bluetooth LE is unavailable on this device")
             check(adapter.isEnabled) { "Turn on Bluetooth before scanning" }
+            // Before Android 12, BLE scans return nothing while location services are off.
+            check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || locationEnabled()) {
+                "Turn on Location before scanning; Android requires it for Bluetooth scans on this version"
+            }
             val leScanner = adapter.bluetoothLeScanner ?: error("Bluetooth LE scanning is unavailable")
             val token = ++generation
             bikes.clear()
@@ -69,6 +76,15 @@ class BleScanner(
             onError(error.message ?: "Could not start Bluetooth scan")
         }
     }
+
+    private fun locationEnabled(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            applicationContext.getSystemService(LocationManager::class.java)?.isLocationEnabled == true
+        } else {
+            @Suppress("DEPRECATION")
+            Settings.Secure.getInt(applicationContext.contentResolver, Settings.Secure.LOCATION_MODE,
+                Settings.Secure.LOCATION_MODE_OFF) != Settings.Secure.LOCATION_MODE_OFF
+        }
 
     /** Call when leaving the discovery screen or when its activity stops. */
     fun stop() {
