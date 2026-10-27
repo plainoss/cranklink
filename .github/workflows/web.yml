@@ -1,6 +1,6 @@
 # Cloudflare Workers Builds deploys previews and production; this workflow
 # gates merges on the same build, asset and production-browser checks.
-name: Validate Web Instrument
+name: Validate Web App
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
           check-latest: true
           cache: npm
           cache-dependency-path: web-instrument/package-lock.json
-      - name: Test and build web instrument
+      - name: Test and build web app
         if: steps.filter.outputs.has_changes == 'true'
         working-directory: web-instrument
         run: |

@@ -34,3 +34,12 @@ __pycache__/
 
 # Wrangler local state
 web-instrument/.wrangler/
+
+# Android / Kotlin Multiplatform build products and local SDK configuration
+android-app/.gradle/
+android-app/.kotlin/
+android-app/**/build/
+android-app/local.properties
+android-app/.idea/
+android-app/native/target/
+android-app/androidApp/src/main/jniLibs/

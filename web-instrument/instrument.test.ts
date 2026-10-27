@@ -14,7 +14,7 @@ import {
 import { describeFailure, userFacingError } from "./src/domain/errors.ts";
 import { WebUsbPort } from "./usb.js";
 import { WebSerialPort } from "./serial.js";
-import { formatSetting, formatValue, isRegulatedSetting, listText, unwritableValues } from "./src/domain/settingFormat.ts";
+import { formatSetting, formatValue, fromDisplayValue, isRegulatedSetting, listText, settingDisplayRange, settingDisplayUnit, toDisplayValue, unwritableValues } from "./src/domain/settingFormat.ts";
 import { detectMotorIdentity, friendlyMotorName } from "./src/domain/motorIdentity.ts";
 import { SessionController } from "./src/core/sessionController.ts";
 import { preferredTransport } from "./src/core/platform.ts";
@@ -1417,6 +1417,85 @@ describe("Setting value formatting", () => {
     assert.equal(formatSetting(schema, "destination", 1), "1 (19–32 km/h)");
     assert.equal(formatSetting(schema, "start-mode", 0), "Off");
     assert.equal(formatSetting(schema, "speed-limit", null), "—");
+    assert.equal(formatSetting(schema, "light-output", 2700), "27 W");
+    assert.equal(formatSetting(schema, "light-output", 135), "1.35 W");
+    assert.equal(formatSetting(schema, "maintenance-year", 26), "2026");
+    assert.equal(formatSetting(schema, "profile1.name", "001"), "001");
+    assert.equal(formatSetting(schema, "profile1.name", "1.0"), "1.0");
+    assert.equal(formatSetting([], "profile1.name", " 01 "), " 01 ");
+    assert.equal(formatSetting(schema, "maintenance-date", "2026-10-22"), "2026-10-22");
+  });
+
+  it("converts only presentation units and preserves the exact permitted physical range", () => {
+    const light = schema.find((setting) => setting.name === "light-output")!;
+    const calibration = schema.find((setting) => setting.name === "display-speed-adjustment")!;
+    const speed = schema.find((setting) => setting.name === "speed-limit")!;
+    const year = schema.find((setting) => setting.name === "maintenance-year")!;
+    assert.deepEqual(settingDisplayRange(light), { min: 1.35, max: 27, step: 0.01 });
+    assert.deepEqual(settingDisplayRange(calibration), { min: -5, max: 5, step: 0.5 });
+    assert.equal(settingDisplayUnit(light), "W");
+    assert.equal(settingDisplayUnit(calibration), "%");
+    assert.equal(toDisplayValue(calibration, 15), 1.5);
+    assert.equal(fromDisplayValue(light, 13.75), 1375);
+    assert.equal(toDisplayValue(speed, 25), 25, "wire_units_per_input was already applied by the schema");
+    assert.equal(fromDisplayValue(speed, 25), 25);
+    assert.equal(toDisplayValue(year, 26), 2026);
+    assert.equal(fromDisplayValue(year, 2026), 26);
+    for (const setting of [light, calibration, year]) {
+      for (let value = setting.userMin; value <= setting.userMax; value += setting.userStep) {
+        assert.equal(fromDisplayValue(setting, toDisplayValue(setting, value)), value, `${setting.name} round trip ${value}`);
+      }
+    }
+    assert.deepEqual([light.userMin, light.userMax, light.userStep], [135, 2700, 1], "device rules remain canonical");
+    assert.equal(settingAcceptsValue(light, fromDisplayValue(light, 0)), false, "presentation must not widen the lower bound to zero");
+    assert.equal(settingAcceptsValue(calibration, fromDisplayValue(calibration, 0.6)), false, "physical steps still obey the device rule");
+  });
+
+  it("stages canonical values and formats existing backup values exactly once", () => {
+    const light = schema.find((setting) => setting.name === "light-output")!;
+    const calibration = schema.find((setting) => setting.name === "display-speed-adjustment")!;
+    const controller = new SessionController();
+    (controller as any).update({
+      phase: "ready", schema,
+      liveValues: { "light-output": { value: 1350, raw: "4605" }, "display-speed-adjustment": { value: 0, raw: "00" } },
+    });
+    controller.stageParameter("light-output", fromDisplayValue(light, 13.75));
+    controller.stageParameter("display-speed-adjustment", fromDisplayValue(calibration, -1.5));
+    assert.deepEqual(controller.getState().stagedValues, { "light-output": 1375, "display-speed-adjustment": -15 });
+    assert.equal(controller.getState().liveValues["light-output"].value, 1350);
+    assert.equal(formatSetting(schema, "light-output", controller.getState().stagedValues["light-output"]), "13.75 W");
+    const backup = { format: "cranklink-setting-backup-v1", setting: "light-output", before: 2700 };
+    const original = JSON.stringify(backup);
+    assert.equal(formatSetting(schema, backup.setting, backup.before), "27 W");
+    assert.equal(formatSetting([], backup.setting, backup.before), "27 W", "disconnected backup view retains physical units");
+    assert.equal(formatSetting([], "display-speed-adjustment", 15), "1.5%");
+    assert.equal(JSON.stringify(backup), original, "formatting never rewrites the backup payload");
+  });
+});
+
+describe("Setting descriptions", () => {
+  const schema = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "ep800-crg.json"), "utf8")), "ep800-crg");
+  it("explains every setting in all supported motor schemas", () => {
+    for (const model of ["ep800-crg", "ep600", "ep801", "ep500", "e5100", "e8000", "e7000", "e6100", "e6000", "e6001", "e6002-pre33", "e6002"] as const) {
+      const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8"));
+      for (const setting of enrichSchema(raw, model)) {
+        assert.ok(setting.description.length >= 30, `${model}: ${setting.name} needs a useful explanation`);
+        assert.doesNotMatch(setting.description, /Vendor-specific|nomenclature|aggressiveness|Raw calendar|ASCII/, `${model}: ${setting.name}`);
+      }
+    }
+    const start = schema.find((setting) => setting.name === "profile1.eco.start")!;
+    assert.match(start.description, /how quickly assistance builds when you start pedaling/);
+    assert.doesNotMatch(start.description, /higher|lower|faster|slower/);
+  });
+
+  it("keeps known component help and gives unknown fields a specific, neutral fallback", () => {
+    const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", "e6000.json"), "utf8"))[0];
+    const [known] = enrichSchema([{ ...raw, name: "display-beep" }]);
+    assert.match(known.description, /Audible feedback/);
+    const [unknown] = enrichSchema([{ ...raw, name: "vendor-threshold" }]);
+    assert.match(unknown.description, /Vendor-specific vendor threshold setting/);
+    const [readonly] = enrichSchema([{ ...raw, name: "sensor-status", read_only: true }]);
+    assert.match(readonly.description, /Current sensor status reported/);
   });
 
   it("offers each model's destinations by the speed range the core enforces", () => {

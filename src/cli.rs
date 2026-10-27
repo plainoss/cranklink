@@ -1952,7 +1952,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     let result = (|| -> Result<Option<serde_json::Value>> {
         if reused {
             #[cfg(target_arch = "wasm32")]
-            session.resume_browser_command(routing_decision.is_master())?;
+            session.resume_settings_command(routing_decision.is_master())?;
         } else {
             session.authenticate()?;
         }
@@ -2088,7 +2088,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
     })();
     #[cfg(target_arch = "wasm32")]
     let result: Result<Option<serde_json::Value>> = match result {
-        Ok(value) => match session.pause_browser_command() {
+        Ok(value) => match session.pause_settings_command() {
             Ok(()) => {
                 crate::wasm::retain_ble_session(session);
                 if let Some(value) = value {
@@ -2241,7 +2241,7 @@ fn execute_ble_pair(cli: Cli, is_json: bool) -> Result<()> {
     let result = (|| -> Result<serde_json::Value> {
         if reused {
             #[cfg(target_arch = "wasm32")]
-            session.resume_browser_command(true)?;
+            session.resume_settings_command(true)?;
         } else {
             session.authenticate()?;
         }

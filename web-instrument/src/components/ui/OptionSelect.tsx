@@ -9,6 +9,7 @@ interface OptionSelectProps {
   /** Visible label; omit it and pass aria-label when the surrounding row names the field. */
   label?: string;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   value: string | null;
   options: SelectOption[];
   onChange: (id: string) => void;
@@ -17,10 +18,11 @@ interface OptionSelectProps {
 }
 
 /** HeroUI Select for a flat list of string-keyed options. */
-export function OptionSelect({ label, "aria-label": ariaLabel, value, options, onChange, isDisabled, "data-testid": testId }: OptionSelectProps) {
+export function OptionSelect({ label, "aria-label": ariaLabel, "aria-describedby": describedBy, value, options, onChange, isDisabled, "data-testid": testId }: OptionSelectProps) {
   return (
     <Select
       aria-label={label ? undefined : ariaLabel}
+      aria-describedby={describedBy}
       value={value}
       onChange={(key) => key !== null && onChange(String(key))}
       isDisabled={isDisabled}

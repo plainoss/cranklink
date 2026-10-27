@@ -299,6 +299,42 @@ impl BleSession {
     pub fn is_master_routing(&self) -> bool {
         self.master_routing
     }
+    /// Retain normal/slave service ownership between settings commands. Master
+    /// routing releases the selected component; final disconnect calls stop().
+    pub fn pause_settings_command(&mut self) -> Result<()> {
+        ensure!(
+            !self.poisoned && !self.firmware_active,
+            "BLE session cannot be retained after failure or during firmware operations"
+        );
+        if !self.master_routing && !self.master_routing_active {
+            // Slave service ownership belongs to the gateway. Keep it intact
+            // between commands; final GATT disconnect releases it.
+            self.linked_slot = None;
+        } else {
+            self.stop_pc_link()?;
+        }
+        Ok(())
+    }
+    /// Resume settings on the retained gateway without changing its active
+    /// routing role. Disconnect before selecting another role.
+    pub fn resume_settings_command(&mut self, master: bool) -> Result<()> {
+        ensure!(
+            self.authenticated
+                && !self.poisoned
+                && !self.firmware_active
+                && self.linked_slot.is_none(),
+            "BLE session is not ready for another command"
+        );
+        ensure!(
+            (!(self.gateway_mode || self.master_routing_active) || self.master_routing == master),
+            "disconnect before switching an active settings session routing role"
+        );
+        self.master_routing = master;
+        self.unit_auth_attempted = false;
+        self.target_slot = None;
+        self.master_stock = None;
+        Ok(())
+    }
     /// Read only the gateway's master cache. No PC-link start, PnP, component
     /// command or role switch is sent. A timeout retains the usual poison gate.
     pub fn detect_system(&mut self) -> Result<SystemDetection> {
@@ -330,42 +366,6 @@ impl BleSession {
             .map(|path| OpenOptions::new().create_new(true).write(true).open(path))
             .transpose()?;
         self.trace = trace;
-        Ok(())
-    }
-    /// Retain normal/slave service ownership between browser commands. Master
-    /// routing releases the selected component; final disconnect calls stop().
-    #[cfg(any(target_arch = "wasm32", test))]
-    pub(crate) fn pause_browser_command(&mut self) -> Result<()> {
-        ensure!(
-            !self.poisoned && !self.firmware_active,
-            "BLE session cannot be retained after failure or during firmware operations"
-        );
-        if !self.master_routing && !self.master_routing_active {
-            // Slave service ownership belongs to the gateway. Keep it intact
-            // between browser commands; final GATT disconnect releases it.
-            self.linked_slot = None;
-        } else {
-            self.stop_pc_link()?;
-        }
-        Ok(())
-    }
-    #[cfg(any(target_arch = "wasm32", test))]
-    pub(crate) fn resume_browser_command(&mut self, master: bool) -> Result<()> {
-        ensure!(
-            self.authenticated
-                && !self.poisoned
-                && !self.firmware_active
-                && self.linked_slot.is_none(),
-            "BLE session is not ready for another command"
-        );
-        ensure!(
-            (!(self.gateway_mode || self.master_routing_active) || self.master_routing == master),
-            "disconnect before switching an active browser session routing role"
-        );
-        self.master_routing = master;
-        self.unit_auth_attempted = false;
-        self.target_slot = None;
-        self.master_stock = None;
         Ok(())
     }
     fn log(&mut self, direction: &str, id: u16, bytes: &[u8]) -> Result<()> {
@@ -1822,8 +1822,8 @@ pub(crate) mod tests {
                 &state.borrow().writes[before..],
                 &[(PCE_COMMAND, vec![0, 0x0d, 0])]
             );
-            session.pause_browser_command().unwrap();
-            session.resume_browser_command(system == "steps").unwrap();
+            session.pause_settings_command().unwrap();
+            session.resume_settings_command(system == "steps").unwrap();
             assert!(!state.borrow().closed);
             assert!(!session.gateway_mode);
         }
@@ -1859,7 +1859,7 @@ pub(crate) mod tests {
             session.authenticate().unwrap();
             assert!(session.detect_system().is_err());
             assert!(session.poisoned);
-            assert!(session.resume_browser_command(true).is_err());
+            assert!(session.resume_settings_command(true).is_err());
             session.stop().unwrap();
             assert!(state.borrow().closed);
             assert!(!state
@@ -1883,7 +1883,7 @@ pub(crate) mod tests {
             vec![0x2d, 1, 0x23, 1],
         );
         assert!(session.detect_system().is_err());
-        assert!(session.resume_browser_command(true).is_err());
+        assert!(session.resume_settings_command(true).is_err());
         session.stop().unwrap();
         assert!(state.borrow().closed);
         assert!(!state
@@ -2024,8 +2024,8 @@ pub(crate) mod tests {
         session.authenticate().unwrap();
         assert_eq!(session.units().unwrap().len(), 1);
         assert!(session.linked_slot.is_none());
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(true).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(true).unwrap();
         assert!(session.gateway_started_slots.contains(&13));
         assert!(session.master_pc_start_receipts.contains_key(&13));
         session.start(Some(13)).unwrap();
@@ -2036,7 +2036,7 @@ pub(crate) mod tests {
             .any(|(id, bytes)| { *id == FREE_COMMAND && bytes.starts_with(&[13, 0x32]) }));
         assert!(session.gateway_started_slots.is_empty());
         assert!(session.master_pc_start_receipts.is_empty());
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         session.stop().unwrap();
     }
     #[test]
@@ -2047,22 +2047,22 @@ pub(crate) mod tests {
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         assert_eq!(session.units().unwrap().len(), 2);
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(true).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(true).unwrap();
         session.start(Some(13)).unwrap();
         assert!(!session.gateway_started_slots.contains(&13));
         assert!(session.gateway_started_slots.contains(&14));
         assert!(session.master_pc_start_receipts.contains_key(&14));
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(true).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(true).unwrap();
         session.start(Some(14)).unwrap();
         assert!(!state.borrow().writes.iter().any(|(id, bytes)| {
             *id == FREE_COMMAND
                 && bytes[1] == 0x32
                 && (bytes[2] == 0x30 || (bytes[2] == 0x10 && bytes[3] == 1))
         }));
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(true).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(true).unwrap();
         session.start(Some(13)).unwrap();
         let writes = &state.borrow().writes;
         assert_eq!(
@@ -2105,9 +2105,9 @@ pub(crate) mod tests {
             vec![(4, Some("ST-6770-L")), (13, Some("SM-BMR1"))]
         );
         assert!(session.linked_slot.is_none());
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
 
-        session.resume_browser_command(master).unwrap();
+        session.resume_settings_command(master).unwrap();
         let lever = session.start_component(Some(4), Some("ST-6770-L")).unwrap();
         assert_eq!(lever.cargo, "ST-6770-L");
         let assignment = crate::settings::read_for_model(
@@ -2118,14 +2118,14 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(assignment.value, 2);
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         assert!(session.linked_slot.is_none());
         if master {
             assert!(session.gateway_started_slots.contains(&13));
             assert!(session.master_pc_start_receipts.contains_key(&13));
         }
 
-        session.resume_browser_command(master).unwrap();
+        session.resume_settings_command(master).unwrap();
         let power = session.start_component(Some(13), Some("SM-BMR1")).unwrap();
         assert_eq!(power.cargo, "SM-BMR1");
         let limit = crate::settings::read_for_model(
@@ -2136,7 +2136,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(limit.value, 255);
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         assert!(session.linked_slot.is_none());
         session.stop().unwrap();
         session.close().unwrap();
@@ -2269,14 +2269,14 @@ pub(crate) mod tests {
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         let auth_count = state
             .borrow()
             .writes
             .iter()
             .filter(|(id, _)| *id == AUTH_CONTROL)
             .count();
-        session.resume_browser_command(true).unwrap();
+        session.resume_settings_command(true).unwrap();
         let identity = session.start(Some(13)).unwrap();
         assert_eq!(identity.rx_version, "4.1.11.0");
         assert!(session.motor_firmware(&[0xff; 6]).is_err());
@@ -2317,16 +2317,16 @@ pub(crate) mod tests {
             .iter()
             .filter(|(id, _)| *id == AUTH_CONTROL)
             .count();
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         assert!(!state.borrow().closed);
         assert!(!state
             .borrow()
             .writes
             .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
-        session.resume_browser_command(false).unwrap();
+        session.resume_settings_command(false).unwrap();
         session.start(Some(13)).unwrap();
         assert_eq!(session.command(13, 0x10, 0x14, &[0], 0x16).unwrap()[0], 1);
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         assert_eq!(
             state
                 .borrow()
@@ -2360,12 +2360,12 @@ pub(crate) mod tests {
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(true).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(true).unwrap();
         session.start(Some(13)).unwrap();
         assert!(state.borrow().master_mode);
         let writes_before_pause = state.borrow().writes.len();
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         assert!(state.borrow().master_mode);
         assert!(session.master_routing_active);
         assert!(session.linked_slot.is_none());
@@ -2377,9 +2377,9 @@ pub(crate) mod tests {
             .borrow()
             .writes
             .contains(&(PCE_COMMAND, vec![0, 0x0c, 0])));
-        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.resume_settings_command(false).is_err());
         let writes_before_resume = state.borrow().writes.len();
-        session.resume_browser_command(true).unwrap();
+        session.resume_settings_command(true).unwrap();
         session.start(Some(13)).unwrap();
         let writes = state.borrow().writes[writes_before_resume..].to_vec();
         assert_eq!(writes[0], (PCE_COMMAND, vec![0, 4]));
@@ -2388,7 +2388,7 @@ pub(crate) mod tests {
             *id == PCE_COMMAND && matches!(bytes.get(1), Some(3 | 0x1d | 0x0c))
         }));
         assert!(writes.contains(&(FREE_COMMAND, vec![13, 0x32, 0x10, 1, 0, 0, 0])));
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         let writes_before_stop = state.borrow().writes.len();
         session.stop().unwrap();
         assert!(!state.borrow().master_mode);
@@ -2411,9 +2411,9 @@ pub(crate) mod tests {
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
-        session.pause_browser_command().unwrap();
+        session.pause_settings_command().unwrap();
         state.borrow_mut().master_mode = false;
-        session.resume_browser_command(true).unwrap();
+        session.resume_settings_command(true).unwrap();
         let before = state.borrow().writes.len();
         let error = session.start(Some(13)).unwrap_err();
         assert!(error.to_string().contains("master routing was lost"));
@@ -2429,9 +2429,9 @@ pub(crate) mod tests {
         session.authenticate().unwrap();
         session.start(Some(13)).unwrap();
         state.borrow_mut().timeout_pc_stop = true;
-        assert!(session.pause_browser_command().is_err());
+        assert!(session.pause_settings_command().is_err());
         let writes = state.borrow().writes.len();
-        assert!(session.resume_browser_command(true).is_err());
+        assert!(session.resume_settings_command(true).is_err());
         assert_eq!(state.borrow().writes.len(), writes);
         assert!(session.poisoned);
     }
@@ -3407,7 +3407,7 @@ pub(crate) mod tests {
         assert!(state.borrow().closed);
         assert_eq!(before, state.borrow().writes.len());
         assert!(!session.authenticated && !session.gateway_mode);
-        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.resume_settings_command(false).is_err());
         assert!(session.authenticate().is_err());
         assert!(session.command(0, 1, 0x1c, &[0], 0x1e).is_err());
         session.stop().unwrap();
@@ -3428,7 +3428,7 @@ pub(crate) mod tests {
         assert!(session.closed && !session.authenticated && !session.gateway_mode);
         assert!(session.write(PCE_COMMAND, &[0, 4]).is_err());
         assert!(session.authenticate().is_err());
-        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.resume_settings_command(false).is_err());
         assert_eq!(before, state.borrow().writes.len());
         assert_no_slave_stop(&state.borrow().writes);
     }
@@ -3444,8 +3444,8 @@ pub(crate) mod tests {
             .contains("local PC ownership"));
         assert!(session.slave_component_links.is_empty());
         assert!(session.poisoned);
-        assert!(session.pause_browser_command().is_err());
-        assert!(session.resume_browser_command(false).is_err());
+        assert!(session.pause_settings_command().is_err());
+        assert!(session.resume_settings_command(false).is_err());
         let before = state.borrow().writes.len();
         session.stop().unwrap();
         assert!(state.borrow().closed);
@@ -3491,11 +3491,11 @@ pub(crate) mod tests {
         for _ in 0..3 {
             session.start_component(Some(4), Some("RD-RX815")).unwrap();
             let before = state.borrow().writes.len();
-            session.pause_browser_command().unwrap();
+            session.pause_settings_command().unwrap();
             assert_eq!(before, state.borrow().writes.len());
             assert!(!state.borrow().closed);
-            assert!(session.resume_browser_command(true).is_err());
-            session.resume_browser_command(false).unwrap();
+            assert!(session.resume_settings_command(true).is_err());
+            session.resume_settings_command(false).unwrap();
         }
         let writes = state.borrow().writes.clone();
         assert_eq!(
@@ -3544,8 +3544,8 @@ pub(crate) mod tests {
         let (mut session, state) = component_mock(0x16, 4);
         state.borrow_mut().component_part = Some(4);
         session.start_component(Some(4), Some("RD-RX815")).unwrap();
-        session.pause_browser_command().unwrap();
-        session.resume_browser_command(false).unwrap();
+        session.pause_settings_command().unwrap();
+        session.resume_settings_command(false).unwrap();
         state.borrow_mut().component_stock.insert(4, [0x11, 3]);
         let before = state.borrow().writes.len();
         assert!(session

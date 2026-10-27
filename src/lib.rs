@@ -18,7 +18,7 @@ pub mod storage;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
-mod motor_support;
+pub mod motor_support;
 pub mod unit_models;
 
 #[cfg(test)]

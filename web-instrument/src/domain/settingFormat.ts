@@ -6,23 +6,61 @@
  */
 
 import type { EnrichedSetting } from "../types.ts";
-import { destinationSpeedRange, settingAcceptsValue } from "./schema.ts";
+import { destinationSpeedRange, settingAcceptsValue, settingAnnotation } from "./schema.ts";
 
 type Value = number | string | null | undefined;
 
 const SCALED_UNIT = /^(0\.\d+)\s*(.+)$/;
+type DisplaySpec = Pick<EnrichedSetting, "name" | "displayUnit"> & Partial<Pick<EnrichedSetting, "choiceLabels" | "value_type">>;
+
+function presentation(spec: DisplaySpec | undefined): { factor: number; offset: number; unit: string } {
+  const source = spec?.displayUnit ?? "";
+  const scaled = source.match(SCALED_UNIT);
+  const unit = scaled?.[2] ?? source;
+  return {
+    factor: scaled ? Number(scaled[1]) : 1,
+    offset: spec?.name === "maintenance-year" ? 2000 : 0,
+    unit: unit === "percent" ? "%" : unit === "deg" || unit === "degrees" ? "°"
+      : unit === "lvl" ? "level" : unit === "T" ? "teeth" : unit,
+  };
+}
+
+/** Physical units at the UI boundary; schema, staging, and backups keep their canonical values. */
+export function settingDisplayUnit(spec: DisplaySpec | undefined): string {
+  return presentation(spec).unit;
+}
+
+export function toDisplayValue(spec: DisplaySpec | undefined, canonical: number): number {
+  const { factor, offset } = presentation(spec);
+  return factor === 1 && offset === 0 ? canonical : Number((canonical * factor + offset).toPrecision(15));
+}
+
+export function fromDisplayValue(spec: DisplaySpec | undefined, physical: number): number {
+  const { factor, offset } = presentation(spec);
+  return factor === 1 && offset === 0 ? physical : Number(((physical - offset) / factor).toPrecision(15));
+}
+
+export function settingDisplayRange(spec: EnrichedSetting | undefined): { min: number; max: number; step: number } {
+  const { factor } = presentation(spec);
+  return {
+    min: toDisplayValue(spec, spec?.userMin ?? 0),
+    max: toDisplayValue(spec, spec?.userMax ?? 100),
+    step: Number(((spec?.userStep ?? 1) * factor).toPrecision(15)),
+  };
+}
 
 export function settingLabel(schema: EnrichedSetting[], name: string): string {
-  const spec = schema.find((setting) => setting.name === name);
-  if (spec && spec.label !== spec.name) return spec.label;
+  const label = schema.find((setting) => setting.name === name)?.label ?? settingAnnotation(name)?.label;
+  if (label && label !== name) return label;
   return name
     .split(/[.-]/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 
-export function formatValue(spec: EnrichedSetting | undefined, value: Value): string {
+export function formatValue(spec: DisplaySpec | undefined, value: Value): string {
   if (value === null || value === undefined || value === "") return "—";
+  if (spec?.value_type === "string" || spec?.value_type === "date" || spec?.name.endsWith(".name") || spec?.name === "maintenance-date") return String(value);
   const numeric = typeof value === "number" ? value : Number(value);
   const isNumeric = Number.isFinite(numeric) && String(value).trim() !== "";
 
@@ -31,24 +69,21 @@ export function formatValue(spec: EnrichedSetting | undefined, value: Value): st
   }
   if (!isNumeric) return String(value).trim();
 
-  const unit = spec?.displayUnit ?? "";
+  const unit = settingDisplayUnit(spec);
+  const physical = toDisplayValue(spec, numeric);
   if (spec?.name === "start-mode") return numeric === 0 ? "Off" : `Gear ${numeric}`;
-  if (unit === "lvl") return `Level ${numeric}`;
-  if (unit === "deg" || unit === "degrees") return `${numeric}°`;
-  if (unit === "T" || unit === "teeth") return `${numeric}T`;
-  const scaled = unit.match(SCALED_UNIT);
-  if (scaled) {
-    const factor = Number(scaled[1]);
-    const decimals = scaled[1].length - 2;
-    const suffix = scaled[2] === "percent" ? "%" : scaled[2];
-    const separator = suffix === "%" ? "" : " ";
-    return `${(numeric * factor).toFixed(decimals)}${separator}${suffix}`;
-  }
-  return unit ? `${numeric} ${unit}` : String(numeric);
+  if (unit === "level") return `Level ${physical}`;
+  if (unit === "°") return `${physical}°`;
+  if (unit === "teeth") return `${physical}T`;
+  if (unit === "%") return `${physical}%`;
+  return unit ? `${physical} ${unit}` : String(physical);
 }
 
 export function formatSetting(schema: EnrichedSetting[], name: string, value: Value): string {
-  return formatValue(schema.find((setting) => setting.name === name), value);
+  const spec = schema.find((setting) => setting.name === name);
+  const annotation = spec ? undefined : settingAnnotation(name);
+  // A stored backup may be inspected after disconnect, when the active schema is empty.
+  return formatValue(spec ?? (annotation ? { name, ...annotation, displayUnit: annotation.displayUnit ?? "" } : undefined), value);
 }
 
 /**

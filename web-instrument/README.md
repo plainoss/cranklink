@@ -21,6 +21,8 @@ npm run dev                # dev server, includes a hardware simulator
 
 The UI inventories the bus and loads the selected component's schema from the Rust core. Motor schemas retain their curated tuning views; nonmotor components use schema-based controls with read-only guards. Saves and restores carry the selected slot, model and serial. Inventory refresh and target changes are blocked while edits are staged or operations are running. Bluetooth connection help covers both STEPS power/button windows and Di2 function/Junction A buttons. Bluetooth defaults to `ble detect-system` before service mode and retains the same connection for the chosen route. Unknown valid metadata prompts for a system choice before service; invalid metadata and timeouts close the link. A manual override is available under Bluetooth options. Normal shifting-only sessions remain open between commands and Disconnect closes GATT without explicit bus-master stop/reset commands; routing roles cannot change on that retained connection. See the [phone validation sequence](../docs/bluetooth.md#validate-automatic-detection-on-a-phone).
 
+Setting descriptions explain the effect of each control. Numeric editors, sliders, current values, pending changes, and backup previews use readable units: watts for light power, percent for speedometer calibration, and full calendar years. Conversion stays in the presentation layer so CLI values and saved backups remain compatible. See [app units](../docs/settings.md#app-descriptions-and-units).
+
 ## Test
 
 ```sh

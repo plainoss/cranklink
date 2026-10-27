@@ -202,6 +202,19 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(speed).toContainText("Live: 35 km/h");
     await expect(speed.getByTestId("slider-outside-speed-limit")).toHaveText(
       "The current value, 35 km/h, is outside the range cranklink can write (15 km/h to 32 km/h), so the slider stops at 32 km/h.");
+
+    // The same warning must use physical units for scaled readings and retain
+    // both the normal setting help and the warning as accessible descriptions.
+    await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const { liveValues } = controller.getState();
+      controller.update({ liveValues: { ...liveValues, "display-speed-adjustment": { value: 75, raw: "" } } });
+    });
+    const calibration = page.getByTestId("param-row-display-speed-adjustment");
+    await expect(calibration).toContainText("Live: 7.5%");
+    await expect(calibration.getByTestId("slider-outside-display-speed-adjustment")).toHaveText(
+      "The current value, 7.5%, is outside the range cranklink can write (-5% to 5%), so the slider stops at 5%.");
+    await expect(calibration.getByRole("slider")).toHaveAccessibleDescription(/Percentage correction[\s\S]*The current value, 7\.5%/);
   });
 
   test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {
@@ -229,6 +242,54 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     const review = page.getByTestId("review-dialog");
     await expect(review.getByTestId("review-unwritable")).toHaveText(warning);
     await expect(review).not.toContainText("so you can restore it");
+  });
+
+  test("edits physical watts and percentages while preserving canonical writes and backup values", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+
+    const calibration = page.getByTestId("param-row-display-speed-adjustment");
+    const slider = calibration.getByRole("slider");
+    await expect(slider).toHaveAttribute("min", "-5");
+    await expect(slider).toHaveAttribute("max", "5");
+    await expect(slider).toHaveAttribute("step", "0.5");
+    await slider.focus();
+    await slider.press("ArrowRight");
+    await expect(calibration).toContainText("Staged: 0.5%");
+
+    await page.getByTestId("nav-group-all").click();
+    const light = page.getByTestId("setting-item-light-output");
+    const watts = page.getByTestId("setting-input-light-output").locator("input");
+    await expect(light).toContainText("Live: 2 W");
+    await expect(watts).toHaveValue("2");
+    await watts.fill("13.75");
+    await watts.press("Tab");
+    await expect(light).toContainText("Staged: 13.75 W");
+    await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().stagedValues)).toEqual({
+      "display-speed-adjustment": 5,
+      "light-output": 1375,
+    });
+    await expect(watts).toHaveAccessibleName("Light Port Power Allocation (W)");
+    await expect(watts).toHaveAccessibleDescription(/Power budget reserved for a headlight and taillight/);
+
+    await page.getByTestId("btn-review-save").click();
+    const review = page.getByTestId("review-dialog");
+    await expect(review.getByTestId("review-item-light-output")).toContainText("13.75 W");
+    await expect(review.getByTestId("review-item-display-speed-adjustment")).toContainText("0.5%");
+    await page.getByTestId("btn-commit-batch").click();
+    await expect(page.getByTestId("transaction-rail")).toBeHidden();
+    await expect(light).toContainText("Live: 13.75 W");
+    await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().liveValues["light-output"].value)).toBe(1375);
+
+    await page.getByTestId("nav-section-journal").click();
+    await expect(page.getByTestId("restore-point").first()).toContainText("Light Port Power Allocation: 2 W");
+    const stored = await page.evaluate(() => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const backup = controller.getState().snapshots.find((file: any) => file.setting === "light-output");
+      return { before: backup.before, summary: backup.summary };
+    });
+    expect(stored).toEqual({ before: 200, summary: "2 W before the change" });
   });
 
   test("modern DU-EP600 / DU-EP801 session authentication and multi-setting save", async ({ page }) => {
