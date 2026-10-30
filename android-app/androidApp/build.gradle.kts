@@ -36,6 +36,11 @@ android {
         }
     }
     buildTypes {
+        // Debug builds are signed with a per-machine key, so they install beside the Play app.
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("upload")
         }
