@@ -35,7 +35,7 @@ class AppSmokeTest {
         ui.onNodeWithText("Stage change").performClick()
         // Back first leaves the section for Overview, keeping the staged edit.
         ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
-        ui.onNodeWithText("1 change staged").assertIsDisplayed()
+        ui.onNodeWithText("1 change staged").performScrollTo().assertIsDisplayed()
         ui.onNodeWithText("1 pending change").assertIsDisplayed()
         ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
         ui.onNodeWithText("Disconnect bike?").assertIsDisplayed()
