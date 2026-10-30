@@ -395,10 +395,10 @@ private fun DetailRow(label: String, value: String) {
 
 @Composable
 private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, String) -> Unit) {
-    var section by rememberSaveable { mutableStateOf("profiles") }
+    var section by rememberSaveable { mutableStateOf("geometry") }
     var profile by rememberSaveable { mutableIntStateOf(1) }
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
-    val sections = listOf("profiles" to "Assist", "geometry" to "Bike", "maintenance" to "Service", "oem" to "Factory")
+    val sections = listOf("geometry" to "Bike", "profiles" to "Assist", "maintenance" to "Service", "oem" to "Factory")
     val filtered = state.settings.filter {
         it.section == section && (section != "profiles" || !it.name.startsWith("profile") || it.name.startsWith("profile$profile."))
             && !(section == "maintenance" && state.settings.any { spec -> spec.name == "maintenance-date" }
@@ -524,6 +524,8 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
                 }
             }
             inputError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+            if (setting.name == "speed-limit") Text("If the speed needs a different market region, that region change is staged too. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
+            if (setting.name == "destination") Text("If the assist speed does not fit the region, it is adjusted to the nearest permitted speed. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
             Text("This updates your staged changes. The bike is written only after review.", color = Muted, fontSize = 12.sp)
         }
     }, confirmButton = { Button(onClick = {

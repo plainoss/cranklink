@@ -20,7 +20,8 @@ class AppSmokeTest {
 
     @Test fun systemBackConfirmsDisconnectWithoutLosingPendingEdits() {
         ui.onNodeWithText("Open demo").performScrollTo().performClick()
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("Assist profiles").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText("Assist").performClick()
         ui.onAllNodesWithText("Peak torque").onFirst().performClick()
         ui.onNode(hasSetTextAction()).performTextClearance()
         ui.onNode(hasSetTextAction()).performTextInput("55")
@@ -57,7 +58,8 @@ class AppSmokeTest {
 
     @Test fun demoStagesReviewsAndAppliesWithoutBluetoothPermission() {
         ui.onNodeWithText("Open demo").performScrollTo().performClick()
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("Assist profiles").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText("Assist").performClick()
         ui.onAllNodesWithText("Peak torque").onFirst().performClick()
         ui.onNode(hasSetTextAction()).performTextClearance()
         ui.onNode(hasSetTextAction()).performTextInput("55")
@@ -73,8 +75,7 @@ class AppSmokeTest {
 
     @Test fun demoEditsPhysicalWattsAndKeepsUnitsThroughReviewAndReadback() {
         ui.onNodeWithText("Open demo").performScrollTo().performClick()
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("Assist profiles").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithText("Bike").performClick()
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
 
         // The demo stores calibration as 15 tenths of a percent. Its card must
         // show the physical percentage, not the canonical backend number.

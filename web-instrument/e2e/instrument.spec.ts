@@ -187,9 +187,9 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();
     await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
-    // EP800 destinations are 0, 1, 3 and 4, labelled by their speed range.
+    // EP800 destinations are 0, 1, 3 and 4, labelled by market and speed range.
     await page.getByTestId("param-row-destination").getByRole("button", { name: /Market Region/ }).click();
-    await expect(page.getByRole("option")).toHaveText(["0 (15–25 km/h)", "1 (19–32 km/h)", "3 (15–25 km/h)", "4 (15–25 km/h)"]);
+    await expect(page.getByRole("option")).toHaveText(["Europe · 15–25 km/h", "United States · 19–32 km/h", "Region 3 · 15–25 km/h", "Region 4 · 15–25 km/h"]);
     await page.keyboard.press("Escape");
 
     // Another tool left the speed above the 15-32 km/h cranklink writes.
