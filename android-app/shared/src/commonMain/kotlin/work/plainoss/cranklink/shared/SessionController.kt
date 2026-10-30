@@ -61,7 +61,9 @@ class SessionController(private val backend: AppBackend) {
             val setting = current.settings.singleOrNull { it.name == name }
                 ?: error("This setting is not supported by the connected motor.")
             require(name !in current.unavailable && name in current.values) { "Read this setting from the bike before changing it." }
-            val normalized = TuningRules.validate(setting, value)
+            // Restoring the bike's own value removes the change without validating it:
+            // undo must work even when that value is outside the writable range.
+            val normalized = if (sameValue(setting, current.values[name], value)) value else TuningRules.validate(setting, value)
             val changes = current.staged.toMutableMap()
             if (sameValue(setting, current.values[name], normalized)) changes.remove(name) else changes[name] = normalized
             TuningRules.validateCombination(current.identity, current.values, changes)
@@ -136,7 +138,9 @@ class SessionController(private val backend: AppBackend) {
             // Lead with what the stopped batch left on the bike, as the web app does.
             val raw = error.message
             val outcome = raw?.let { message ->
-                saveFailureOutcome(message, ordered.map { (name) -> before.settings.singleOrNull { it.name == name }?.label ?: name })
+                // Label operations in the native plan's order (android-app/native/src/lib.rs).
+                val planned = ordered.map { it.key }.sortedWith(compareBy({ if (it == "destination") 0 else 1 }, { it }))
+                saveFailureOutcome(message, planned.map { name -> before.settings.singleOrNull { it.name == name }?.label ?: name })
             }
             val reported = if (outcome == null || error is CancellationException) error
                 else IllegalStateException("$outcome ${userFacingError(raw)}", error)
