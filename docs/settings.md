@@ -90,7 +90,26 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 - Without `--backup`, both write to a new file in the current directory: `set` to `backup-<setting>-<serial>-<ms>.json` (dots in the setting name become underscores), `restore` to `backup-restore-<serial>-<ms>.json`. The receipt prints the path.
 - Component restores also require the same catalog model in the backup; shared fields changed since the backup are preserved. Existing motor backups remain compatible.
 - A `settings read --output` snapshot is not a restore input.
-- Readback does not prove persistence. Power-cycle the bike and read again.
+- Readback does not prove persistence. Power-cycle the bike and read again; [compare the snapshots](#compare-snapshots) with `settings diff`.
+
+## Compare snapshots
+
+`cranklink settings diff BEFORE.json AFTER.json` compares two full snapshots from `settings read --output` offline. It opens no port, so it also runs with a Bluetooth `--port` or `--read-only`. Configuration snapshots downloaded from the web app use the same format; single-setting backups are refused.
+
+```sh
+cranklink --port usb -s <SERIAL> settings read --output before.json
+# ...write, power-cycle the bike, then:
+cranklink --port usb settings read --output after.json
+cranklink settings diff before.json after.json
+```
+
+Values are compared as decoded, so unused bytes in bus replies are ignored. The report lists:
+
+- **Changed**: settings whose values differ, or that only one snapshot lists (its other side is `null` in JSON).
+- **Unverified**: settings unavailable in either snapshot, with the reason. They cannot be compared.
+- **Warnings**: the snapshots record different serials or settings models, or one does not record them.
+
+With `--json`, the report is one object with `matches`, `before` and `after` identities, the `unchanged` count, and `changes`, `unverified` and `warnings` arrays. Each change has `name`, `before` and `after`, where a side is `{"value": ...}`, `{"unavailable": "reason"}` or `null`. `matches` is true only when no setting changed and none is unverified. The command exits successfully whether or not the snapshots match, and fails only when a file cannot be read or is not a snapshot.
 
 ## Batch plans
 

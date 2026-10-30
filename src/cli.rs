@@ -350,6 +350,13 @@ enum SettingsCommand {
         #[arg(skip)]
         parsed: Option<crate::settings::ParsedRestore>,
     },
+    /// Compare two saved settings snapshots offline (e.g. before and after a power cycle)
+    Diff {
+        /// Earlier snapshot from settings read --output
+        before: PathBuf,
+        /// Later snapshot from settings read --output
+        after: PathBuf,
+    },
     /// Run an ordered JSON plan in one session, backing up and verifying each write
     Batch {
         /// Path to JSON batch plan
@@ -654,7 +661,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     command: FirmwareCommand::Inspect { .. }
                 }
                 | Command::Settings {
-                    command: SettingsCommand::Schema { .. }
+                    command: SettingsCommand::Schema { .. } | SettingsCommand::Diff { .. }
                 }
         )
     {
@@ -813,6 +820,23 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                 out_println!("{}", serde_json::to_string_pretty(&specs)?);
             } else {
                 print_settings_schema_table(&specs);
+            }
+            Ok(())
+        }
+        Command::Settings {
+            command: SettingsCommand::Diff { before, after },
+        } => {
+            let read = |path: &PathBuf| -> Result<serde_json::Value> {
+                let bytes = crate::storage::read_bounded(path, 1024 * 1024)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                serde_json::from_slice(&bytes)
+                    .with_context(|| format!("{} is not valid JSON", path.display()))
+            };
+            let diff = crate::settings::diff_snapshots(&read(&before)?, &read(&after)?)?;
+            if is_json {
+                out_println!("{}", serde_json::to_string_pretty(&diff)?);
+            } else {
+                print_settings_diff(&diff);
             }
             Ok(())
         }
@@ -2673,6 +2697,7 @@ fn read_only_command_allowed(command: &Command) -> bool {
             command,
             SettingsCommand::Read { .. }
                 | SettingsCommand::Schema { .. }
+                | SettingsCommand::Diff { .. }
                 | SettingsCommand::Set { dry_run: true, .. }
         ),
         Command::Firmware { command } => matches!(
@@ -3106,7 +3131,7 @@ fn execute_settings(
                 verified_serial,
             )
         }
-        SettingsCommand::Schema { .. } => unreachable!(),
+        SettingsCommand::Schema { .. } | SettingsCommand::Diff { .. } => unreachable!(),
     }
 }
 
@@ -3485,6 +3510,69 @@ fn format_setting_value(
     }
 }
 
+/// `settings diff` text output; values use the snapshots' settings model for units.
+fn print_settings_diff(diff: &serde_json::Value) {
+    let model = ["after", "before"]
+        .iter()
+        .filter_map(|side| diff[side]["settings_model"].as_str())
+        .find_map(|slug| crate::settings::SettingsModel::from_name(slug).ok());
+    let specs = model
+        .map(crate::settings::schema_for_model)
+        .unwrap_or_default();
+    let model = model.unwrap_or(crate::settings::SettingsModel::Ep800Crg);
+    let side = |name: &str, v: &serde_json::Value| -> String {
+        if let Some(reason) = v.get("unavailable") {
+            format!("unavailable ({})", reason.as_str().unwrap_or("unknown"))
+        } else if let Some(value) = v.get("value") {
+            format_setting_value(name, value, &specs, model)
+        } else {
+            "not listed".to_string()
+        }
+    };
+    let label = |id: &serde_json::Value| {
+        let name = id["model_name"].as_str().unwrap_or("unknown model");
+        match id["serial"].as_str() {
+            Some(serial) => format!("{name}, serial {serial}"),
+            None => name.to_string(),
+        }
+    };
+    out_println!("Before: {}", label(&diff["before"]));
+    out_println!("After:  {}", label(&diff["after"]));
+    for warning in diff["warnings"].as_array().into_iter().flatten() {
+        out_println!("WARNING: {}", warning.as_str().unwrap_or_default());
+    }
+    for (key, title) in [
+        ("changes", "Changed"),
+        ("unverified", "Unverified, unavailable in a snapshot"),
+    ] {
+        let entries = diff[key].as_array().map(Vec::as_slice).unwrap_or_default();
+        if entries.is_empty() {
+            continue;
+        }
+        out_println!("\n{title} ({}):", entries.len());
+        for entry in entries {
+            let name = entry["name"].as_str().unwrap_or_default();
+            out_println!(
+                "  {:<32} {} -> {}",
+                format!("{name}:"),
+                side(name, &entry["before"]),
+                side(name, &entry["after"])
+            );
+        }
+    }
+    out_println!(
+        "\n{} unchanged. {}",
+        diff["unchanged"],
+        if diff["matches"] == true {
+            "Snapshots match."
+        } else if diff["changes"].as_array().is_some_and(|c| !c.is_empty()) {
+            "Snapshots differ."
+        } else {
+            "No readable setting changed, but unverified settings remain."
+        }
+    );
+}
+
 fn print_setting_schema(spec: &crate::settings::SettingSpec) {
     out_println!("Setting: {}", spec.name);
     let unit_desc = if !spec.choices.is_empty() {
@@ -3653,7 +3741,7 @@ fn print_settings_result(
         SettingsCommand::Batch { .. } => {
             out_println!("Settings batch operations completed successfully.");
         }
-        SettingsCommand::Schema { .. } => unreachable!(),
+        SettingsCommand::Schema { .. } | SettingsCommand::Diff { .. } => unreachable!(),
     }
     Ok(())
 }
@@ -5062,6 +5150,53 @@ mod cli_tests {
             }
             _ => panic!("expected Schema command"),
         }
+    }
+
+    #[test]
+    fn settings_diff_runs_offline_on_any_port() {
+        let dir = std::env::temp_dir().join(format!(
+            "cranklink-settings-diff-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (before, after) = (dir.join("before.json"), dir.join("after.json"));
+        let snapshot = |lamp: u8| {
+            serde_json::json!({
+                "identity": {"serial": "010203040506", "settings_model": "ep800-crg", "model_name": "DU-EP800-CRG"},
+                "values": {"lamp": {"value": lamp, "raw": format!("{lamp:02x}")}},
+                "unavailable": {},
+            })
+            .to_string()
+        };
+        std::fs::write(&before, snapshot(0)).unwrap();
+        std::fs::write(&after, snapshot(1)).unwrap();
+        let (before, after) = (before.display().to_string(), after.display().to_string());
+        // Bluetooth and absent wired ports are never opened, also under --read-only.
+        for prefix in [
+            &["--port", "ble:absent", "--read-only"][..],
+            &["--port", "/dev/cranklink-absent", "--json"][..],
+        ] {
+            let mut args = vec!["cranklink".to_string()];
+            args.extend(prefix.iter().map(|s| s.to_string()));
+            args.extend([
+                "settings".into(),
+                "diff".into(),
+                before.clone(),
+                after.clone(),
+            ]);
+            execute(args).unwrap();
+        }
+        let missing = dir.join("missing.json").display().to_string();
+        let error = execute(
+            ["cranklink", "settings", "diff", &before, &missing]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("missing.json"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

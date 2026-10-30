@@ -935,6 +935,96 @@ pub fn decoded_snapshots_equal(before: &Value, after: &Value) -> bool {
         _ => false,
     }
 }
+/// One side of a snapshot comparison: a decoded value, an unavailable reason,
+/// or `null` when the snapshot does not list the setting at all.
+fn snapshot_side(snapshot: &Value, name: &str) -> Value {
+    if let Some(value) = snapshot["values"].get(name) {
+        json!({"value": value.get("value").cloned().unwrap_or(Value::Null)})
+    } else if let Some(reason) = snapshot["unavailable"].get(name) {
+        json!({"unavailable": reason})
+    } else {
+        Value::Null
+    }
+}
+
+fn snapshot_identity(snapshot: &Value) -> Value {
+    let identity = &snapshot["identity"];
+    json!({
+        "model_name": identity.get("model_name").or_else(|| snapshot.get("model")),
+        "settings_model": identity.get("settings_model"),
+        "serial": identity.get("serial"),
+        "slot": identity.get("slot").or_else(|| snapshot.get("slot")),
+    })
+}
+
+/// Compare two full `settings read --output` snapshots offline by decoded value,
+/// ignoring unused reply bytes. Settings unavailable in either snapshot cannot be
+/// compared and are listed as unverified, so `matches` is true only when every
+/// setting was read in both and none changed.
+pub fn diff_snapshots(before: &Value, after: &Value) -> Result<Value> {
+    for (label, snapshot) in [("before", before), ("after", after)] {
+        let format = snapshot.get("format").and_then(Value::as_str);
+        ensure!(
+            !format.is_some_and(|f| f.ends_with("-setting-backup-v1")),
+            "{label} file is a single-setting backup; diff takes full snapshots from settings read --output"
+        );
+        ensure!(
+            snapshot.get("values").is_some_and(Value::is_object)
+                && snapshot
+                    .get("unavailable")
+                    .map_or(true, |u| u.is_object()),
+            "{label} file is not a settings snapshot (expected an object of values from settings read --output)"
+        );
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for snapshot in [before, after] {
+        for key in ["values", "unavailable"] {
+            if let Some(map) = snapshot.get(key).and_then(Value::as_object) {
+                names.extend(map.keys().map(String::as_str));
+            }
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+
+    let mut changes = Vec::new();
+    let mut unverified = Vec::new();
+    let mut unchanged = 0usize;
+    for name in names {
+        let (b, a) = (snapshot_side(before, name), snapshot_side(after, name));
+        if b.get("unavailable").is_some() || a.get("unavailable").is_some() {
+            unverified.push(json!({"name": name, "before": b, "after": a}));
+        } else if b == a {
+            unchanged += 1;
+        } else {
+            changes.push(json!({"name": name, "before": b, "after": a}));
+        }
+    }
+
+    let (before_id, after_id) = (snapshot_identity(before), snapshot_identity(after));
+    let mut warnings = Vec::new();
+    for (field, what) in [("serial", "serials"), ("settings_model", "settings models")] {
+        match (before_id[field].as_str(), after_id[field].as_str()) {
+            (Some(b), Some(a)) if !b.eq_ignore_ascii_case(a) => {
+                warnings.push(format!("snapshots have different {what}: {b} and {a}"))
+            }
+            (Some(_), Some(_)) => {}
+            _ => warnings.push(format!(
+                "a snapshot does not record its {}; cannot confirm both are the same component",
+                field.replace('_', " ")
+            )),
+        }
+    }
+    Ok(json!({
+        "matches": changes.is_empty() && unverified.is_empty(),
+        "before": before_id,
+        "after": after_id,
+        "unchanged": unchanged,
+        "changes": changes,
+        "unverified": unverified,
+        "warnings": warnings,
+    }))
+}
 pub fn read(session: &mut dyn UnitCommands, slot: u8, name: &str) -> Result<SettingValue> {
     read_for_model(session, slot, name, SettingsModel::Ep800Crg)
 }
@@ -2238,6 +2328,98 @@ mod tests {
         ] {
             assert!(!decoded_snapshots_equal(&before, &invalid));
         }
+    }
+    #[test]
+    fn snapshot_diff_reports_changes_and_unverified_settings_by_decoded_value() {
+        let identity = serde_json::json!({"serial":"010203040506","settings_model":"ep800-crg","model_name":"DU-EP800-CRG","slot":13});
+        let before = serde_json::json!({
+            "identity": identity,
+            "values": {
+                "assist": {"value": 5, "raw": "050000004d33ff"},
+                "lamp": {"value": 0, "raw": "00"},
+                "wheel": {"value": 2200, "raw": "9808"},
+            },
+            "unavailable": {"speed-limit": "timeout"},
+        });
+        let after = serde_json::json!({
+            "identity": identity,
+            "values": {
+                "assist": {"value": 5, "raw": "05ffffffffffff"},
+                "lamp": {"value": 1, "raw": "01"},
+                "speed-limit": {"value": 25, "raw": "fa00"},
+                "region": {"value": 0, "raw": "00"},
+            },
+            "unavailable": {"wheel": "rejected"},
+        });
+        let diff = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(diff["matches"], false);
+        assert_eq!(diff["unchanged"], 1);
+        assert_eq!(
+            diff["changes"],
+            serde_json::json!([
+                {"name": "lamp", "before": {"value": 0}, "after": {"value": 1}},
+                {"name": "region", "before": null, "after": {"value": 0}},
+            ])
+        );
+        assert_eq!(
+            diff["unverified"],
+            serde_json::json!([
+                {"name": "speed-limit", "before": {"unavailable": "timeout"}, "after": {"value": 25}},
+                {"name": "wheel", "before": {"value": 2200}, "after": {"unavailable": "rejected"}},
+            ])
+        );
+        assert_eq!(diff["warnings"], serde_json::json!([]));
+        // Reply padding alone is not a change.
+        let same = diff_snapshots(&before, &before).unwrap();
+        assert_eq!(same["changes"], serde_json::json!([]));
+    }
+    #[test]
+    fn snapshot_diff_flags_other_components_and_rejects_non_snapshots() {
+        let snapshot = |serial: &str, model: &str| {
+            serde_json::json!({
+                "identity": {"serial": serial, "settings_model": model},
+                "values": {"lamp": {"value": 1, "raw": "01"}},
+                "unavailable": {},
+            })
+        };
+        let diff = diff_snapshots(
+            &snapshot("010203040506", "ep800-crg"),
+            &snapshot("0A0B0C0D0E0F", "ep600"),
+        )
+        .unwrap();
+        assert_eq!(diff["matches"], true);
+        assert_eq!(
+            diff["warnings"],
+            serde_json::json!([
+                "snapshots have different serials: 010203040506 and 0A0B0C0D0E0F",
+                "snapshots have different settings models: ep800-crg and ep600",
+            ])
+        );
+        // Serial case does not matter; a missing identity is warned about.
+        let upper = snapshot("0A0B0C0D0E0F", "ep600");
+        let lower = snapshot("0a0b0c0d0e0f", "ep600");
+        assert_eq!(
+            diff_snapshots(&upper, &lower).unwrap()["warnings"],
+            serde_json::json!([])
+        );
+        let bare = serde_json::json!({"values": {}, "unavailable": {}});
+        assert_eq!(
+            diff_snapshots(&bare, &upper).unwrap()["warnings"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let backup = serde_json::json!({"format": "cranklink-setting-backup-v1", "setting": "lamp", "before": 1});
+        assert!(
+            format!("{:#}", diff_snapshots(&backup, &upper).unwrap_err())
+                .contains("single-setting backup")
+        );
+        assert!(format!(
+            "{:#}",
+            diff_snapshots(&upper, &serde_json::json!([1])).unwrap_err()
+        )
+        .contains("after file is not a settings snapshot"));
     }
     #[test]
     fn modern_basic_character_ranges_and_legacy_schema_are_distinct() {

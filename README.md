@@ -134,13 +134,17 @@ cranklink --port usb -s <SERIAL> settings set profile1.boost.torque 85 --backup 
 # Roll back
 cranklink --port usb -s <SERIAL> settings restore before.json
 
+# After a power cycle, read again and compare offline (no adapter needed)
+cranklink --port usb settings read --output after-power-cycle.json
+cranklink settings diff settings.json after-power-cycle.json
+
 # Inspect and target a catalogued Di2 component
 cranklink settings schema --model ST-6870-L
 cranklink --port usb -c ST-6870-L -s <SERIAL> settings read
 cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 --backup lever-before.json
 ```
 
-See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
+See [settings](docs/settings.md) for protected fields, backups, batch plans, and snapshot comparison, and [Bluetooth](docs/bluetooth.md) for wireless use.
 
 Normal/slave BLE sessions close GATT directly so gateway firmware handles disconnect; explicit stop/reset commands left both tested bikes outside normal operation. The web app retains this service session between commands and distinguishes **Di2 shifting only (no STEPS motor)** from a **STEPS e-bike**, which can also use Di2 components. See the [Di2 BLE investigation](docs/di2-ble-investigation.md) for physical validation and remaining limits.
 
@@ -189,7 +193,7 @@ For bootloader research on a working, powered EP800-CRG, `firmware dump-bootload
 
 ## Documentation
 
-- [Settings](docs/settings.md): protected writes, backups, batch plans.
+- [Settings](docs/settings.md): protected writes, backups, batch plans, snapshot comparison.
 - [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
 - [JSON-RPC session](docs/session.md): `cranklink session` methods, errors and framing for scripts.
 - [Understanding E-TUBE](docs/etube-protocol.md): discovery, routing and the wire reference.
