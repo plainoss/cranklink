@@ -45,6 +45,15 @@ export const E6002_DESTINATION_LABELS: Record<number, string> = {
   4: "Korea",
 };
 
+/** Markets known for a destination code; 3 and legacy 4 keep their number. */
+export function destinationName(model: string | undefined, destination: number): string | undefined {
+  if (destination === 0) return "Europe";
+  if (destination === 1) return "United States";
+  if (isModernModel(model) && destination === 2) return "Japan";
+  if (isModernModel(model) && destination === 5) return "US Class 3";
+  return undefined;
+}
+
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
   if (model === "e6000" || model === "e6001" || model === "e6002-pre33" || model === "e6002") return undefined;
@@ -460,7 +469,8 @@ function enrichSetting(
     choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
       if (modelSlug === "e6002") return E6002_DESTINATION_LABELS[choice] ? [[choice, E6002_DESTINATION_LABELS[choice]]] : [];
       const range = destinationSpeedRange(modelSlug, choice);
-      return range ? [[choice, `${choice} (${range.min}–${range.max} km/h)`]] : [];
+      const name = destinationName(modelSlug, choice) ?? `Region ${choice}`;
+      return range ? [[choice, `${name} · ${range.min}–${range.max} km/h`]] : [];
     }));
   }
 

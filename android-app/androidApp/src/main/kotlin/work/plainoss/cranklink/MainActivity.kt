@@ -214,6 +214,10 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     IconButton(onClick = { vm.controller.dismissError(); vm.showNotice(null) }) { Icon(Icons.Default.Close, "Dismiss message") }
                 }
             }
+            // Above every page: a session can end while Backups is open.
+            if (!connected && state.restartBike) Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                RestartBikeCard(vm.controller::acknowledgeRestart)
+            }
             when {
                 page == 2 -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
@@ -226,7 +230,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                         else -> null
                     })
                 !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
-                page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh)
+                page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh, onStage = vm.controller::stage)
                 else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
             }
         }
@@ -319,7 +323,12 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     )
     if (disconnect) AlertDialog(
         onDismissRequest = { disconnect = false }, title = { Text("Disconnect bike?") },
-        text = { Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.")
+                if (state.identity?.masterRouting == true) Text("Afterwards, turn the bike off and on again to return to riding mode.")
+            }
+        },
         confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); page = 0 }) { Text("Disconnect") } },
         dismissButton = {
             Row {
@@ -371,8 +380,11 @@ private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit,
 }
 
 @Composable
-private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onTune: () -> Unit, onRefresh: () -> Unit) {
+private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onTune: () -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit) {
     val identity = state.identity ?: return
+    var editing by remember { mutableStateOf<TuningSetting?>(null) }
+    fun editable(name: String) = state.settings.find { it.name == name }
+        ?.takeIf { enabled && it.writable && name in state.values && name !in state.unavailable }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         PageTitle("Bike overview", if (demo) "Sample drive-unit identity and settings." else "Drive-unit identity and settings read from the bike.")
         Card(colors = CardDefaults.cardColors(containerColor = Pine), shape = RoundedCornerShape(26.dp)) {
@@ -391,8 +403,11 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Assist cut-off", state.staged["speed-limit"] ?: state.values["speed-limit"] ?: "—", "km/h", Modifier.weight(1f))
-            MetricCard("Wheel rollout", state.staged["tire-circumference"] ?: state.values["tire-circumference"] ?: "—", "mm", Modifier.weight(1f))
+            listOf(Triple("Assist cut-off", "speed-limit", "km/h"), Triple("Wheel rollout", "tire-circumference", "mm")).forEach { (label, name, unit) ->
+                val setting = editable(name)
+                MetricCard(label, state.staged[name] ?: state.values[name] ?: "—", unit, Modifier.weight(1f),
+                    onClick = setting?.let { { editing = it } })
+            }
         }
         Card(onClick = onTune, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
             Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -417,6 +432,7 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
         }
         Text(state.status, color = Muted, fontSize = 12.sp)
     }
+    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
 }
 
 @Composable
@@ -428,10 +444,14 @@ private fun MotorDatum(title: String, value: String) {
 }
 
 @Composable
-private fun MetricCard(label: String, value: String, unit: String, modifier: Modifier) {
-    Card(modifier, shape = RoundedCornerShape(20.dp)) {
+private fun MetricCard(label: String, value: String, unit: String, modifier: Modifier, onClick: (() -> Unit)? = null) {
+    val shape = RoundedCornerShape(20.dp)
+    Card(modifier.clip(shape).clickable(enabled = onClick != null, onClickLabel = "Edit $label") { onClick?.invoke() }, shape = shape) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, color = Muted, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                if (onClick != null) Icon(Icons.Default.ChevronRight, null, tint = Muted, modifier = Modifier.size(17.dp))
+            }
             Text(value.removeSuffix(".0"), fontSize = 30.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
             Text(unit, color = Muted, fontSize = 11.sp)
         }
@@ -448,10 +468,10 @@ private fun DetailRow(label: String, value: String) {
 
 @Composable
 private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, String) -> Unit) {
-    var section by rememberSaveable { mutableStateOf("profiles") }
+    var section by rememberSaveable { mutableStateOf("geometry") }
     var profile by rememberSaveable { mutableIntStateOf(1) }
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
-    val sections = listOf("profiles" to "Assist", "geometry" to "Bike", "maintenance" to "Service", "oem" to "Factory")
+    val sections = listOf("geometry" to "Bike", "profiles" to "Assist", "maintenance" to "Service", "oem" to "Factory")
     val undo = { spec: TuningSetting -> onStage(spec.name, state.values[spec.name] ?: "") }
     val filtered = state.settings.filter {
         it.section == section && (section != "profiles" || !it.name.startsWith("profile") || it.name.startsWith("profile$profile."))
@@ -511,11 +531,14 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
         } else items(filtered, key = { it.name }) { spec -> SettingCard(spec, state, enabled, onUndo = { undo(spec) }) { editing = spec } }
         item { Text("Edits are staged until you review and save them.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp)) }
     }
-    editing?.let { setting ->
-        EditSettingDialog(setting, state.staged[setting.name] ?: state.values[setting.name] ?: "", state.identity?.modelSlug,
-            onDismiss = { editing = null }, onStage = { value -> onStage(setting.name, value); editing = null },
-            onUndo = if (setting.name in state.staged) { { onStage(setting.name, state.values[setting.name] ?: ""); editing = null } } else null)
-    }
+    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
+}
+
+@Composable
+private fun SettingEditor(setting: TuningSetting, state: AppState, onStage: (String, String) -> Unit, onDone: () -> Unit) {
+    EditSettingDialog(setting, state.staged[setting.name] ?: state.values[setting.name] ?: "", state.identity?.modelSlug,
+        onDismiss = onDone, onStage = { value -> onStage(setting.name, value); onDone() },
+        onUndo = if (setting.name in state.staged) { { onStage(setting.name, state.values[setting.name] ?: ""); onDone() } } else null)
 }
 
 @Composable
@@ -597,6 +620,8 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
                 }
                 if (setting.name == "tire-circumference") TirePresets(setting, value) { value = it; edited = true }
             }
+            if (setting.name == "speed-limit") Text("If the speed needs a different market region, that region change is staged too. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
+            if (setting.name == "destination") Text("If the assist speed does not fit the region, it is adjusted to the nearest permitted speed. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
             Text("This updates your staged changes. The bike is written only after review.", color = Muted, fontSize = 12.sp)
         }
     }, confirmButton = { Button(onClick = { edited = true; stage() }, enabled = validation.isSuccess) { Text("Stage change") } },
@@ -706,6 +731,23 @@ private fun PageTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, fontSize = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.2).sp)
         Text(subtitle, fontSize = 14.sp, color = Muted)
+    }
+}
+
+/** After master routing ends, a STEPS bike can stay on its Shimano logo until it is power cycled. */
+@Composable
+private fun RestartBikeCard(onRestarted: () -> Unit) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PowerSettingsNew, null, tint = Pine)
+                Spacer(Modifier.width(8.dp))
+                Text("Turn your bike off and on again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Pine)
+            }
+            Text("To leave setup mode, switch the bike off with its power button, wait a few seconds, then switch it on again. Assist, display and buttons then work normally. Your saved settings are kept.",
+                fontSize = 13.sp, color = Pine, lineHeight = 20.sp)
+            TextButton(onClick = onRestarted, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Pine) }
+        }
     }
 }
 

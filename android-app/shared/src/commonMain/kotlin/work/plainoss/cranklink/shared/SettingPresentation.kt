@@ -118,9 +118,19 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
 /** E6002 markets have no verified assist-speed range; other motors use the core's range table. */
 private fun marketLabel(model: String?, choice: Int): String? {
     if (model == "e6002") return mapOf(0 to "Europe (EU)", 1 to "United States (US)", 4 to "Korea")[choice]
-    if (model == null) return "Region $choice"
+    val name = marketName(model, choice) ?: "Region $choice"
+    if (model == null) return name
     val range = TuningRules.speedRange(model, choice) ?: return null
-    return "$choice (${formatNumber(range.start)}–${formatNumber(range.endInclusive)} km/h)"
+    return "$name · ${formatNumber(range.start)}–${formatNumber(range.endInclusive)} km/h"
+}
+
+/** Only codes whose market is known; 3 and legacy 4 keep their number. */
+internal fun marketName(model: String?, choice: Int): String? = when (choice) {
+    0 -> "Europe"
+    1 -> "United States"
+    2 -> if (model != null && TuningRules.isModern(model)) "Japan" else null
+    5 -> if (model != null && TuningRules.isModern(model)) "US Class 3" else null
+    else -> null
 }
 
 internal fun withDisplayUnit(value: String, unit: String): String = when (unit) {

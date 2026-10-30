@@ -59,6 +59,40 @@ class SessionControllerTest {
     }
 
     @Test
+    fun disconnectAfterMasterRoutingAsksForARestart() = runTest {
+        val controller = SessionController(FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(true))))
+        controller.connect()
+        assertTrue(controller.state.value.identity!!.masterRouting)
+        assertFalse(controller.state.value.restartBike)
+        controller.disconnect()
+        assertTrue(controller.state.value.restartBike)
+        controller.acknowledgeRestart()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
+    fun failedOperationAfterMasterRoutingAsksForARestart() = runTest {
+        val backend = FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(true)))
+        val controller = SessionController(backend)
+        controller.connect()
+        backend.handler = { request -> if (request.string("op") == "read") error("timeout") else null }
+        controller.refresh()
+        assertEquals(AppPhase.Disconnected, controller.state.value.phase)
+        assertTrue(controller.state.value.restartBike)
+        backend.handler = null
+        controller.connect()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
+    fun disconnectWithoutMasterRoutingNeedsNoRestart() = runTest {
+        val controller = SessionController(FakeBackend())
+        controller.connect()
+        controller.disconnect()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
     fun disconnectAfterAFailedConnectKeepsTheFailureReason() = runTest {
         val backend = FakeBackend()
         val controller = SessionController(backend)
@@ -185,8 +219,11 @@ class SessionControllerTest {
         assertEquals(listOf("Europe (EU)", "United States (US)", "Korea"),
             listOf("0", "1", "4").map { formatSettingValue("destination", it, "e6002") })
         assertFalse(settingPresentation("destination", "e6002").description.contains("speed", ignoreCase = true))
-        assertEquals("4 (15–25 km/h)", formatSettingValue("destination", "4", "ep800-crg"))
-        assertEquals("5 (19–45 km/h)", formatSettingValue("destination", "5", "ep801"))
+        assertEquals("Region 4 · 15–25 km/h", formatSettingValue("destination", "4", "ep800-crg"))
+        assertEquals("Europe · 15–25 km/h", formatSettingValue("destination", "0", "ep800-crg"))
+        assertEquals("United States · 19–32 km/h", formatSettingValue("destination", "1", "ep800-crg"))
+        assertEquals("Japan · 14–24 km/h", formatSettingValue("destination", "2", "ep801"))
+        assertEquals("US Class 3 · 19–45 km/h", formatSettingValue("destination", "5", "ep801"))
         assertEquals("Region 4", formatSettingValue("destination", "4"))
     }
 
@@ -326,8 +363,6 @@ class SessionControllerTest {
         val backend = FakeBackend()
         val controller = SessionController(backend)
         controller.connect()
-        controller.stage("speed-limit", "32")
-        assertTrue(controller.state.value.staged.isEmpty())
         controller.stage("lamp", "1")
         controller.stage("destination", "1")
         controller.stage("speed-limit", "32")
@@ -338,6 +373,44 @@ class SessionControllerTest {
         assertEquals("32", controller.state.value.values["speed-limit"])
         assertTrue(controller.state.value.staged.isEmpty())
         assertEquals(AppPhase.Ready, controller.state.value.phase)
+    }
+
+    @Test
+    fun speedOutsideTheRegionStagesACompatibleRegionAndUndoRestoresIt() = runTest {
+        val controller = SessionController(FakeBackend())
+        controller.connect()
+        controller.stage("speed-limit", "32")
+        assertEquals(mapOf("speed-limit" to "32", "destination" to "1"), controller.state.value.staged)
+        assertEquals(null, controller.state.value.error)
+        assertTrue(controller.state.value.status.startsWith("Market region changes to United States"))
+        // Undoing the speed also undoes the region change only it needed.
+        controller.stage("speed-limit", "25")
+        assertTrue(controller.state.value.staged.isEmpty())
+
+        // A region the user chose stays, even when the speed later moves.
+        controller.stage("destination", "0")
+        controller.stage("speed-limit", "30")
+        controller.stage("speed-limit", "20")
+        assertEquals(mapOf("destination" to "0", "speed-limit" to "20"), controller.state.value.staged)
+    }
+
+    @Test
+    fun regionChangeFitsTheAssistSpeedIntoItsRange() = runTest {
+        val controller = SessionController(FakeBackend())
+        controller.connect()
+        controller.stage("destination", "1")
+        controller.stage("speed-limit", "32")
+        controller.stage("destination", "0")
+        assertEquals(mapOf("destination" to "0"), controller.state.value.staged)
+        assertEquals(null, controller.state.value.error)
+        controller.stage("destination", "1")
+        controller.stage("speed-limit", "19")
+        controller.stage("destination", "0")
+        assertEquals(mapOf("destination" to "0", "speed-limit" to "19"), controller.state.value.staged)
+        controller.stage("speed-limit", "15")
+        controller.stage("destination", "1")
+        assertEquals(mapOf("destination" to "1", "speed-limit" to "19"), controller.state.value.staged)
+        assertTrue(controller.state.value.status.startsWith("Assist speed changes to 19 km/h"))
     }
 
     @Test

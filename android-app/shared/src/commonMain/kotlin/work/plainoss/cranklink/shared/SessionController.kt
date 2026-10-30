@@ -22,16 +22,20 @@ class SessionController(private val backend: AppBackend) {
     private val mutableState = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutableState.asStateFlow()
     private val operation = Mutex()
+    /** A region change staged only because the assist speed needed it, and the region staged before it. */
+    private var autoRegion: AutoRegion? = null
+
+    private data class AutoRegion(val before: String?, val staged: String?)
 
     suspend fun connect() = operation.withLock {
         if (state.value.phase != AppPhase.Disconnected) return@withLock
-        mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null,
+        mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null, restartBike = false,
             status = "Connecting to your bike and reading its settings…")
         try {
             val result = execute(buildJsonObject { put("op", "connect"); put("master", true) })
             applySnapshot(result, expected = null, status = "Connected. Review changes before saving them to the bike.")
         } catch (error: Throwable) {
-            failUncertain(error, "Connection failed. Reconnect to try again.")
+            failUncertain(error, "Connection failed. If the bike does not return to riding mode, turn it off and on again before reconnecting.")
         }
     }
 
@@ -65,10 +69,47 @@ class SessionController(private val backend: AppBackend) {
             // undo must work even when that value is outside the writable range.
             val normalized = if (sameValue(setting, current.values[name], value)) value else TuningRules.validate(setting, value)
             val changes = current.staged.toMutableMap()
-            if (sameValue(setting, current.values[name], normalized)) changes.remove(name) else changes[name] = normalized
+            fun put(key: String, next: String) {
+                val spec = current.settings.single { it.name == key }
+                if (sameValue(spec, current.values[key], next)) changes.remove(key) else changes[key] = next
+            }
+            val model = current.identity.modelSlug
+            val region = current.settings.singleOrNull { it.name == "destination" }
+            val linked = region != null && current.settings.any { it.name == "speed-limit" } &&
+                "destination" in current.values && "speed-limit" in current.values
+            // Forget an automatic region change the user has since replaced.
+            var auto = autoRegion?.takeIf { changes["destination"] == it.staged }
+            var note: String? = null
+            if (linked && name == "speed-limit") {
+                // Recompute from the user's own region choice, so undoing the speed
+                // also undoes a region change that only the faster speed needed.
+                auto?.let { if (it.before == null) changes.remove("destination") else changes["destination"] = it.before }
+                auto = null
+                val selected = (changes["destination"] ?: current.values["destination"])?.toDoubleOrNull()?.toInt()
+                val compatible = TuningRules.destinationForSpeed(model, normalized.toDouble(), selected, region!!.choices)
+                    ?: throw IllegalArgumentException("No supported market region permits $normalized km/h.")
+                if (compatible != selected) {
+                    val before = changes["destination"]
+                    put("destination", compatible.toString())
+                    auto = AutoRegion(before, changes["destination"])
+                    note = "Market region changes to ${formatSettingValue("destination", compatible.toString(), model)} to allow $normalized km/h."
+                }
+            } else if (linked && name == "destination") {
+                auto = null
+                val range = TuningRules.speedRange(model, normalized.toDouble().toInt())
+                val speed = (changes["speed-limit"] ?: current.values["speed-limit"])?.toDoubleOrNull()
+                if (range != null && speed != null && speed !in range) {
+                    val fitted = TuningRules.validate(current.settings.single { it.name == "speed-limit" }, formatNumber(speed.coerceIn(range)))
+                    put("speed-limit", fitted)
+                    note = "Assist speed changes to $fitted km/h to fit this market region."
+                }
+            }
+            put(name, normalized)
             TuningRules.validateCombination(current.identity, current.values, changes)
+            autoRegion = auto
+            val summary = if (changes.isEmpty()) "No pending changes." else "${changeCount(changes.size)} ready for review."
             mutableState.value = current.copy(staged = changes, error = null,
-                status = if (changes.isEmpty()) "No pending changes." else "${changeCount(changes.size)} ready for review.")
+                status = if (note == null) summary else "$note $summary")
         } catch (error: IllegalArgumentException) {
             localError(error.message ?: "Invalid setting value.")
         } catch (error: IllegalStateException) {
@@ -78,11 +119,16 @@ class SessionController(private val backend: AppBackend) {
 
     fun discard() {
         if (state.value.phase != AppPhase.Ready) return
+        autoRegion = null
         mutableState.value = state.value.copy(staged = emptyMap(), error = null, status = "Pending changes discarded.")
     }
 
     fun dismissError() {
         mutableState.value = state.value.copy(error = null)
+    }
+
+    fun acknowledgeRestart() {
+        mutableState.value = state.value.copy(restartBike = false)
     }
 
     /** Reload local backup files after an import; no bike connection is required. */
@@ -133,6 +179,7 @@ class SessionController(private val backend: AppBackend) {
                     "Saved values did not return complete verified readbacks."
                 }
             }
+            autoRegion = null
             mutableState.value = parsed.copy(status = "${changeCount(ordered.size)} saved and verified. Previous values are backed up.")
         } catch (error: Throwable) {
             // Lead with what the stopped batch left on the bike, as the web app does.
@@ -176,16 +223,20 @@ class SessionController(private val backend: AppBackend) {
         operation.withLock {
             // A failed operation already released the native session; keep its error visible.
             if (state.value.phase == AppPhase.Disconnected) return@withLock
+            // A STEPS bike can stay on its Shimano logo after master routing
+            // ends; a power cycle returns it to riding mode.
+            val restartBike = state.value.identity?.masterRouting == true
             mutableState.value = state.value.copy(phase = AppPhase.Disconnecting, error = null,
                 status = "Disconnecting from the motor and Bluetooth…")
             try {
                 val result = execute("disconnect")
                 mutableState.value = AppState(backups = parseBackups(result) ?: state.value.backups,
-                    status = "Disconnected.")
+                    status = "Disconnected.", restartBike = restartBike)
             } catch (error: Throwable) {
                 val backups = state.value.backups
                 mutableState.value = AppState(backups = backups, error = error.message ?: "Disconnect failed.",
-                    status = "Could not confirm the motor disconnected. Check the bike before reconnecting.")
+                    status = "Could not confirm the motor disconnected. Check the bike before reconnecting.",
+                    restartBike = restartBike)
                 if (error is CancellationException) throw error
             }
         }
@@ -206,7 +257,8 @@ class SessionController(private val backend: AppBackend) {
 
     private suspend fun failUncertain(error: Throwable, status: String) {
         val oldBackups = state.value.backups
-        mutableState.value = AppState(backups = oldBackups, error = error.message ?: "The operation failed.", status = status)
+        mutableState.value = AppState(backups = oldBackups, error = error.message ?: "The operation failed.", status = status,
+            restartBike = state.value.identity?.masterRouting == true)
         // Cancellation invalidates the live state, but must not skip releasing
         // the native master session. Keep the original error after cleanup.
         withContext(NonCancellable) {
@@ -230,6 +282,7 @@ class SessionController(private val backend: AppBackend) {
     }
 
     private fun applySnapshot(result: JsonObject, expected: MotorIdentity?, status: String) {
+        autoRegion = null
         mutableState.value = parseSnapshot(result, expected).copy(status = status)
     }
 
