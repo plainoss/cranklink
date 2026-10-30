@@ -167,7 +167,8 @@ def select(value, directory):
     if len(matches) != 1:
         raise ValueError("Could not uniquely find the internal release run for this version")
     run = matches[0]
-    if (run["path"] != INTERNAL_WORKFLOW or run["head_branch"] != "main" or
+    # GitHub may report the path with a ref suffix, e.g. "...internal.yml@refs/heads/main".
+    if (run["path"].split("@")[0] != INTERNAL_WORKFLOW or run["head_branch"] != "main" or
             run["head_repository"]["full_name"] != repository or run["event"] not in ("push", "workflow_dispatch") or
             run["conclusion"] != "success"):
         raise ValueError("Source must be a successful internal release run on main")
