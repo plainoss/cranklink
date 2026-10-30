@@ -59,6 +59,40 @@ class SessionControllerTest {
     }
 
     @Test
+    fun disconnectAfterMasterRoutingAsksForARestart() = runTest {
+        val controller = SessionController(FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(true))))
+        controller.connect()
+        assertTrue(controller.state.value.identity!!.masterRouting)
+        assertFalse(controller.state.value.restartBike)
+        controller.disconnect()
+        assertTrue(controller.state.value.restartBike)
+        controller.acknowledgeRestart()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
+    fun failedOperationAfterMasterRoutingAsksForARestart() = runTest {
+        val backend = FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(true)))
+        val controller = SessionController(backend)
+        controller.connect()
+        backend.handler = { request -> if (request.string("op") == "read") error("timeout") else null }
+        controller.refresh()
+        assertEquals(AppPhase.Disconnected, controller.state.value.phase)
+        assertTrue(controller.state.value.restartBike)
+        backend.handler = null
+        controller.connect()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
+    fun disconnectWithoutMasterRoutingNeedsNoRestart() = runTest {
+        val controller = SessionController(FakeBackend())
+        controller.connect()
+        controller.disconnect()
+        assertFalse(controller.state.value.restartBike)
+    }
+
+    @Test
     fun disconnectAfterAFailedConnectKeepsTheFailureReason() = runTest {
         val backend = FakeBackend()
         val controller = SessionController(backend)

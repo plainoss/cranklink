@@ -51,7 +51,8 @@ internal object TuningRules {
         require(slot in 0..31) { "The drive unit returned an invalid BLE slot." }
         val model = raw.stringOrNull("model_name") ?: slug.uppercase()
         return MotorIdentity(model, serial, slot, raw.stringOrNull("dcas_version") ?: "—",
-            raw.stringOrNull("rx_version") ?: "—", slug, series)
+            raw.stringOrNull("rx_version") ?: "—", slug, series,
+            (raw["master_routing"] as? JsonPrimitive)?.booleanOrNull == true)
     }
 
     fun parseSchema(raw: JsonArray, model: String, constraints: JsonObject? = null): List<TuningSetting> {

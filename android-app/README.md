@@ -48,7 +48,7 @@ The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/acti
 2. Grant the app's requested Bluetooth permissions, scan, choose the bike, and enter its six-digit E-TUBE passkey. Older Android versions also require location permission for BLE scanning.
 3. Connect and let the app authenticate, identify the drive unit, and read its supported settings. Model, serial, and firmware versions appear with the tuning controls.
 4. Change values locally, review the pending edits, and save. Discarding changes sends no setting writes.
-5. Use backups to export or import a setting backup and restore it to the matching drive unit. Disconnect when finished so the app can release the motor's PC-link session.
+5. Use backups to export or import a setting backup and restore it to the matching drive unit. Disconnect when finished so the app can release the motor's PC-link session. Master-routing sessions do not hand control back on their own, so after disconnecting (or after a failed operation) the app asks you to turn the bike off and on again to return to riding mode.
 
 System Back asks before disconnecting a connected bike and discarding pending edits. During a save or restore it keeps the app open until the operation finishes. Cancelling a connection or read waits for the current bounded operation before disconnecting. Cleanup releases the motor and gateway session before closing Bluetooth; cancelled operations also complete this cleanup before returning.
 

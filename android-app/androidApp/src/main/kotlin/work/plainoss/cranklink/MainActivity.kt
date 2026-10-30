@@ -214,7 +214,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
                     onRestore = { restoreFile = it }, onBack = { page = 0 })
-                !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
+                !connected -> WelcomeScreen(busy, state.restartBike, onRestarted = vm.controller::acknowledgeRestart, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
                 page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh)
                 else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
             }
@@ -278,7 +278,12 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     )
     if (disconnect) AlertDialog(
         onDismissRequest = { disconnect = false }, title = { Text("Disconnect bike?") },
-        text = { Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.")
+                if (state.identity?.masterRouting == true) Text("Afterwards, turn the bike off and on again to return to riding mode.")
+            }
+        },
         confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); page = 0 }) { Text("Disconnect") } },
         dismissButton = { TextButton(onClick = { disconnect = false }) { Text("Cancel") } },
     )
@@ -301,8 +306,9 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
 }
 
 @Composable
-private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit, onBackups: () -> Unit) {
+private fun WelcomeScreen(busy: Boolean, restartBike: Boolean, onRestarted: () -> Unit, onScan: () -> Unit, onDemo: () -> Unit, onBackups: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        if (restartBike) RestartBikeCard(onRestarted)
         PageTitle("Connect to a bike", "Read and change Shimano STEPS drive-unit settings over Bluetooth LE.")
         Text("Turn on the bike and enable Bluetooth connection mode on its display. Close any other app connected to the bike.", color = Muted, fontSize = 14.sp, lineHeight = 22.sp)
         Button(onClick = onScan, enabled = !busy, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
@@ -590,6 +596,23 @@ private fun PageTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, fontSize = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.2).sp)
         Text(subtitle, fontSize = 14.sp, color = Muted)
+    }
+}
+
+/** After master routing ends, a STEPS bike can stay on its Shimano logo until it is power cycled. */
+@Composable
+private fun RestartBikeCard(onRestarted: () -> Unit) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PowerSettingsNew, null, tint = Pine)
+                Spacer(Modifier.width(8.dp))
+                Text("Turn your bike off and on again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Pine)
+            }
+            Text("To leave setup mode, switch the bike off with its power button, wait a few seconds, then switch it on again. Assist, display and buttons then work normally. Your saved settings are kept.",
+                fontSize = 13.sp, color = Pine, lineHeight = 20.sp)
+            TextButton(onClick = onRestarted, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Pine) }
+        }
     }
 }
 
