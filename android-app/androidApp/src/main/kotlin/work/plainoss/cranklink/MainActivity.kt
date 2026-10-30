@@ -209,12 +209,16 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     IconButton(onClick = { vm.controller.dismissError(); vm.showNotice(null) }) { Icon(Icons.Default.Close, "Dismiss message") }
                 }
             }
+            // Above every page: a session can end while Backups is open.
+            if (!connected && state.restartBike) Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                RestartBikeCard(vm.controller::acknowledgeRestart)
+            }
             when {
                 page == 2 -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
                     onRestore = { restoreFile = it }, onBack = { page = 0 })
-                !connected -> WelcomeScreen(busy, state.restartBike, onRestarted = vm.controller::acknowledgeRestart, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
+                !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
                 page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh)
                 else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
             }
@@ -306,9 +310,8 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
 }
 
 @Composable
-private fun WelcomeScreen(busy: Boolean, restartBike: Boolean, onRestarted: () -> Unit, onScan: () -> Unit, onDemo: () -> Unit, onBackups: () -> Unit) {
+private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit, onBackups: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        if (restartBike) RestartBikeCard(onRestarted)
         PageTitle("Connect to a bike", "Read and change Shimano STEPS drive-unit settings over Bluetooth LE.")
         Text("Turn on the bike and enable Bluetooth connection mode on its display. Close any other app connected to the bike.", color = Muted, fontSize = 14.sp, lineHeight = 22.sp)
         Button(onClick = onScan, enabled = !busy, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp)) {
