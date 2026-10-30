@@ -110,7 +110,7 @@ cranklink -s <SERIAL> settings batch plan.json --backup-prefix run-01
 
 ## Constraints
 
-- Speed and maximum power are validated against the destination (region). An unset EP800 destination blocks speed changes; set a destination first. The web app stages a compatible destination automatically.
+- Speed and maximum power are validated against the destination (region). An unset EP800 destination blocks speed changes; set a destination first. The web and Android apps stage a compatible destination automatically, and a staged region change moves the assist speed into the new range.
 - A destination write or restore is refused while the current speed limit or maximum power is outside the new destination's range (for example 32 km/h before destination 0, 15 km/h before destination 1, or more than 400 W before destination 3). Change it first, or put the destination and the new limit in one batch, destination first. When neither order fits, as from 15 km/h in destination 0 to 30 km/h in destination 1, the batch is refused before any write; save a speed both destinations permit (19–25 km/h here) first.
 - On EP600, EP801 and EP500, per-mode torque must be one of the vendor levels for the motor's OEM torque bounds. Only the 20–85 and 20–50 Nm tables are verified; torque writes are refused on motors with other bounds.
 - An unset maintenance calendar must be initialized with `maintenance-date YYYY-MM-DD` before editing year, month, or day individually.

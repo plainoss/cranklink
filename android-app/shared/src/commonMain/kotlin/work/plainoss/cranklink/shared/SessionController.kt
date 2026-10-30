@@ -22,6 +22,10 @@ class SessionController(private val backend: AppBackend) {
     private val mutableState = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutableState.asStateFlow()
     private val operation = Mutex()
+    /** A region change staged only because the assist speed needed it, and the region staged before it. */
+    private var autoRegion: AutoRegion? = null
+
+    private data class AutoRegion(val before: String?, val staged: String?)
 
     suspend fun connect() = operation.withLock {
         if (state.value.phase != AppPhase.Disconnected) return@withLock
@@ -63,10 +67,47 @@ class SessionController(private val backend: AppBackend) {
             require(name !in current.unavailable && name in current.values) { "Read this setting from the bike before changing it." }
             val normalized = TuningRules.validate(setting, value)
             val changes = current.staged.toMutableMap()
-            if (sameValue(setting, current.values[name], normalized)) changes.remove(name) else changes[name] = normalized
+            fun put(key: String, next: String) {
+                val spec = current.settings.single { it.name == key }
+                if (sameValue(spec, current.values[key], next)) changes.remove(key) else changes[key] = next
+            }
+            val model = current.identity.modelSlug
+            val region = current.settings.singleOrNull { it.name == "destination" }
+            val linked = region != null && current.settings.any { it.name == "speed-limit" } &&
+                "destination" in current.values && "speed-limit" in current.values
+            // Forget an automatic region change the user has since replaced.
+            var auto = autoRegion?.takeIf { changes["destination"] == it.staged }
+            var note: String? = null
+            if (linked && name == "speed-limit") {
+                // Recompute from the user's own region choice, so undoing the speed
+                // also undoes a region change that only the faster speed needed.
+                auto?.let { if (it.before == null) changes.remove("destination") else changes["destination"] = it.before }
+                auto = null
+                val selected = (changes["destination"] ?: current.values["destination"])?.toDoubleOrNull()?.toInt()
+                val compatible = TuningRules.destinationForSpeed(model, normalized.toDouble(), selected, region!!.choices)
+                    ?: throw IllegalArgumentException("No supported market region permits $normalized km/h.")
+                if (compatible != selected) {
+                    val before = changes["destination"]
+                    put("destination", compatible.toString())
+                    auto = AutoRegion(before, changes["destination"])
+                    note = "Market region changes to ${formatSettingValue("destination", compatible.toString(), model)} to allow $normalized km/h."
+                }
+            } else if (linked && name == "destination") {
+                auto = null
+                val range = TuningRules.speedRange(model, normalized.toDouble().toInt())
+                val speed = (changes["speed-limit"] ?: current.values["speed-limit"])?.toDoubleOrNull()
+                if (range != null && speed != null && speed !in range) {
+                    val fitted = TuningRules.validate(current.settings.single { it.name == "speed-limit" }, formatNumber(speed.coerceIn(range)))
+                    put("speed-limit", fitted)
+                    note = "Assist speed changes to $fitted km/h to fit this market region."
+                }
+            }
+            put(name, normalized)
             TuningRules.validateCombination(current.identity, current.values, changes)
+            autoRegion = auto
+            val summary = if (changes.isEmpty()) "No pending changes." else "${changeCount(changes.size)} ready for review."
             mutableState.value = current.copy(staged = changes, error = null,
-                status = if (changes.isEmpty()) "No pending changes." else "${changeCount(changes.size)} ready for review.")
+                status = if (note == null) summary else "$note $summary")
         } catch (error: IllegalArgumentException) {
             localError(error.message ?: "Invalid setting value.")
         } catch (error: IllegalStateException) {
@@ -76,6 +117,7 @@ class SessionController(private val backend: AppBackend) {
 
     fun discard() {
         if (state.value.phase != AppPhase.Ready) return
+        autoRegion = null
         mutableState.value = state.value.copy(staged = emptyMap(), error = null, status = "Pending changes discarded.")
     }
 
@@ -131,6 +173,7 @@ class SessionController(private val backend: AppBackend) {
                     "Saved values did not return complete verified readbacks."
                 }
             }
+            autoRegion = null
             mutableState.value = parsed.copy(status = "${changeCount(ordered.size)} saved and verified. Previous values are backed up.")
         } catch (error: Throwable) {
             failUncertain(error, "Save stopped. Earlier changes may remain applied. Reconnect and read the bike before retrying.")
@@ -219,6 +262,7 @@ class SessionController(private val backend: AppBackend) {
     }
 
     private fun applySnapshot(result: JsonObject, expected: MotorIdentity?, status: String) {
+        autoRegion = null
         mutableState.value = parseSnapshot(result, expected).copy(status = status)
     }
 

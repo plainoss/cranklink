@@ -1414,7 +1414,7 @@ describe("Setting value formatting", () => {
     assert.equal(formatSetting(schema, "speed-limit", 25), "25 km/h");
     assert.equal(formatSetting(schema, "display-speed-adjustment", 15), "1.5%");
     assert.equal(formatSetting(schema, "mounting-angle", 12), "12°");
-    assert.equal(formatSetting(schema, "destination", 1), "1 (19–32 km/h)");
+    assert.equal(formatSetting(schema, "destination", 1), "United States · 19–32 km/h");
     assert.equal(formatSetting(schema, "start-mode", 0), "Off");
     assert.equal(formatSetting(schema, "speed-limit", null), "—");
     assert.equal(formatSetting(schema, "light-output", 2700), "27 W");
@@ -1500,8 +1500,8 @@ describe("Setting descriptions", () => {
 
   it("offers each model's destinations by the speed range the core enforces", () => {
     // src/settings.rs speed_range: legacy 0, 3 and 4 permit 15-25 km/h; modern 2 is 14-24 and 5 is 19-45.
-    const legacy = { 0: "0 (15–25 km/h)", 1: "1 (19–32 km/h)", 3: "3 (15–25 km/h)", 4: "4 (15–25 km/h)" };
-    const modern = { 0: "0 (15–25 km/h)", 1: "1 (19–32 km/h)", 2: "2 (14–24 km/h)", 3: "3 (15–25 km/h)", 5: "5 (19–45 km/h)" };
+    const legacy = { 0: "Europe · 15–25 km/h", 1: "United States · 19–32 km/h", 3: "Region 3 · 15–25 km/h", 4: "Region 4 · 15–25 km/h" };
+    const modern = { 0: "Europe · 15–25 km/h", 1: "United States · 19–32 km/h", 2: "Japan · 14–24 km/h", 3: "Region 3 · 15–25 km/h", 5: "US Class 3 · 19–45 km/h" };
     for (const [model, labels] of [["ep800-crg", legacy], ["e5100", legacy], ["ep500", modern], ["ep600", modern], ["ep801", modern]] as const) {
       const destination = enrichSchema(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "schemas", `${model}.json`), "utf8")), model)
         .find((spec) => spec.name === "destination")!;

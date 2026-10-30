@@ -174,7 +174,14 @@ internal object TuningRules {
         else -> null
     }
 
-    private fun isModern(model: String) = model in setOf("ep600", "ep801", "ep500")
+    /** The first region permitting [speed], preferring [preferred], as the web app picks it. */
+    fun destinationForSpeed(model: String, speed: Double, preferred: Int?, choices: List<String>): Int? =
+        (listOfNotNull(preferred) + (0..5)).firstOrNull { destination ->
+            (choices.isEmpty() || choices.any { it.toDoubleOrNull() == destination.toDouble() }) &&
+                speedRange(model, destination)?.contains(speed) == true
+        }
+
+    internal fun isModern(model: String) = model in setOf("ep600", "ep801", "ep500")
     private val e600xModels = setOf("e6000", "e6001", "e6002-pre33", "e6002")
     private fun verifiedTorqueLevels(minimum: Double?, maximum: Double?): List<Int> = when {
         minimum == 20.0 && maximum == 85.0 -> listOf(20, 27, 34, 42, 49, 56, 63, 70, 78, 85)
