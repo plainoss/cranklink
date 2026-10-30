@@ -939,7 +939,7 @@ pub fn decoded_snapshots_equal(before: &Value, after: &Value) -> bool {
 /// or `null` when the snapshot does not list the setting at all.
 fn snapshot_side(snapshot: &Value, name: &str) -> Value {
     if let Some(value) = snapshot["values"].get(name) {
-        json!({"value": value.get("value").cloned().unwrap_or(Value::Null)})
+        json!({"value": value["value"]})
     } else if let Some(reason) = snapshot["unavailable"].get(name) {
         json!({"unavailable": reason})
     } else {
@@ -975,6 +975,19 @@ pub fn diff_snapshots(before: &Value, after: &Value) -> Result<Value> {
                     .map_or(true, |u| u.is_object()),
             "{label} file is not a settings snapshot (expected an object of values from settings read --output)"
         );
+        // A malformed entry must not compare as a successfully read value.
+        for (name, entry) in snapshot["values"].as_object().into_iter().flatten() {
+            ensure!(
+                entry.get("value").is_some(),
+                "{label} snapshot entry {name} has no decoded value"
+            );
+        }
+        for (name, reason) in snapshot["unavailable"].as_object().into_iter().flatten() {
+            ensure!(
+                reason.is_string(),
+                "{label} snapshot reason for unavailable {name} is not text"
+            );
+        }
     }
     let mut names: Vec<&str> = Vec::new();
     for snapshot in [before, after] {
@@ -2415,6 +2428,13 @@ mod tests {
             format!("{:#}", diff_snapshots(&backup, &upper).unwrap_err())
                 .contains("single-setting backup")
         );
+        for malformed in [
+            serde_json::json!({"values": {"lamp": 1}, "unavailable": {}}),
+            serde_json::json!({"values": {"lamp": {"raw": "01"}}, "unavailable": {}}),
+            serde_json::json!({"values": {}, "unavailable": {"lamp": 3}}),
+        ] {
+            assert!(diff_snapshots(&upper, &malformed).is_err());
+        }
         assert!(format!(
             "{:#}",
             diff_snapshots(&upper, &serde_json::json!([1])).unwrap_err()
