@@ -43,3 +43,6 @@ android-app/local.properties
 android-app/.idea/
 android-app/native/target/
 android-app/androidApp/src/main/jniLibs/
+
+# Android upload key material; never commit (see docs/android-releases.md)
+/.release/

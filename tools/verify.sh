@@ -46,9 +46,10 @@ if [ -d "web-instrument" ]; then
 fi
 
 if [ "${CRANKLINK_VERIFY_ANDROID:-0}" = "1" ]; then
-  echo "==> Verifying Android App (native + shared tests + lint + APK)..."
+  echo "==> Verifying Android App (native + release tools + shared tests + lint + APK)..."
   cargo fmt --manifest-path "$REPO_ROOT/android-app/native/Cargo.toml" --check
   cargo test --locked --manifest-path "$REPO_ROOT/android-app/native/Cargo.toml"
+  python3 -m unittest discover -s "$REPO_ROOT/tools/android-release" -p 'test_*.py'
   (
     cd "$REPO_ROOT/android-app"
     ./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug --console=plain

@@ -4,17 +4,41 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release CI sets the version and the upload key through the environment; local builds keep 1 / 0.1.0.
+val releaseCode = providers.environmentVariable("ANDROID_VERSION_CODE").orElse("1").get().toInt()
+require(releaseCode in 1..2100000000) { "ANDROID_VERSION_CODE must be between 1 and 2100000000" }
+val releaseName = providers.environmentVariable("ANDROID_VERSION_NAME").orElse("0.1.0").get()
+require(releaseName.isNotBlank()) { "ANDROID_VERSION_NAME must not be blank" }
+val signingVariables = listOf("ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD")
+val signingValues = signingVariables.associateWith { providers.environmentVariable(it).orNull }
+val hasReleaseSigning = signingValues.values.all { !it.isNullOrBlank() }
+
 android {
-    namespace = "work.plainoss.cranklink"
-    compileSdk = 35
+    namespace = "app.plainoss.cranklink"
+    compileSdk = 36
     defaultConfig {
-        applicationId = "work.plainoss.cranklink"
+        applicationId = "app.plainoss.cranklink"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        versionCode = releaseCode
+        versionName = releaseName
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("upload") {
+                storeFile = file(signingValues.getValue("ANDROID_KEYSTORE_PATH")!!)
+                storePassword = signingValues.getValue("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = signingValues.getValue("ANDROID_KEY_ALIAS")
+                keyPassword = signingValues.getValue("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("upload")
+        }
     }
     buildFeatures { compose = true }
     compileOptions {
@@ -55,3 +79,6 @@ val buildNative by tasks.registering(Exec::class) {
     outputs.files("src/main/jniLibs/arm64-v8a/libcranklink_android.so", "src/main/jniLibs/x86_64/libcranklink_android.so")
 }
 tasks.named("preBuild").configure { dependsOn(buildNative) }
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst { check(hasReleaseSigning) { "Release signing requires: ${signingVariables.joinToString()}" } }
+}

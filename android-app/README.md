@@ -2,14 +2,14 @@
 
 An Android tuning app for Shimano STEPS e-bikes, with the staged edit and backup workflow used by the [web app](../web-instrument/README.md). It connects through the bike's E-TUBE Bluetooth LE gateway. It supports drive units only; Di2 component configuration, USB/serial transport, firmware files, bootloader access, and firmware flashing are excluded.
 
-The app requires Android 8.0 (API 26) or later and Bluetooth LE. The APK includes `arm64-v8a` for phones and `x86_64` for emulators. It has not been validated on a physical Android device connected to a bike. Build and protocol tests do not establish hardware compatibility.
+The app requires Android 8.0 (API 26) or later and Bluetooth LE. The APK includes `arm64-v8a` for phones and `x86_64` for emulators. It has been tested on a physical phone with a bike; each release is installed from Google Play internal testing before it goes to production. Releases are published to Google Play as `app.plainoss.cranklink`.
 
 ## Build
 
 Use macOS or Linux with:
 
 - JDK 17 or 21; Java 8 cannot run the Android build. Set `JAVA_HOME` to the chosen JDK.
-- Android SDK platform 35, build tools 35.0.0, platform tools, and NDK 28.2.13676358. Android Studio's SDK Manager can install these.
+- Android SDK platform 36, build tools 36.0.0, platform tools, and NDK 28.2.13676358. Android Studio's SDK Manager can install these.
 - Rust 1.90 or newer with `rustup`, a C/C++ build toolchain, and `rg` (ripgrep).
 
 Set `ANDROID_HOME` to the SDK directory, or put `sdk.dir=/absolute/path/to/android/sdk` in `android-app/local.properties`. Set `ANDROID_NDK_HOME` to the NDK directory if it is outside the SDK's `ndk/` directory or several versions are installed. The native build otherwise selects an installed SDK NDK.
@@ -24,7 +24,7 @@ cd android-app
 ./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug
 ```
 
-The checked-in Gradle wrapper downloads Gradle 8.11.1. Android APK builds run `scripts/build-native.sh` before packaging, so a successful APK build includes the Rust JNI library for both ABIs. The native script defaults to an optimized release library; `scripts/build-native.sh --release` is equivalent, while `scripts/build-native.sh --debug` builds debug libraries for native development.
+The checked-in Gradle wrapper downloads Gradle 8.14.3. Android APK builds run `scripts/build-native.sh` before packaging, so a successful APK build includes the Rust JNI library for both ABIs. The native script defaults to an optimized release library; `scripts/build-native.sh --release` is equivalent, while `scripts/build-native.sh --debug` builds debug libraries for native development.
 
 To build only the native libraries:
 
@@ -40,7 +40,9 @@ The debug APK is `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Inst
 adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ```
 
-The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml) builds the same debug APK and uploads it as an artifact. It is a development build signed with a debug key.
+The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml) builds the same debug APK and uploads it as an artifact. It is a development build signed with a debug key that changes per run, so it cannot update a previous install. The workflow also builds and verifies a release bundle signed with a disposable key.
+
+Signed release bundles are built by `tools/android-release/build.sh` and published to Google Play by CI; see [Android releases](../docs/android-releases.md). To build one locally, set `ANDROID_VERSION_CODE`, `ANDROID_VERSION_NAME`, `ANDROID_UPLOAD_CERTIFICATE_SHA256` and the `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` signing variables, then run `tools/android-release/build.sh <absolute output directory>` from the repository root. A release build without the signing variables fails.
 
 ## Use
 
