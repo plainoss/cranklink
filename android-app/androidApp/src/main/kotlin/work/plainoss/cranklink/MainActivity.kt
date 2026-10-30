@@ -209,6 +209,10 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     IconButton(onClick = { vm.controller.dismissError(); vm.showNotice(null) }) { Icon(Icons.Default.Close, "Dismiss message") }
                 }
             }
+            // Above every page: a session can end while Backups is open.
+            if (!connected && state.restartBike) Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                RestartBikeCard(vm.controller::acknowledgeRestart)
+            }
             when {
                 page == 2 -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
@@ -278,7 +282,12 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     )
     if (disconnect) AlertDialog(
         onDismissRequest = { disconnect = false }, title = { Text("Disconnect bike?") },
-        text = { Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (state.staged.isEmpty()) "Saved settings remain on the bike." else "${state.staged.size} pending ${if (state.staged.size == 1) "change will" else "changes will"} be discarded.")
+                if (state.identity?.masterRouting == true) Text("Afterwards, turn the bike off and on again to return to riding mode.")
+            }
+        },
         confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); page = 0 }) { Text("Disconnect") } },
         dismissButton = { TextButton(onClick = { disconnect = false }) { Text("Cancel") } },
     )
@@ -592,6 +601,23 @@ private fun PageTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, fontSize = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.2).sp)
         Text(subtitle, fontSize = 14.sp, color = Muted)
+    }
+}
+
+/** After master routing ends, a STEPS bike can stay on its Shimano logo until it is power cycled. */
+@Composable
+private fun RestartBikeCard(onRestarted: () -> Unit) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PowerSettingsNew, null, tint = Pine)
+                Spacer(Modifier.width(8.dp))
+                Text("Turn your bike off and on again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Pine)
+            }
+            Text("To leave setup mode, switch the bike off with its power button, wait a few seconds, then switch it on again. Assist, display and buttons then work normally. Your saved settings are kept.",
+                fontSize = 13.sp, color = Pine, lineHeight = 20.sp)
+            TextButton(onClick = onRestarted, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Pine) }
+        }
     }
 }
 

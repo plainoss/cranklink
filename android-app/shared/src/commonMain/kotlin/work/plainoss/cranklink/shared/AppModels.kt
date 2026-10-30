@@ -19,6 +19,8 @@ data class MotorIdentity(
     val rxVersion: String,
     val modelSlug: String,
     val modelSeries: Int,
+    /** The gateway routed this session as bus master; the bike needs a restart afterwards. */
+    val masterRouting: Boolean = false,
 )
 
 data class TuningSetting(
@@ -50,4 +52,6 @@ data class AppState(
     val backups: List<String> = emptyList(),
     val error: String? = null,
     val status: String = "Connect to your STEPS bike over Bluetooth.",
+    /** A master-routing session ended; the rider must turn the bike off and on to ride. */
+    val restartBike: Boolean = false,
 )

@@ -29,13 +29,13 @@ class SessionController(private val backend: AppBackend) {
 
     suspend fun connect() = operation.withLock {
         if (state.value.phase != AppPhase.Disconnected) return@withLock
-        mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null,
+        mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null, restartBike = false,
             status = "Connecting to your bike and reading its settings…")
         try {
             val result = execute(buildJsonObject { put("op", "connect"); put("master", true) })
             applySnapshot(result, expected = null, status = "Connected. Review changes before saving them to the bike.")
         } catch (error: Throwable) {
-            failUncertain(error, "Connection failed. Reconnect to try again.")
+            failUncertain(error, "Connection failed. If the bike does not return to riding mode, turn it off and on again before reconnecting.")
         }
     }
 
@@ -125,6 +125,10 @@ class SessionController(private val backend: AppBackend) {
         mutableState.value = state.value.copy(error = null)
     }
 
+    fun acknowledgeRestart() {
+        mutableState.value = state.value.copy(restartBike = false)
+    }
+
     /** Reload local backup files after an import; no bike connection is required. */
     suspend fun refreshBackups() = operation.withLock {
         try {
@@ -208,16 +212,20 @@ class SessionController(private val backend: AppBackend) {
         operation.withLock {
             // A failed operation already released the native session; keep its error visible.
             if (state.value.phase == AppPhase.Disconnected) return@withLock
+            // A STEPS bike can stay on its Shimano logo after master routing
+            // ends; a power cycle returns it to riding mode.
+            val restartBike = state.value.identity?.masterRouting == true
             mutableState.value = state.value.copy(phase = AppPhase.Disconnecting, error = null,
                 status = "Disconnecting from the motor and Bluetooth…")
             try {
                 val result = execute("disconnect")
                 mutableState.value = AppState(backups = parseBackups(result) ?: state.value.backups,
-                    status = "Disconnected.")
+                    status = "Disconnected.", restartBike = restartBike)
             } catch (error: Throwable) {
                 val backups = state.value.backups
                 mutableState.value = AppState(backups = backups, error = error.message ?: "Disconnect failed.",
-                    status = "Could not confirm the motor disconnected. Check the bike before reconnecting.")
+                    status = "Could not confirm the motor disconnected. Check the bike before reconnecting.",
+                    restartBike = restartBike)
                 if (error is CancellationException) throw error
             }
         }
@@ -238,7 +246,8 @@ class SessionController(private val backend: AppBackend) {
 
     private suspend fun failUncertain(error: Throwable, status: String) {
         val oldBackups = state.value.backups
-        mutableState.value = AppState(backups = oldBackups, error = error.message ?: "The operation failed.", status = status)
+        mutableState.value = AppState(backups = oldBackups, error = error.message ?: "The operation failed.", status = status,
+            restartBike = state.value.identity?.masterRouting == true)
         // Cancellation invalidates the live state, but must not skip releasing
         // the native master session. Keep the original error after cleanup.
         withContext(NonCancellable) {
