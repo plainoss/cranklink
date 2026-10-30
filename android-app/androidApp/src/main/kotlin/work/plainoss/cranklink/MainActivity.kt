@@ -215,7 +215,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
                     onRestore = { restoreFile = it }, onBack = { page = 0 })
                 !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
-                page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh)
+                page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh, onStage = vm.controller::stage)
                 else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
             }
         }
@@ -318,8 +318,11 @@ private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit,
 }
 
 @Composable
-private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onTune: () -> Unit, onRefresh: () -> Unit) {
+private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onTune: () -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit) {
     val identity = state.identity ?: return
+    var editing by remember { mutableStateOf<TuningSetting?>(null) }
+    fun editable(name: String) = state.settings.find { it.name == name }
+        ?.takeIf { enabled && it.writable && name in state.values && name !in state.unavailable }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         PageTitle("Bike overview", if (demo) "Sample drive-unit identity and settings." else "Drive-unit identity and settings read from the bike.")
         Card(colors = CardDefaults.cardColors(containerColor = Pine), shape = RoundedCornerShape(26.dp)) {
@@ -338,8 +341,11 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Assist cut-off", state.staged["speed-limit"] ?: state.values["speed-limit"] ?: "—", "km/h", Modifier.weight(1f))
-            MetricCard("Wheel rollout", state.staged["tire-circumference"] ?: state.values["tire-circumference"] ?: "—", "mm", Modifier.weight(1f))
+            listOf(Triple("Assist cut-off", "speed-limit", "km/h"), Triple("Wheel rollout", "tire-circumference", "mm")).forEach { (label, name, unit) ->
+                val setting = editable(name)
+                MetricCard(label, state.staged[name] ?: state.values[name] ?: "—", unit, Modifier.weight(1f),
+                    onClick = setting?.let { { editing = it } })
+            }
         }
         Card(onClick = onTune, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
             Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -364,6 +370,7 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
         }
         Text(state.status, color = Muted, fontSize = 12.sp)
     }
+    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
 }
 
 @Composable
@@ -375,10 +382,14 @@ private fun MotorDatum(title: String, value: String) {
 }
 
 @Composable
-private fun MetricCard(label: String, value: String, unit: String, modifier: Modifier) {
-    Card(modifier, shape = RoundedCornerShape(20.dp)) {
+private fun MetricCard(label: String, value: String, unit: String, modifier: Modifier, onClick: (() -> Unit)? = null) {
+    val shape = RoundedCornerShape(20.dp)
+    Card(modifier.clip(shape).clickable(enabled = onClick != null, onClickLabel = "Edit $label") { onClick?.invoke() }, shape = shape) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, color = Muted, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                if (onClick != null) Icon(Icons.Default.ChevronRight, null, tint = Muted, modifier = Modifier.size(17.dp))
+            }
             Text(value.removeSuffix(".0"), fontSize = 30.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
             Text(unit, color = Muted, fontSize = 11.sp)
         }
@@ -457,11 +468,14 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
         } else items(filtered, key = { it.name }) { spec -> SettingCard(spec, state, enabled) { editing = spec } }
         item { Text("Edits are staged until you review and save them.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp)) }
     }
-    editing?.let { setting ->
-        EditSettingDialog(setting, state.staged[setting.name] ?: state.values[setting.name] ?: "", state.identity?.modelSlug,
-            onDismiss = { editing = null }, onStage = { value -> onStage(setting.name, value); editing = null },
-            onUndo = if (setting.name in state.staged) { { onStage(setting.name, state.values[setting.name] ?: ""); editing = null } } else null)
-    }
+    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
+}
+
+@Composable
+private fun SettingEditor(setting: TuningSetting, state: AppState, onStage: (String, String) -> Unit, onDone: () -> Unit) {
+    EditSettingDialog(setting, state.staged[setting.name] ?: state.values[setting.name] ?: "", state.identity?.modelSlug,
+        onDismiss = onDone, onStage = { value -> onStage(setting.name, value); onDone() },
+        onUndo = if (setting.name in state.staged) { { onStage(setting.name, state.values[setting.name] ?: ""); onDone() } } else null)
 }
 
 @Composable
