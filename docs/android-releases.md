@@ -43,6 +43,12 @@ GitHub environment `android-production`, deployable from `main` only, with no si
 
 Repository variables: `PLAY_INTERNAL_ENABLED` and `PLAY_PRODUCTION_ENABLED` switch publishing on (`false` pauses it; signed builds continue), and `ANDROID_VERSION_CODE_OFFSET` (default `100000`).
 
+Configured resources:
+
+- Play developer account `schibum` (ID 4770520382078237373); [Cranklink dashboard](https://play.google.com/console/developers/4770520382078237373/app/4974132995500525540/app-dashboard).
+- Service accounts `play-cranklink@plainoss-releases.iam.gserviceaccount.com` (testing tracks) and `play-cranklink-production@plainoss-releases.iam.gserviceaccount.com` (production), each with view access and its release permission for Cranklink only.
+- Workload identity providers `projects/590337448554/locations/global/workloadIdentityPools/cranklink/providers/github-actions` (accepts `android-release-internal.yml`, push or manual run, environment `android-release`) and `…/workloadIdentityPools/cranklink-production/providers/github-actions` (accepts `android-release-production.yml`, manual run only, environment `android-production`).
+
 Google Cloud project `plainoss-releases` holds one service account and one workload identity provider per environment. Each provider accepts only this repository (by numeric ID), branch `main`, its environment, and its workflow file. In Play Console the internal account may only release to testing tracks, and the production account may only release to production, both for Cranklink only.
 
 The upload key is generated once and kept outside the repository; back up the keystore and its passwords in a password manager, because GitHub secrets can't be read back. Google holds the app-signing key through Play App Signing. If the upload key is lost or leaked, request an upload key reset in Play Console.
