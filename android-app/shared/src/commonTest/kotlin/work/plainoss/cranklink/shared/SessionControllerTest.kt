@@ -366,6 +366,25 @@ class SessionControllerTest {
     }
 
     @Test
+    fun stoppedBatchReportsWhichChangesReachedTheBike() = runTest {
+        val backend = FakeBackend()
+        val controller = SessionController(backend)
+        controller.connect()
+        controller.stage("lamp", "1")
+        controller.stage("destination", "4")
+        backend.handler = { request ->
+            if (request.string("op") == "commit") {
+                error("batch stopped at operation 2; 1 completed operations remain applied; inspect /data/backups/tx.journal: BLE response timeout or notification overflow")
+            }
+            null
+        }
+        controller.commit()
+        // The region is sent first, so the lamp is the second operation.
+        assertEquals("1 of 2 changes were applied before the error. Wired light output was not written. " +
+            "The bike stopped responding over Bluetooth. Reconnect to read its current settings.", controller.state.value.error)
+    }
+
+    @Test
     fun incompleteReadbackCannotBeReportedAsSuccessfulSave() = runTest {
         val backend = FakeBackend()
         val controller = SessionController(backend)

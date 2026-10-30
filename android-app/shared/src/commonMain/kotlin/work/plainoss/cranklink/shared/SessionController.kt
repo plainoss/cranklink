@@ -133,7 +133,14 @@ class SessionController(private val backend: AppBackend) {
             }
             mutableState.value = parsed.copy(status = "${changeCount(ordered.size)} saved and verified. Previous values are backed up.")
         } catch (error: Throwable) {
-            failUncertain(error, "Save stopped. Earlier changes may remain applied. Reconnect and read the bike before retrying.")
+            // Lead with what the stopped batch left on the bike, as the web app does.
+            val raw = error.message
+            val outcome = raw?.let { message ->
+                saveFailureOutcome(message, ordered.map { (name) -> before.settings.singleOrNull { it.name == name }?.label ?: name })
+            }
+            val reported = if (outcome == null || error is CancellationException) error
+                else IllegalStateException("$outcome ${userFacingError(raw)}", error)
+            failUncertain(reported, "Save stopped. Earlier changes may remain applied. Reconnect and read the bike before retrying.")
         }
     }
 

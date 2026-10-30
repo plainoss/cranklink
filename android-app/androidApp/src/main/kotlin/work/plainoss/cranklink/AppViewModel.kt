@@ -37,7 +37,8 @@ object NativeCore {
     external fun invoke(gatt: AndroidGatt, request: String, backupDir: String): String
 }
 
-data class BackupInfo(val setting: String, val before: String, val serial: String, val model: String)
+/** [savedAt] is when the file was stored on this phone (written, or imported). */
+data class BackupInfo(val setting: String, val before: String, val serial: String, val model: String, val savedAt: Long = 0)
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val nativeDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -167,7 +168,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() = run { controller.refresh() }
-    fun commit() = run { controller.commit() }
+    /** With [disconnectAfterwards], disconnect only once every change is saved and verified. */
+    fun commit(disconnectAfterwards: Boolean = false) = run {
+        controller.commit()
+        val saved = controller.state.value
+        if (disconnectAfterwards && saved.phase == AppPhase.Ready && saved.staged.isEmpty() && saved.error == null) releaseSession()
+    }
     fun restore(file: String) = run { controller.restore(file) }
     fun disconnect() = run { releaseSession() }
 
@@ -236,7 +242,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val modified = file.lastModified()
                     val size = file.length()
                     val cached = backupCache[file.name]?.takeIf { it.modified == modified && it.size == size }
-                    val info = cached?.info ?: readBackupInfo(file, size)
+                    val info = cached?.info ?: readBackupInfo(file, size)?.copy(savedAt = modified)
                     if (info != null) {
                         backupCache[file.name] = CachedBackup(modified, size, info)
                         put(file.name, info)
