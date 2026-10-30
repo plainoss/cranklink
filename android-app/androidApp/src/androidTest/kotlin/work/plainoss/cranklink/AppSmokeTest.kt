@@ -79,7 +79,7 @@ class AppSmokeTest {
         ui.onNodeWithText("Apply in demo").performClick()
         ui.waitUntil(5_000) { ui.onAllNodesWithText("1 pending change").fetchSemanticsNodes().isEmpty() }
         ui.onNodeWithText("55 Nm").assertIsDisplayed()
-        ui.onNodeWithText("DEMO BIKE  ·  Changes stay in memory").assertIsDisplayed()
+        ui.onNodeWithText("DEMO").assertIsDisplayed()
     }
 
     @Test fun demoEditsPhysicalWattsAndKeepsUnitsThroughReviewAndReadback() {
@@ -118,7 +118,7 @@ class AppSmokeTest {
         // double scaling and accidental storage of the display number itself.
         ui.onNode(hasSetTextAction()).assertTextContains("13.75")
         ui.onNodeWithText("Cancel").performClick()
-        ui.onNodeWithText("DEMO BIKE  ·  Changes stay in memory").assertIsDisplayed()
+        ui.onNodeWithText("DEMO").assertIsDisplayed()
     }
 
     @Test fun packagedNativeCoreLoadsAndRejectsOutOfScopeOperations() {

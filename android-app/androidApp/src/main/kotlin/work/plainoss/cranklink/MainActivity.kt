@@ -66,8 +66,8 @@ private val Muted = Color(0xFF69756D)
 private class TuneSection(val id: String, val title: String, val subtitle: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 private val TuneSections = listOf(
-    TuneSection("geometry", "Bike & Geometry", "Speed limit, wheel size, lights and installation", Icons.Default.Explore),
-    TuneSection("profiles", "Assist Profiles", "Torque, character and start response per mode", Icons.Default.Tune),
+    TuneSection("geometry", "Bike & Geometry", "Speed, wheel, lights, mounting", Icons.Default.Explore),
+    TuneSection("profiles", "Assist Profiles", "Torque and response per mode", Icons.Default.Tune),
     TuneSection("maintenance", "Service & Maintenance", "Service reminders", Icons.Default.Build),
     TuneSection("oem", "OEM Factory Bounds", "Factory limits · change with care", Icons.Default.VerifiedUser),
 )
@@ -84,6 +84,8 @@ class MainActivity : ComponentActivity() {
                 primary = Pine, onPrimary = Color.White, secondary = Pine,
                 tertiary = Color(0xFF637B43), background = Paper, surface = Color.White,
                 onBackground = Ink, onSurface = Ink, surfaceVariant = Color(0xFFEBEEE7),
+                // Cards default to this container; white keeps them off Material's lavender.
+                surfaceContainerHighest = Color.White,
             )) {
                 val vm: AppViewModel = viewModel()
                 val state by vm.controller.state.collectAsStateWithLifecycle()
@@ -205,10 +207,6 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (demo && connected) Row(Modifier.fillMaxWidth().background(Color(0xFFF0E8D0)).padding(12.dp),
-                horizontalArrangement = Arrangement.Center) {
-                Text("DEMO BIKE  ·  Changes stay in memory", fontSize = 12.sp, color = Color(0xFF735E27))
-            }
             if (busy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth(), color = Pine, trackColor = Lime)
                 Row(Modifier.padding(horizontal = 24.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -401,28 +399,28 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onO
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
     fun editable(name: String) = state.settings.find { it.name == name }
         ?.takeIf { enabled && it.writable && name in state.values && name !in state.unavailable }
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        PageTitle("Bike overview", if (demo) "Sample drive-unit identity and settings." else "Drive-unit identity and settings read from the bike.")
-        Card(colors = CardDefaults.cardColors(containerColor = Pine), shape = RoundedCornerShape(26.dp)) {
-            Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Kept short so the Tuning list starts on the first screen.
+        Card(colors = CardDefaults.cardColors(containerColor = Pine), shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("SHIMANO STEPS", color = Color(0xFFADC3B4), letterSpacing = 2.sp, fontSize = 10.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Default.ElectricBike, null, tint = Lime, modifier = Modifier.size(34.dp))
+                    if (demo) Text("Demo · changes stay in memory", Modifier.clip(RoundedCornerShape(40.dp)).background(Color(0xFFF1E6C5))
+                        .padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 10.sp, color = Color(0xFF735E27), maxLines = 1)
                 }
-                Text(identity.model, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    MotorDatum("SERIAL", identity.serial)
-                    MotorDatum("LINK", if (demo) "Demo" else "Bluetooth LE")
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(identity.model, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    Text("SN ${identity.serial}", Modifier.padding(start = 10.dp, bottom = 3.dp), color = Color(0xFFADC3B4), fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                HorizontalDivider(color = Color(0xFF3D6251))
-                Text("${state.values.size} settings read  ·  ${state.unavailable.size} unavailable", color = Lime, fontSize = 12.sp)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            listOf(Triple("Assist cut-off", "speed-limit", "km/h"), Triple("Wheel rollout", "tire-circumference", "mm")).forEach { (label, name, unit) ->
-                val setting = editable(name)
-                MetricCard(label, state.staged[name] ?: state.values[name] ?: "—", unit, Modifier.weight(1f),
-                    onClick = setting?.let { { editing = it } })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(Triple("Assist cut-off", "speed-limit", "km/h"), Triple("Wheel rollout", "tire-circumference", "mm")).forEach { (label, name, unit) ->
+                        val setting = editable(name)
+                        MetricChip(label, "${(state.staged[name] ?: state.values[name] ?: "—").removeSuffix(".0")} $unit", Modifier.weight(1f),
+                            onClick = setting?.let { { editing = it } })
+                    }
+                }
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -447,6 +445,8 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onO
         Card(shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("Drive unit details", fontWeight = FontWeight.SemiBold)
+                DetailRow("Link", if (demo) "Demo" else "Bluetooth LE")
+                DetailRow("Settings read", "${state.values.size} (${state.unavailable.size} unavailable)")
                 DetailRow("Application version", identity.dcasVersion)
                 DetailRow("Motor controller version", identity.rxVersion)
                 DetailRow("Bus slot", identity.slot.toString())
@@ -470,32 +470,23 @@ private fun NavRow(title: String, subtitle: String, icon: androidx.compose.ui.gr
         }
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text(subtitle, fontSize = 12.sp, color = if (highlight) Pine else Muted, fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal)
+            Text(subtitle, fontSize = 12.sp, color = if (highlight) Pine else Muted, fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (enabled) Icon(Icons.Default.ChevronRight, null, tint = Muted)
     }
 }
 
 @Composable
-private fun MotorDatum(title: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(title, color = Color(0xFFADC3B4), fontSize = 9.sp, letterSpacing = 1.sp)
-        Text(value, color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-    }
-}
-
-@Composable
-private fun MetricCard(label: String, value: String, unit: String, modifier: Modifier, onClick: (() -> Unit)? = null) {
-    val shape = RoundedCornerShape(20.dp)
-    Card(modifier.clip(shape).clickable(enabled = onClick != null, onClickLabel = "Edit $label") { onClick?.invoke() }, shape = shape) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(label, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                if (onClick != null) Icon(Icons.Default.ChevronRight, null, tint = Muted, modifier = Modifier.size(17.dp))
-            }
-            Text(value.removeSuffix(".0"), fontSize = 30.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
-            Text(unit, color = Muted, fontSize = 11.sp)
+private fun MetricChip(label: String, value: String, modifier: Modifier, onClick: (() -> Unit)? = null) {
+    Row(modifier.clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.09f))
+        .clickable(enabled = onClick != null, onClickLabel = "Edit $label") { onClick?.invoke() }
+        .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color(0xFFADC3B4), fontSize = 11.sp)
+            Text(value, color = Lime, fontSize = 16.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, maxLines = 1)
         }
+        if (onClick != null) Icon(Icons.Default.ChevronRight, null, tint = Color(0xFFADC3B4), modifier = Modifier.size(17.dp))
     }
 }
 
