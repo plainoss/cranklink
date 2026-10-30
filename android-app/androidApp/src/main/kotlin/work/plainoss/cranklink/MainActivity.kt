@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
 import androidx.compose.material.icons.automirrored.filled.Undo
@@ -33,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -59,6 +61,19 @@ private val Lime = Color(0xFFC8F27D)
 private val Paper = Color(0xFFF6F5F0)
 private val Ink = Color(0xFF1E2925)
 private val Muted = Color(0xFF69756D)
+
+/** The web sidebar's Tuning group, in its order and with its names. */
+private class TuneSection(val id: String, val title: String, val subtitle: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+
+private val TuneSections = listOf(
+    TuneSection("geometry", "Bike & Geometry", "Speed limit, wheel size, lights and installation", Icons.Default.Explore),
+    TuneSection("profiles", "Assist Profiles", "Torque, character and start response per mode", Icons.Default.Tune),
+    TuneSection("maintenance", "Service & Maintenance", "Service reminders", Icons.Default.Build),
+    TuneSection("oem", "OEM Factory Bounds", "Factory limits · change with care", Icons.Default.VerifiedUser),
+)
+
+private const val Home = "home"
+private const val Backup = "backup"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,7 +107,8 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     val notice by vm.notice.collectAsStateWithLifecycle()
     val backups by vm.backupFiles.collectAsStateWithLifecycle()
     val backupInfo by vm.backupInfo.collectAsStateWithLifecycle()
-    var page by rememberSaveable { mutableIntStateOf(0) }
+    // One navigation: Overview is home and every other screen opens from it.
+    var screen by rememberSaveable { mutableStateOf(Home) }
     var showScan by remember { mutableStateOf(false) }
     var selectedBike by remember { mutableStateOf<NearbyBike?>(null) }
     var review by remember { mutableStateOf(false) }
@@ -103,12 +119,15 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     var exportFile by remember { mutableStateOf<String?>(null) }
     val busy = state.phase !in listOf(AppPhase.Ready, AppPhase.Disconnected)
     val connected = state.identity != null
-    BackHandler(enabled = connected || busy || page != 0) {
-        when (state.phase) {
-            AppPhase.Saving, AppPhase.Restoring, AppPhase.Disconnecting ->
+    // A session can end on any screen; only Backup & Restore works without a bike.
+    LaunchedEffect(connected) { if (!connected && screen != Backup) screen = Home }
+    BackHandler(enabled = connected || busy || screen != Home) {
+        when {
+            screen != Home -> screen = Home
+            state.phase == AppPhase.Saving || state.phase == AppPhase.Restoring || state.phase == AppPhase.Disconnecting ->
                 vm.showNotice("Wait for the current operation to finish before disconnecting.")
-            AppPhase.Connecting, AppPhase.Reading -> vm.cancelConnection()
-            else -> if (page == 2) page = 0 else if (connected) disconnect = true else page = 0
+            state.phase == AppPhase.Connecting || state.phase == AppPhase.Reading -> vm.cancelConnection()
+            connected -> disconnect = true
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -143,14 +162,21 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     Scaffold(
         containerColor = Paper,
         topBar = {
-            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 17.dp),
+            val title = if (screen == Backup) "Backup & Restore" else TuneSections.find { it.id == screen }?.title
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = if (title != null) 8.dp else 24.dp, end = 24.dp, top = 17.dp, bottom = 17.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(35.dp).clip(RoundedCornerShape(11.dp)).background(Pine), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Bolt, null, tint = Lime, modifier = Modifier.size(24.dp))
+                if (title != null) {
+                    IconButton(onClick = { screen = Home }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Pine) }
+                    Text(title, Modifier.weight(1f), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.4).sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Box(Modifier.size(35.dp).clip(RoundedCornerShape(11.dp)).background(Pine), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Bolt, null, tint = Lime, modifier = Modifier.size(24.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text("cranklink", fontSize = 23.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.7).sp)
+                    Spacer(Modifier.weight(1f))
                 }
-                Spacer(Modifier.width(10.dp))
-                Text("cranklink", fontSize = 23.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.7).sp)
-                Spacer(Modifier.weight(1f))
                 if (connected) {
                     StatusPill(if (demo) "DEMO" else "BLE", if (demo) Color(0xFFF1E6C5) else Lime)
                     IconButton(onClick = { disconnect = true }, enabled = !busy) {
@@ -160,30 +186,20 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
             }
         },
         bottomBar = {
-            if (connected || page == 2) Column {
-                if (state.staged.isNotEmpty()) Row(
-                    Modifier.fillMaxWidth().background(Pine).padding(horizontal = 22.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${state.staged.size} pending ${if (state.staged.size == 1) "change" else "changes"}", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("Review before saving", color = Color(0xFFB7C8BE), fontSize = 12.sp)
-                    }
-                    IconButton(onClick = { discard = true }, enabled = !busy) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, "Discard staged changes", tint = Color.White)
-                    }
-                    Button(onClick = { review = true }, enabled = !busy,
-                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Pine)) {
-                        Text("Review"); Spacer(Modifier.width(7.dp)); Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(17.dp))
-                    }
+            if (connected && state.staged.isNotEmpty()) Row(
+                Modifier.fillMaxWidth().background(Pine).navigationBarsPadding().padding(horizontal = 22.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("${state.staged.size} pending ${if (state.staged.size == 1) "change" else "changes"}", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Review before saving", color = Color(0xFFB7C8BE), fontSize = 12.sp)
                 }
-                NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
-                    listOf("Overview" to Icons.Default.Dashboard, "Settings" to Icons.Default.Tune, "Backups" to Icons.Default.History)
-                        .forEachIndexed { index, (label, icon) ->
-                            NavigationBarItem(selected = page == index, onClick = { page = index },
-                                icon = { Icon(icon, label) }, label = { Text(label) },
-                                colors = NavigationBarItemDefaults.colors(indicatorColor = Lime, selectedIconColor = Pine))
-                        }
+                IconButton(onClick = { discard = true }, enabled = !busy) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, "Discard staged changes", tint = Color.White)
+                }
+                Button(onClick = { review = true }, enabled = !busy,
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Pine)) {
+                    Text("Review"); Spacer(Modifier.width(7.dp)); Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(17.dp))
                 }
             }
         },
@@ -219,19 +235,19 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                 RestartBikeCard(vm.controller::acknowledgeRestart)
             }
             when {
-                page == 2 -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
+                screen == Backup -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
-                    onRestore = { restoreFile = it }, onBack = { page = 0 }, settings = state.settings,
+                    onRestore = { restoreFile = it }, settings = state.settings,
                     restoreHint = when {
                         !connected -> "Connect your bike to restore a backup."
                         demo -> "Restoring is unavailable in the demo. Connect a real bike to restore."
                         state.staged.isNotEmpty() -> "Save or discard staged changes before restoring a backup."
                         else -> null
                     })
-                !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
-                page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh, onStage = vm.controller::stage)
-                else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
+                !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { screen = Home; vm.startDemo() }, onBackups = { screen = Backup })
+                screen == Home -> OverviewScreen(state, demo, !busy, onOpen = { screen = it }, onRefresh = vm::refresh, onStage = vm.controller::stage)
+                else -> TuneScreen(TuneSections.firstOrNull { it.id == screen } ?: TuneSections.first(), state, enabled = !busy, onStage = vm.controller::stage)
             }
         }
     }
@@ -266,7 +282,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     selectedBike?.let { bike ->
         PasskeyDialog(bike.name, onDismiss = { selectedBike = null }) { pin ->
             selectedBike = null
-            page = 0
+            screen = Home
             vm.connect(bike, pin)
         }
     }
@@ -329,7 +345,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                 if (state.identity?.masterRouting == true) Text("Afterwards, turn the bike off and on again to return to riding mode.")
             }
         },
-        confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); page = 0 }) { Text("Disconnect") } },
+        confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); screen = Home }) { Text("Disconnect") } },
         dismissButton = {
             Row {
                 TextButton(onClick = { disconnect = false }) { Text("Cancel") }
@@ -380,7 +396,7 @@ private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit,
 }
 
 @Composable
-private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onTune: () -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit) {
+private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onOpen: (String) -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit) {
     val identity = state.identity ?: return
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
     fun editable(name: String) = state.settings.find { it.name == name }
@@ -409,15 +425,24 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
                     onClick = setting?.let { { editing = it } })
             }
         }
-        Card(onClick = onTune, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Lime)) {
-            Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Tune, null, tint = Pine)
-                Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                    Text("Edit settings", fontWeight = FontWeight.Bold, color = Pine)
-                    Text("Assist profiles, wheel size, lights and service", fontSize = 12.sp, color = Pine)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("TUNING", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.5.sp)
+            Card(shape = RoundedCornerShape(20.dp)) {
+                TuneSections.forEachIndexed { index, section ->
+                    if (index > 0) HorizontalDivider(color = Paper)
+                    // A section the motor does not expose stays listed, as on the web, but cannot be opened.
+                    val available = state.settings.any { it.section == section.id }
+                    val pending = state.staged.keys.count { name -> state.settings.find { it.name == name }?.section == section.id }
+                    NavRow(section.title, when {
+                        !available -> if (demo) "Not available in the demo" else "Not available on this bike"
+                        pending > 0 -> "$pending ${if (pending == 1) "change" else "changes"} staged"
+                        else -> section.subtitle
+                    }, section.icon, enabled = available, highlight = pending > 0) { onOpen(section.id) }
                 }
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, "Open settings", tint = Pine)
             }
+        }
+        Card(shape = RoundedCornerShape(20.dp)) {
+            NavRow("Backup & Restore", "Values saved before each write", Icons.Default.Archive) { onOpen(Backup) }
         }
         Card(shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -433,6 +458,22 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onT
         Text(state.status, color = Muted, fontSize = 12.sp)
     }
     editing?.let { SettingEditor(it, state, onStage) { editing = null } }
+}
+
+@Composable
+private fun NavRow(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true,
+                   highlight: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp, vertical = 14.dp)
+        .alpha(if (enabled) 1f else 0.5f), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFEEF3E8)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = Pine, modifier = Modifier.size(21.dp))
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, fontSize = 12.sp, color = if (highlight) Pine else Muted, fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal)
+        }
+        if (enabled) Icon(Icons.Default.ChevronRight, null, tint = Muted)
+    }
 }
 
 @Composable
@@ -467,11 +508,10 @@ private fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, String) -> Unit) {
-    var section by rememberSaveable { mutableStateOf("geometry") }
+private fun TuneScreen(tuneSection: TuneSection, state: AppState, enabled: Boolean, onStage: (String, String) -> Unit) {
+    val section = tuneSection.id
     var profile by rememberSaveable { mutableIntStateOf(1) }
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
-    val sections = listOf("geometry" to "Bike", "profiles" to "Assist", "maintenance" to "Service", "oem" to "Factory")
     val undo = { spec: TuningSetting -> onStage(spec.name, state.values[spec.name] ?: "") }
     val filtered = state.settings.filter {
         it.section == section && (section != "profiles" || !it.name.startsWith("profile") || it.name.startsWith("profile$profile."))
@@ -479,12 +519,7 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
                 && it.name in setOf("maintenance-year", "maintenance-month", "maintenance-day"))
     }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { PageTitle("Settings", "Read current values and review changes before saving.") }
-        item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                sections.forEach { (id, label) -> FilterChip(selected = section == id, onClick = { section = id }, label = { Text(label) }) }
-            }
-        }
+        item { Text(tuneSection.subtitle, fontSize = 14.sp, color = Muted) }
         if (section == "profiles") {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -494,16 +529,18 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
                     }
                 }
             }
-            item {
-                Text("Assist profiles", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                Text("Set peak torque, character and start response for each mode.", fontSize = 13.sp, color = Muted)
-            }
         }
-        if (section == "oem") item {
-            NoticeCard("Factory settings", "Installation settings and factory limits affect motor operation. Only change values you understand.")
+        // The caution only makes sense above settings it applies to.
+        if (section == "oem" && filtered.isNotEmpty()) item {
+            CautionCard("Installation settings and factory limits affect motor operation. Only change values you understand.")
         }
         if (filtered.isEmpty()) item {
-            NoticeCard("No settings in this category", "This motor or firmware does not expose these controls.")
+            Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(tuneSection.icon, null, tint = Muted, modifier = Modifier.size(40.dp))
+                Text("Nothing to adjust here", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("This motor or firmware does not expose these settings.", color = Muted, fontSize = 13.sp)
+            }
         }
         if (section == "profiles") {
             listOf("eco" to "Eco", "trail" to "Trail", "boost" to "Boost").forEach { (mode, title) ->
@@ -655,11 +692,11 @@ private fun listText(items: List<String>): String =
 private fun formatInput(value: Double): String = if (value == value.toLong().toDouble()) value.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')
 
 @Composable
-private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit, onBack: () -> Unit,
+private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit,
                           settings: List<TuningSetting>, restoreHint: String?) {
     val dates = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { PageTitle("Backups", "Restore previous setting values or export a copy.") }
+        item { Text("Restore previous setting values or export a copy.", fontSize = 14.sp, color = Muted) }
         item { NoticeCard("Before every write", "The original setting is stored on this phone, bound to the motor’s model and serial. Export backups to keep a separate copy.") }
         item { OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.FileDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Import a backup") } }
         if (files.isEmpty()) item {
@@ -695,7 +732,6 @@ private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>
             }
         } }
         if (restoreHint != null && files.isNotEmpty()) item { Text(restoreHint, color = Muted, fontSize = 12.sp) }
-        item { TextButton(onClick = onBack) { Text("Back to bike") } }
     }
 }
 
@@ -747,6 +783,18 @@ private fun RestartBikeCard(onRestarted: () -> Unit) {
             Text("To leave setup mode, switch the bike off with its power button, wait a few seconds, then switch it on again. Assist, display and buttons then work normally. Your saved settings are kept.",
                 fontSize = 13.sp, color = Pine, lineHeight = 20.sp)
             TextButton(onClick = onRestarted, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Pine) }
+        }
+    }
+}
+
+/** Set apart from neutral notices so a warning reads as one. */
+@Composable
+private fun CautionCard(message: String) {
+    Card(shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFECD59A)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF6E0))) {
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(Icons.Default.Warning, null, tint = Color(0xFF8A6A14), modifier = Modifier.size(20.dp))
+            Text(message, fontSize = 13.sp, color = Color(0xFF6B5214), lineHeight = 19.sp)
         }
     }
 }
