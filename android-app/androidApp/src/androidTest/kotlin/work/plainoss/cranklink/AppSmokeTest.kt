@@ -18,14 +18,25 @@ import java.util.concurrent.TimeUnit
 class AppSmokeTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 
-    @Test fun systemBackConfirmsDisconnectWithoutLosingPendingEdits() {
+    /** The demo opens on Overview; settings live one tap away in its Tuning list. */
+    private fun openDemoSection(title: String) {
         ui.onNodeWithText("Open demo").performScrollTo().performClick()
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithText("Assist").performClick()
+        // A row stays disabled until the demo's settings are read.
+        val row = hasText(title) and isEnabled()
+        ui.waitUntil(5_000) { ui.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
+        ui.onNode(row).performScrollTo().performClick()
+    }
+
+    @Test fun systemBackConfirmsDisconnectWithoutLosingPendingEdits() {
+        openDemoSection("Assist Profiles")
         ui.onAllNodesWithText("Peak torque").onFirst().performClick()
         ui.onNode(hasSetTextAction()).performTextClearance()
         ui.onNode(hasSetTextAction()).performTextInput("55")
         ui.onNodeWithText("Stage change").performClick()
+        // Back first leaves the section for Overview, keeping the staged edit.
+        ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
+        ui.onNodeWithText("1 change staged").performScrollTo().assertIsDisplayed()
+        ui.onNodeWithText("1 pending change").assertIsDisplayed()
         ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
         ui.onNodeWithText("Disconnect bike?").assertIsDisplayed()
         ui.onNodeWithText("1 pending change will be discarded.").assertIsDisplayed()
@@ -57,9 +68,7 @@ class AppSmokeTest {
     }
 
     @Test fun demoStagesReviewsAndAppliesWithoutBluetoothPermission() {
-        ui.onNodeWithText("Open demo").performScrollTo().performClick()
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithText("Assist").performClick()
+        openDemoSection("Assist Profiles")
         ui.onAllNodesWithText("Peak torque").onFirst().performClick()
         ui.onNode(hasSetTextAction()).performTextClearance()
         ui.onNode(hasSetTextAction()).performTextInput("55")
@@ -74,7 +83,7 @@ class AppSmokeTest {
     }
 
     @Test fun demoEditsPhysicalWattsAndKeepsUnitsThroughReviewAndReadback() {
-        ui.onNodeWithText("Open demo").performScrollTo().performClick()
+        openDemoSection("Bike & Geometry")
         ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
 
         // The demo stores calibration as 15 tenths of a percent. Its card must
