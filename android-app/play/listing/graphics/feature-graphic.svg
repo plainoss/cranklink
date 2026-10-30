@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <rect width="1024" height="500" fill="#153D31"/>
+  <g transform="translate(110,138) scale(3)">
+    <path fill="#C8F27D" d="M59,17L29,60h22l-3,31 31,-46h-23z" transform="translate(-29,-17)"/>
+  </g>
+  <text x="400" y="232" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="92" font-weight="700" fill="#FFFFFF">Cranklink</text>
+  <text x="404" y="300" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" fill="#C8F27D">E-bike drive unit settings,</text>
+  <text x="404" y="346" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" fill="#C8F27D">over Bluetooth. Free and open source.</text>
+</svg>

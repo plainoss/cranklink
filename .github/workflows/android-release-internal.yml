@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "android-app/**"
+      # Store listing text and graphics are entered in Play Console; they don't change the app.
+      - "!android-app/play/listing/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
