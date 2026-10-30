@@ -439,6 +439,52 @@ class SessionControllerTest {
     }
 
     @Test
+    fun stoppedBatchReportsWhichChangesReachedTheBike() = runTest {
+        val backend = FakeBackend()
+        val controller = SessionController(backend)
+        controller.connect()
+        controller.stage("lamp", "1")
+        controller.stage("destination", "4")
+        backend.handler = { request ->
+            if (request.string("op") == "commit") {
+                error("batch stopped at operation 2; 1 completed operations remain applied; inspect /data/backups/tx.journal: BLE response timeout or notification overflow")
+            }
+            null
+        }
+        controller.commit()
+        // The region is sent first, so the lamp is the second operation.
+        assertEquals("1 of 2 changes were applied before the error. Wired light output was not written. " +
+            "The bike stopped responding over Bluetooth. Reconnect to read its current settings.", controller.state.value.error)
+    }
+
+    @Test
+    fun stoppedBatchLabelsFollowTheNativePlanOrder() = runTest {
+        val backend = FakeBackend()
+        val controller = SessionController(backend)
+        controller.connect()
+        controller.stage("speed-limit", "20")
+        controller.stage("lamp", "1")
+        backend.handler = { request ->
+            if (request.string("op") == "commit") error("batch stopped at operation 2; 1 completed operations remain applied; inspect /x: refused")
+            null
+        }
+        controller.commit()
+        // Native sorts non-region settings by name, so lamp runs first.
+        assertTrue(controller.state.value.error!!.startsWith("1 of 2 changes were applied before the error. Assist speed limit was not written."))
+    }
+
+    @Test
+    fun undoRemovesAChangeWhoseBikeValueIsNotWritable() = runTest {
+        val controller = SessionController(FakeBackend(fixture(extraValues = mapOf("lamp" to "5"))))
+        controller.connect()
+        controller.stage("lamp", "1")
+        assertEquals(mapOf("lamp" to "1"), controller.state.value.staged)
+        controller.stage("lamp", "5")
+        assertTrue(controller.state.value.staged.isEmpty())
+        assertEquals(null, controller.state.value.error)
+    }
+
+    @Test
     fun incompleteReadbackCannotBeReportedAsSuccessfulSave() = runTest {
         val backend = FakeBackend()
         val controller = SessionController(backend)

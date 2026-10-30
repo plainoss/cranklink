@@ -81,6 +81,10 @@ fun TuningSetting.backendInput(displayText: String): String {
     return TuningRules.validate(this, formatNumber(snapped))
 }
 
+/** Whether cranklink could write this canonical value back, as a restore or an undo of a save would. */
+fun TuningSetting.canWriteBack(canonical: String): Boolean =
+    runCatching { TuningRules.validate(this, canonical) }.isSuccess
+
 /** Initial edit text, preserving names, dates and unset values byte for byte. */
 fun TuningSetting.inputText(backendText: String): String {
     if (valueType == "string" || valueType == "date" || backendText == "unset") return backendText

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,10 +34,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,6 +98,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     var review by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     var disconnect by remember { mutableStateOf(false) }
+    var disconnectAfterSave by remember { mutableStateOf(false) }
     var restoreFile by remember { mutableStateOf<String?>(null) }
     var exportFile by remember { mutableStateOf<String?>(null) }
     val busy = state.phase !in listOf(AppPhase.Ready, AppPhase.Disconnected)
@@ -195,7 +200,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                     if (state.phase == AppPhase.Connecting) TextButton(onClick = vm::cancelConnection) { Text("Cancel") }
                 }
             }
-            val message = state.error ?: notice
+            val message = state.error?.let(::userFacingError) ?: notice
             if (message != null) Card(
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFF8E8DE)),
@@ -217,7 +222,13 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                 page == 2 -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
-                    onRestore = { restoreFile = it }, onBack = { page = 0 })
+                    onRestore = { restoreFile = it }, onBack = { page = 0 }, settings = state.settings,
+                    restoreHint = when {
+                        !connected -> "Connect your bike to restore a backup."
+                        demo -> "Restoring is unavailable in the demo. Connect a real bike to restore."
+                        state.staged.isNotEmpty() -> "Save or discard staged changes before restoring a backup."
+                        else -> null
+                    })
                 !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { page = 1; vm.startDemo() }, onBackups = { page = 2 })
                 page == 0 -> OverviewScreen(state, demo, !busy, onTune = { page = 1 }, onRefresh = vm::refresh, onStage = vm.controller::stage)
                 else -> TuneScreen(state, enabled = !busy, onStage = vm.controller::stage)
@@ -259,6 +270,11 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
             vm.connect(bike, pin)
         }
     }
+    // Undoing the last change from the review leaves nothing to save.
+    LaunchedEffect(review, state.staged.isEmpty(), busy) {
+        if (review && state.staged.isEmpty() && !busy) review = false
+    }
+    LaunchedEffect(review) { if (!review) disconnectAfterSave = false }
     if (review) AlertDialog(
         onDismissRequest = { if (!busy) review = false },
         title = { Text(if (demo) "Review demo changes" else "Save to your bike?") },
@@ -267,17 +283,42 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                 Text(if (demo) "These changes affect the demo bike only." else "Each change is backed up, written in order, and checked by reading it back. Keep the bike powered and nearby.")
                 state.staged.forEach { (name, value) ->
                     val setting = state.settings.find { it.name == name }
-                    Column {
-                        Text(setting?.label ?: settingPresentation(name).label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("${formatSettingValue(name, state.values[name] ?: "—", state.identity?.modelSlug)}  →  ${formatSettingValue(name, value, state.identity?.modelSlug)}", color = Pine, fontFamily = FontFamily.Monospace)
+                    val label = setting?.label ?: settingPresentation(name).label
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (setting?.oem == true || setting?.section == "oem")
+                                    Icon(Icons.Default.Warning, "Factory setting", tint = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 5.dp).size(15.dp))
+                                Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Text("${formatSettingValue(name, state.values[name] ?: "—", state.identity?.modelSlug)}  →  ${formatSettingValue(name, value, state.identity?.modelSlug)}", color = Pine, fontFamily = FontFamily.Monospace)
+                        }
+                        TextButton(onClick = { vm.controller.stage(name, state.values[name] ?: "") }, enabled = !busy) { Text("Undo") }
                     }
                 }
+                if (state.staged.keys.any { name -> state.settings.find { it.name == name }?.let { it.oem || it.section == "oem" } == true })
+                    Text("Factory settings are limits set by the bike manufacturer. Raising them can exceed what the drivetrain or frame was approved for.", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                // A backup of a value cranklink cannot write is not a way back.
+                val unwritable = state.staged.keys.mapNotNull { name ->
+                    val setting = state.settings.find { it.name == name } ?: return@mapNotNull null
+                    val live = state.values[name] ?: return@mapNotNull null
+                    if (setting.canWriteBack(live)) null else "${setting.label} (${formatSettingValue(name, live, state.identity?.modelSlug)})"
+                }
+                if (!demo && unwritable.isNotEmpty()) Text(
+                    "cranklink cannot write back the current ${listText(unwritable)}, so restoring a backup cannot undo ${if (unwritable.size == 1) "that change" else "those changes"}.",
+                    fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                )
                 if (state.staged.keys.any { it == "destination" || it == "speed-limit" })
                     Text("Choose settings that comply with the rules where you ride.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 if (!demo) Text("A failed save can leave earlier changes applied. Reconnect and read the bike before restoring a backup.", fontSize = 12.sp, color = Muted)
             }
         },
-        confirmButton = { Button(onClick = { review = false; vm.commit() }, enabled = !busy && state.staged.isNotEmpty()) { Text(if (demo) "Apply in demo" else "Back up & save") } },
+        confirmButton = {
+            Button(onClick = { val thenDisconnect = disconnectAfterSave; review = false; vm.commit(disconnectAfterwards = thenDisconnect) },
+                enabled = !busy && state.staged.isNotEmpty()) {
+                Text(if (disconnectAfterSave) "Save & disconnect" else if (demo) "Apply in demo" else "Back up & save")
+            }
+        },
         dismissButton = { TextButton(onClick = { review = false }) { Text("Keep editing") } },
     )
     if (disconnect) AlertDialog(
@@ -289,7 +330,13 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
             }
         },
         confirmButton = { TextButton(onClick = { disconnect = false; vm.controller.discard(); vm.disconnect(); page = 0 }) { Text("Disconnect") } },
-        dismissButton = { TextButton(onClick = { disconnect = false }) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { disconnect = false }) { Text("Cancel") }
+                // As in the web app, unsaved edits can be saved on the way out.
+                if (state.staged.isNotEmpty()) TextButton(onClick = { disconnect = false; disconnectAfterSave = true; review = true }) { Text("Save first") }
+            }
+        },
     )
     if (discard) AlertDialog(
         onDismissRequest = { discard = false }, title = { Text("Discard staged changes?") },
@@ -301,10 +348,16 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
         onDismissRequest = { restoreFile = null }, title = { Text("Restore this setting?") },
         text = {
             val info = backupInfo[file]
-            Text("${info?.let { settingPresentation(it.setting, it.model).label } ?: file}\nRestore value: ${info?.let { formatSettingValue(it.setting, it.before, it.model) } ?: "Unknown"}\nMotor: ${info?.model ?: "Unknown"}\nSerial: ${info?.serial ?: "Unknown"}\n\nThe current value is backed up before restore and verified afterward.")
+            val setting = info?.let { backup -> state.settings.find { it.name == backup.setting } }
+            val live = setting?.let { state.values[it.name] }
+            // Undoing the restore would write the current value back.
+            val undo = if (setting != null && live != null && !setting.canWriteBack(live))
+                "The current value is backed up first, but cranklink cannot write back the current ${formatSettingValue(setting.name, live, info?.model)}, so this cannot be undone."
+                else "The current value is backed up before restore and verified afterward, so this can be undone."
+            Text("${info?.let { settingPresentation(it.setting, it.model).label } ?: file}\nRestore value: ${info?.let { formatSettingValue(it.setting, it.before, it.model) } ?: "Unknown"}\nMotor: ${info?.model ?: "Unknown"}\nSerial: ${info?.serial ?: "Unknown"}\n\n$undo")
         },
         confirmButton = { Button(onClick = { restoreFile = null; vm.restore(file) },
-            enabled = !busy && !demo && state.staged.isEmpty() && backupInfo[file]?.matches(state.identity) == true) { Text("Restore & verify") } },
+            enabled = !busy && !demo && state.staged.isEmpty() && backupInfo[file]?.let { it.matches(state.identity) && it.writable(state.settings) } == true) { Text("Restore & verify") } },
         dismissButton = { TextButton(onClick = { restoreFile = null }) { Text("Cancel") } },
     ) }
 }
@@ -419,6 +472,7 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
     var profile by rememberSaveable { mutableIntStateOf(1) }
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
     val sections = listOf("geometry" to "Bike", "profiles" to "Assist", "maintenance" to "Service", "oem" to "Factory")
+    val undo = { spec: TuningSetting -> onStage(spec.name, state.values[spec.name] ?: "") }
     val filtered = state.settings.filter {
         it.section == section && (section != "profiles" || !it.name.startsWith("profile") || it.name.startsWith("profile$profile."))
             && !(section == "maintenance" && state.settings.any { spec -> spec.name == "maintenance-date" }
@@ -465,16 +519,16 @@ private fun TuneScreen(state: AppState, enabled: Boolean, onStage: (String, Stri
                                 Text(title, Modifier.padding(start = 12.dp), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                             }
                             modeSettings.forEach { spec ->
-                                SettingRow(spec, state, enabled, compact = true, onClick = { editing = spec })
+                                SettingRow(spec, state, enabled, compact = true, onClick = { editing = spec }, onUndo = { undo(spec) })
                             }
                         }
                     }
                 }
             }
             items(filtered.filter { !it.name.matches(Regex("profile[12]\\.(eco|trail|boost)\\..*")) }, key = { it.name }) { spec ->
-                SettingCard(spec, state, enabled) { editing = spec }
+                SettingCard(spec, state, enabled, onUndo = { undo(spec) }) { editing = spec }
             }
-        } else items(filtered, key = { it.name }) { spec -> SettingCard(spec, state, enabled) { editing = spec } }
+        } else items(filtered, key = { it.name }) { spec -> SettingCard(spec, state, enabled, onUndo = { undo(spec) }) { editing = spec } }
         item { Text("Edits are staged until you review and save them.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp)) }
     }
     editing?.let { SettingEditor(it, state, onStage) { editing = null } }
@@ -488,12 +542,12 @@ private fun SettingEditor(setting: TuningSetting, state: AppState, onStage: (Str
 }
 
 @Composable
-private fun SettingCard(setting: TuningSetting, state: AppState, enabled: Boolean, onClick: () -> Unit) {
-    Card(shape = RoundedCornerShape(18.dp)) { Box(Modifier.padding(horizontal = 18.dp, vertical = 3.dp)) { SettingRow(setting, state, enabled, false, onClick) } }
+private fun SettingCard(setting: TuningSetting, state: AppState, enabled: Boolean, onUndo: () -> Unit, onClick: () -> Unit) {
+    Card(shape = RoundedCornerShape(18.dp)) { Box(Modifier.padding(horizontal = 18.dp, vertical = 3.dp)) { SettingRow(setting, state, enabled, false, onClick, onUndo) } }
 }
 
 @Composable
-private fun SettingRow(setting: TuningSetting, state: AppState, enabled: Boolean, compact: Boolean, onClick: () -> Unit) {
+private fun SettingRow(setting: TuningSetting, state: AppState, enabled: Boolean, compact: Boolean, onClick: () -> Unit, onUndo: () -> Unit) {
     val available = setting.name in state.values && setting.name !in state.unavailable
     val changed = setting.name in state.staged
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -503,13 +557,18 @@ private fun SettingRow(setting: TuningSetting, state: AppState, enabled: Boolean
             Text(label, fontSize = 14.sp, fontWeight = if (compact) FontWeight.Normal else FontWeight.Medium)
             if (setting.description.isNotBlank()) Text(setting.description, color = Muted, fontSize = 12.sp,
                 lineHeight = 17.sp, modifier = Modifier.padding(top = 4.dp))
-            if (!available) Text(state.unavailable[setting.name] ?: "Not available", color = Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (!available) Text(state.unavailable[setting.name]?.let { "Not available on this unit: $it" } ?: "Not available on this unit",
+                color = Color(0xFF8A5A14), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             else if (changed) Text("Bike: ${displayValue(setting, state.values[setting.name] ?: "—", state.identity?.modelSlug)}", color = Muted, fontSize = 11.sp)
             else if (!setting.writable) Text("Read only", color = Muted, fontSize = 11.sp)
         }
         val value = state.staged[setting.name] ?: state.values[setting.name] ?: "—"
         Text(displayValue(setting, value, state.identity?.modelSlug), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (changed) Color(0xFF47761C) else Pine)
         if (changed) Icon(Icons.Default.Circle, "Staged", tint = Color(0xFF73A93F), modifier = Modifier.padding(start = 7.dp).size(6.dp))
+        // Every staged row offers its own undo, as in the web app.
+        if (changed) IconButton(onClick = onUndo, enabled = enabled, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.AutoMirrored.Filled.Undo, "Undo change to ${setting.label}", tint = Muted, modifier = Modifier.size(18.dp))
+        }
         if (setting.writable && available) Icon(Icons.Default.ChevronRight, "Edit ${setting.label}", tint = Muted, modifier = Modifier.padding(start = 7.dp).size(19.dp))
     }
 }
@@ -520,20 +579,31 @@ private fun displayValue(setting: TuningSetting, value: String, model: String?):
 @Composable
 private fun EditSettingDialog(setting: TuningSetting, current: String, model: String?, onDismiss: () -> Unit, onStage: (String) -> Unit, onUndo: (() -> Unit)?) {
     var value by remember(setting.name) { mutableStateOf(setting.inputText(current)) }
-    var inputError by remember(setting.name) { mutableStateOf<String?>(null) }
+    var edited by remember(setting.name) { mutableStateOf(false) }
+    // Check while typing, as the web controls do, instead of only after Stage is pressed.
+    val validation = remember(setting, value) { runCatching { setting.backendInput(value) } }
+    val inputError = if (edited) validation.exceptionOrNull()?.let { it.message ?: "Enter a supported value." } else null
+    val stage = { validation.getOrNull()?.let(onStage) }
+    val currentNumber = if (setting.valueType == "number") setting.inputText(current).toDoubleOrNull() else null
+    val outside = currentNumber != null && (currentNumber < setting.displayMin || currentNumber > setting.displayMax)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(setting.label) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (setting.description.isNotBlank()) Text(setting.description, fontSize = 14.sp, lineHeight = 21.sp)
             if (setting.choices.isNotEmpty()) setting.choices.forEach { choice ->
-                OutlinedButton(onClick = { value = setting.inputText(choice); inputError = null }, modifier = Modifier.fillMaxWidth(),
+                OutlinedButton(onClick = { value = setting.inputText(choice); edited = true }, modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = if (value == setting.inputText(choice)) Lime else Color.Transparent)) {
                     Text(displayValue(setting, choice, model))
                 }
             } else {
-                OutlinedTextField(value = value, onValueChange = { value = it; inputError = null }, label = { Text(if (setting.unit.isBlank()) "Value" else "Value · ${setting.unit}") },
+                OutlinedTextField(value = value, onValueChange = { value = it; edited = true }, label = { Text(if (setting.unit.isBlank()) "Value" else "Value · ${setting.unit}") },
                     singleLine = true, modifier = Modifier.fillMaxWidth(),
                     isError = inputError != null,
-                    keyboardOptions = KeyboardOptions(keyboardType = if (setting.valueType == "number" && setting.displayMin >= 0) KeyboardType.Decimal else KeyboardType.Text))
+                    supportingText = if (inputError != null) { { Text(inputError) } } else null,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (setting.valueType == "number" && setting.displayMin >= 0) KeyboardType.Decimal else KeyboardType.Text,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { edited = true; stage() }))
                 if (setting.valueType == "number") {
                     val suffix = if (setting.unit.isBlank()) "" else if (setting.unit in listOf("%", "°")) setting.unit else " ${setting.unit}"
                     Text("Range ${formatInput(setting.displayMin)}–${formatInput(setting.displayMax)}$suffix · increments of ${formatInput(setting.displayStep)}$suffix", fontSize = 12.sp, color = Muted)
@@ -542,26 +612,52 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
                         onValueChange = { next ->
                             val steps = kotlin.math.round((next - setting.displayMin) / setting.displayStep)
                             value = formatInput((setting.displayMin + steps * setting.displayStep).coerceIn(setting.displayMin, setting.displayMax))
-                            inputError = null
+                            edited = true
                         }, valueRange = setting.displayMin.toFloat()..setting.displayMax.toFloat())
+                    // Keep the bike's actual reading visible when the slider has to stop at its bounds.
+                    if (outside) Text("The current value, ${displayValue(setting, current, model)}, is outside the range cranklink can write, so the slider stops at its end.",
+                        fontSize = 12.sp, color = Color(0xFF8A5A14))
                 }
+                if (setting.name == "tire-circumference") TirePresets(setting, value) { value = it; edited = true }
             }
-            inputError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
             if (setting.name == "speed-limit") Text("If the speed needs a different market region, that region change is staged too. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
             if (setting.name == "destination") Text("If the assist speed does not fit the region, it is adjusted to the nearest permitted speed. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
             Text("This updates your staged changes. The bike is written only after review.", color = Muted, fontSize = 12.sp)
         }
-    }, confirmButton = { Button(onClick = {
-        try { onStage(setting.backendInput(value)) }
-        catch (error: IllegalArgumentException) { inputError = error.message ?: "Enter a supported value." }
-    }, enabled = value.isNotBlank() || setting.valueType == "string") { Text("Stage change") } },
+    }, confirmButton = { Button(onClick = { edited = true; stage() }, enabled = validation.isSuccess) { Text("Stage change") } },
         dismissButton = { Row { if (onUndo != null) TextButton(onClick = onUndo) { Text("Undo") }; TextButton(onClick = onDismiss) { Text("Cancel") } } })
 }
+
+/** Common wheel sizes from the web app's chart, limited to values this motor accepts. */
+private val TirePresetSizes = listOf(
+    "29\" × 2.1\"" to 2288, "27.5\" × 2.25\"" to 2180, "26\" × 2.0\"" to 2055, "20\" Cargo × 2.15\"" to 1620,
+)
+
+@Composable
+private fun TirePresets(setting: TuningSetting, value: String, onSelect: (String) -> Unit) {
+    val presets = TirePresetSizes.filter { (_, mm) -> setting.canWriteBack(mm.toString()) }
+    if (presets.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Common tire sizes", fontSize = 12.sp, color = Muted)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            presets.forEach { (label, mm) ->
+                FilterChip(selected = value.toDoubleOrNull() == mm.toDouble(), onClick = { onSelect(mm.toString()) }, label = { Text("$label ($mm mm)") })
+            }
+        }
+        Text("Chart sizes are estimates; a measured roll-out is most accurate.", fontSize = 11.sp, color = Muted)
+    }
+}
+
+/** "A", "A and B", "A, B and C". */
+private fun listText(items: List<String>): String =
+    if (items.size < 2) items.joinToString("") else "${items.dropLast(1).joinToString(", ")} and ${items.last()}"
 
 private fun formatInput(value: Double): String = if (value == value.toLong().toDouble()) value.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')
 
 @Composable
-private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit, onBack: () -> Unit) {
+private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit, onBack: () -> Unit,
+                          settings: List<TuningSetting>, restoreHint: String?) {
+    val dates = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { PageTitle("Backups", "Restore previous setting values or export a copy.") }
         item { NoticeCard("Before every write", "The original setting is stored on this phone, bound to the motor’s model and serial. Export backups to keep a separate copy.") }
@@ -583,14 +679,22 @@ private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>
                 if (info != null) {
                     Text(settingPresentation(info.setting, info.model).label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     Text("Original: ${formatSettingValue(info.setting, info.before, info.model)}\n${info.model} · ${info.serial}", color = Muted, fontSize = 12.sp)
+                    if (info.savedAt > 0) Text("Stored ${dates.format(java.util.Date(info.savedAt))}", color = Muted, fontSize = 12.sp)
+                    // Say why Restore is off for this file, as the web app labels each restore point.
+                    val reason = when {
+                        identity != null && !info.matches(identity) -> "For another drive unit. Connect ${info.model} with serial ${info.serial} to restore it."
+                        !info.writable(settings) -> "cranklink cannot write this value, so it cannot be restored."
+                        else -> null
+                    }
+                    reason?.let { Text(it, color = Color(0xFF8A5A14), fontSize = 12.sp) }
                 } else Text("Backup details unavailable. Export to inspect the file.", color = Muted, fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onExport(file) }) { Icon(Icons.Default.FileUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(7.dp)); Text("Export") }
-                    OutlinedButton(onClick = { onRestore(file) }, enabled = canRestore && info?.matches(identity) == true) { Text("Restore") }
+                    OutlinedButton(onClick = { onRestore(file) }, enabled = canRestore && info != null && info.matches(identity) && info.writable(settings)) { Text("Restore") }
                 }
             }
         } }
-        if (!canRestore && files.isNotEmpty()) item { Text("Connect your bike and save or discard staged changes to restore a backup.", color = Muted, fontSize = 12.sp) }
+        if (restoreHint != null && files.isNotEmpty()) item { Text(restoreHint, color = Muted, fontSize = 12.sp) }
         item { TextButton(onClick = onBack) { Text("Back to bike") } }
     }
 }
@@ -598,15 +702,27 @@ private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>
 private fun BackupInfo.matches(identity: MotorIdentity?): Boolean = identity != null &&
     serial.equals(identity.serial, ignoreCase = true) && model == identity.modelSlug
 
+/** Without the connected motor's schema there is nothing to judge, and the native restore checks again. */
+private fun BackupInfo.writable(settings: List<TuningSetting>): Boolean {
+    val setting = settings.find { it.name == this.setting } ?: return true
+    return setting.canWriteBack(before)
+}
+
 @Composable
 private fun PasskeyDialog(name: String, onDismiss: () -> Unit, onConnect: (String) -> Unit) {
     var passkey by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    // Open the number pad straight away, as the web dialog focuses its field.
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val connect = { if (passkey.length == 6) { onConnect(passkey); passkey = "" } }
     AlertDialog(onDismissRequest = onDismiss, icon = { Icon(Icons.Default.Lock, null, tint = Pine) }, title = { Text("Your bike’s passkey") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Enter the six-digit E-TUBE passkey for $name. It is used for this connection and isn’t saved.")
             OutlinedTextField(passkey, { passkey = it.filter { char -> char in '0'..'9' }.take(6) }, label = { Text("Six-digit passkey") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), visualTransformation = PasswordVisualTransformation())
-        } }, confirmButton = { Button(onClick = { onConnect(passkey); passkey = "" }, enabled = passkey.length == 6) { Text("Connect") } },
+                modifier = Modifier.focusRequester(focus),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { connect() }), visualTransformation = PasswordVisualTransformation())
+        } }, confirmButton = { Button(onClick = { connect() }, enabled = passkey.length == 6) { Text("Connect") } },
         dismissButton = { TextButton(onClick = { passkey = ""; onDismiss() }) { Text("Cancel") } })
 }
 
