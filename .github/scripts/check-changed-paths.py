@@ -62,7 +62,9 @@ ANDROID_PATTERNS = [
     "rustfmt.toml",
     ".rustfmt.toml",
     "android-app/**",
+    "tools/android-release/**",
     ".github/workflows/android.yml",
+    ".github/workflows/android-release-*.yml",
     ".github/scripts/check-changed-paths.py",
 ]
 

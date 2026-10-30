@@ -1,0 +1,65 @@
+name: Android Production Release
+
+run-name: "Cranklink production: ${{ inputs.version }} by @${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version you installed and tested from Play internal testing: name (0.1.7) or code (100007)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: play-app-cranklink
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: android-production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      VERSION_OFFSET: ${{ vars.ANDROID_VERSION_CODE_OFFSET || '100000' }}
+      ANDROID_UPLOAD_CERTIFICATE_SHA256: ${{ vars.ANDROID_UPLOAD_CERTIFICATE_SHA256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check production publishing is enabled
+        run: |
+          if [[ "${{ vars.PLAY_PRODUCTION_ENABLED }}" != true ]]; then
+            echo '::error::Production publishing is paused. Set repository variable PLAY_PRODUCTION_ENABLED=true.'
+            exit 1
+          fi
+          test -n "$ANDROID_UPLOAD_CERTIFICATE_SHA256"
+      - name: Find the tested internal release and verify its bundle
+        id: candidate
+        run: python3 tools/android-release/play.py select "$VERSION" release
+      - name: Authenticate to Google with GitHub OIDC
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - name: Send the existing bundle to production
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: python3 tools/android-release/play.py promote release "${{ steps.candidate.outputs.version_code }}"
+      - name: Explain recovery
+        if: failure()
+        run: echo '::error::Check Play Console before retrying, then rerun this run with the same version. Never substitute another build.'

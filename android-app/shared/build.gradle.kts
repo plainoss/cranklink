@@ -20,8 +20,8 @@ kotlin {
     }
 }
 android {
-    namespace = "work.plainoss.cranklink.shared"
-    compileSdk = 35
+    namespace = "app.plainoss.cranklink.shared"
+    compileSdk = 36
     defaultConfig { minSdk = 26 }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

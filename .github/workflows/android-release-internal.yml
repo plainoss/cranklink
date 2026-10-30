@@ -1,0 +1,171 @@
+name: Android Internal Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android-app/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "tools/android-release/**"
+      - ".github/workflows/android-release-internal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# Builds and uploads are serialized. A rerun keeps its run number, so it keeps its
+# version and reuses the bundle verified by the first successful build attempt.
+concurrency:
+  group: play-app-cranklink
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: android-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION_OFFSET: ${{ vars.ANDROID_VERSION_CODE_OFFSET || '100000' }}
+      ANDROID_NDK_VERSION: 28.2.13676358
+      ARTIFACT: cranklink-release-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Reject a superseded source commit
+        run: test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/main --jq .object.sha)" = "$GITHUB_SHA"
+      - name: Reuse this run's verified bundle after a retry
+        id: artifact
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq "[.artifacts[] | select(.name == \"$ARTIFACT\" and .expired == false)] | length")
+          if [[ "$count" != 0 ]]; then
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir release
+            (cd release && sha256sum --check SHA256SUMS)
+            python3 -c 'import json,os; assert json.load(open("release/release.json"))["commit"] == os.environ["GITHUB_SHA"]'
+            echo 'reused=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-java@v5
+        if: steps.artifact.outputs.reused != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        if: steps.artifact.outputs.reused != 'true'
+        with:
+          packages: platform-tools
+      - name: Install Android SDK and NDK
+        if: steps.artifact.outputs.reused != 'true'
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        if: steps.artifact.outputs.reused != 'true'
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      # No Rust or Gradle caches: a release must not depend on state written by PR runs.
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.artifact.outputs.reused != 'true'
+        with:
+          cache-disabled: true
+      - name: Test native bridge and release tools
+        if: steps.artifact.outputs.reused != 'true'
+        run: |
+          cargo test --locked --manifest-path android-app/native/Cargo.toml
+          python3 -m unittest discover -s tools/android-release -p 'test_*.py'
+      - name: Build and verify the signed bundle (no Play credentials)
+        if: steps.artifact.outputs.reused != 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_UPLOAD_CERTIFICATE_SHA256: ${{ vars.ANDROID_UPLOAD_CERTIFICATE_SHA256 }}
+        run: |
+          [[ "$VERSION_OFFSET" =~ ^[0-9]+$ ]] || exit 1
+          export ANDROID_VERSION_CODE=$((10#$VERSION_OFFSET + GITHUB_RUN_NUMBER))
+          export ANDROID_VERSION_NAME="0.1.$GITHUB_RUN_NUMBER"
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/upload.jks"
+          trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          tools/android-release/build.sh "$GITHUB_WORKSPACE/release"
+      - uses: actions/upload-artifact@v7
+        if: steps.artifact.outputs.reused != 'true'
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Record verified candidate
+        run: |
+          {
+            echo '### Verified release candidate'
+            echo '```json'
+            cat release/release.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ vars.PLAY_INTERNAL_ENABLED }}" != true ]]; then
+            echo 'Publishing is paused until PLAY_INTERNAL_ENABLED is true.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Has Play access but never sees the upload key; publishes the exact bundle the build job verified.
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && vars.PLAY_INTERNAL_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: android-release
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAY_RELEASE_STATUS: ${{ vars.PLAY_RELEASE_STATUS || 'draft' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Fetch the verified bundle
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "cranklink-release-$GITHUB_RUN_ID" --dir release
+          (cd release && sha256sum --check SHA256SUMS)
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/main --jq .object.sha)" = "$GITHUB_SHA"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/androidApp-release.aab
+      - name: Authenticate to Google with GitHub OIDC
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - name: Publish to internal testing
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: python3 tools/android-release/play.py internal release
+      - name: Record submission
+        run: |
+          {
+            echo '### Internal release published'
+            echo "Status: \`$PLAY_RELEASE_STATUS\`. Install it from Play before promoting it to production."
+            echo '```json'
+            cat release/release.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Explain recovery
+        if: failure()
+        run: echo '::error::Internal publishing failed. Check the step above and Play Console, then rerun this same run; it keeps its bundle and version.'

@@ -43,7 +43,7 @@ jobs:
       - name: Install Android SDK and NDK
         if: steps.filter.outputs.has_changes == 'true'
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$ANDROID_NDK_VERSION"
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;$ANDROID_NDK_VERSION"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@1.90.0
         if: steps.filter.outputs.has_changes == 'true'
@@ -66,6 +66,24 @@ jobs:
         if: steps.filter.outputs.has_changes == 'true'
         working-directory: android-app
         run: ./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug --console=plain
+      - name: Test release tools
+        if: steps.filter.outputs.has_changes == 'true'
+        run: python3 -m unittest discover -s tools/android-release -p 'test_*.py'
+      - name: Build and verify a release bundle with a disposable key
+        if: steps.filter.outputs.has_changes == 'true'
+        # Catches release-only build, lint and packaging problems before merge. The key exists
+        # only on this runner; real upload signing happens in the android-release environment.
+        run: |
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/disposable.jks" ANDROID_KEY_ALIAS=upload
+          export ANDROID_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          export ANDROID_KEY_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+          keytool -genkeypair -keystore "$ANDROID_KEYSTORE_PATH" -storetype PKCS12 -alias upload \
+            -keyalg RSA -keysize 4096 -validity 2 -dname "CN=Disposable CI key" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" -noprompt
+          export ANDROID_UPLOAD_CERTIFICATE_SHA256="$(keytool -exportcert -keystore "$ANDROID_KEYSTORE_PATH" \
+            -alias upload -storepass "$ANDROID_KEYSTORE_PASSWORD" | sha256sum | cut -d' ' -f1)"
+          export ANDROID_VERSION_CODE=100000 ANDROID_VERSION_NAME=0.1.0-pr
+          tools/android-release/build.sh "$RUNNER_TEMP/release"
       - name: Upload Android debug APK
         if: steps.filter.outputs.has_changes == 'true'
         uses: actions/upload-artifact@v7
@@ -81,6 +99,7 @@ jobs:
           path: |
             android-app/shared/build/reports/tests/jvmTest/
             android-app/androidApp/build/reports/lint-results-debug.html
+            android-app/androidApp/build/reports/lint-results-release.html
           if-no-files-found: ignore
       - name: Log skip summary
         if: steps.filter.outputs.has_changes != 'true'

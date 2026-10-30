@@ -491,7 +491,7 @@ fn invoke(env: &mut JNIEnv<'_>, gatt: &JObject<'_>, request: &str, directory: &s
 
 /// Kotlin `object NativeCore` calls this method from its single I/O executor.
 #[no_mangle]
-pub extern "system" fn Java_work_plainoss_cranklink_NativeCore_invoke(
+pub extern "system" fn Java_app_plainoss_cranklink_NativeCore_invoke(
     mut env: JNIEnv<'_>,
     _owner: JObject<'_>,
     gatt: JObject<'_>,

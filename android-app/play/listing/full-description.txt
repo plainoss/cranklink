@@ -1,0 +1,11 @@
+Cranklink reads and changes the settings of Shimano STEPS e-bike drive units over the bike's E-TUBE Bluetooth connection. It is free, open source, and has no ads, accounts or tracking.
+
+• Connect with your bike's six-digit E-TUBE passkey and see the drive unit's model, serial number and firmware.
+• Adjust the settings the drive unit supports, such as wheel circumference, lighting, walk assist, assist profiles and service reminders. Each setting explains what it does, in plain units.
+• Review every change before saving. Each change is backed up first and checked by reading it back from the bike.
+• Export, import and restore setting backups, matched to the drive unit they came from.
+• Try everything in demo mode without a bike.
+
+Only settings that the drive unit itself offers can be changed; the app does not modify firmware. Choose only the market region that applies where you ride: some settings affect compliance with local e-bike rules.
+
+Cranklink is an independent project, not affiliated with or endorsed by Shimano. Source code: https://github.com/plainoss/cranklink
