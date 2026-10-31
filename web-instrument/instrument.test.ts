@@ -707,7 +707,7 @@ describe("BLE initial settings connection", () => {
     (globalThis as any).window = globalThis;
     for (const [series, slug, model, count] of [
       [0x38, "e5100", "DU-E5100", 14],
-      [0x12, "e8000", "DU-E8080", 3],
+      [0x12, "e8000", "DU-E8080", 4],
       [0x21, "e7000", "DU-E7000", 3],
       [0x20, "e6100", "DU-E6110", 3],
       [0x20, "e6100", "DU-E6180", 3],
@@ -719,7 +719,7 @@ describe("BLE initial settings connection", () => {
     controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
       const commands: string[] = [];
       controller.attachTerminal(terminalFor({
-        identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },
+        identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes", dcas_version: "4.6.0.0" },
         values: {}, unavailable: {},
       }, commands));
       const identity = await controller.connectAndSync("ble");
@@ -743,14 +743,14 @@ describe("BLE initial settings connection", () => {
 describe("Actual motor identity classification", () => {
   it("uses safe family labels without guessing a shared-series variant", () => {
     for (const [series, slug, name] of [[0x08, "e6000", "E6000 family"], [0x12, "e8000", "E8000 family"], [0x20, "e6100", "E6100 family"]] as const) {
-      assert.deepEqual(detectMotorIdentity({ model_series: series }), { modelSlug: slug, model: name, isCargo: false });
+      assert.deepEqual(detectMotorIdentity({ model_series: series, dcas_version: "4.6.0.0" }), { modelSlug: slug, model: name, isCargo: false });
     }
   });
 
   it("rejects unknown series, non-motor units, and inconsistent backend schema metadata", () => {
     assert.throws(() => detectMotorIdentity({ model_series: 0xff }), /not supported/);
     assert.throws(() => detectMotorIdentity({ model_series: 0x12, model_unit: 1 }), /not supported/);
-    assert.throws(() => detectMotorIdentity({ model_series: 0x12, settings_model: "ep801" }), /do not match/);
+    assert.throws(() => detectMotorIdentity({ model_series: 0x12, settings_model: "ep801", dcas_version: "4.6.0.0" }), /do not match/);
   });
 
   it("keeps cargo variants in the friendly model label", () => {

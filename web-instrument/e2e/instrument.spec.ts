@@ -217,6 +217,32 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(calibration.getByRole("slider")).toHaveAccessibleDescription(/Percentage correction[\s\S]*The current value, 7\.5%/);
   });
 
+  test("E8000 shows region-based assist speed and stages only the market setting", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // Presentation fixture: the radio peer is still EP800. Load the real E8000
+    // schema, but do not send this fixture's settings to that different motor.
+    await page.evaluate(async () => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const previous = controller.getState();
+      const schema = await controller.loadSchema("e8000", true);
+      controller.update({ schema,
+        identity: { ...previous.identity, modelSlug: "e8000", model: "DU-E8000", modelSeries: 0x12, dcasVersion: "4.6.0.0" },
+        liveValues: { ...Object.fromEntries(schema.map((spec: any) => [spec.name, previous.liveValues[spec.name]])), destination: { value: 0, raw: "0100ffff" } },
+      });
+    });
+    await expect(page.getByTestId("e8000-settings-support")).toContainText("independent speed slider is not available");
+    await expect(page.getByTestId("param-row-speed-limit")).toHaveCount(0);
+    await page.getByTestId("param-row-destination").getByRole("button", { name: /Region & assist speed/ }).click();
+    await expect(page.getByRole("option")).toHaveText(["Europe · 25 km/h", "United States · 32 km/h"]);
+    await page.getByRole("option", { name: "United States · 32 km/h", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().stagedValues)).toEqual({ destination: 1 });
+    await page.getByTestId("btn-review-save").click();
+    await expect(page.getByTestId("review-dialog")).toContainText("Region & assist speed");
+    await page.screenshot({ path: "test-results/e8000-region-review.png", fullPage: true });
+  });
+
   test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {
     await openInstrument(page);
     await page.getByTestId("btn-connect-sim").click();

@@ -3406,6 +3406,13 @@ fn print_probe_card(
 // Label a destination by the speed range the core enforces for it; the vendor
 // region names are unverified.
 fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<String> {
+    if model == crate::settings::SettingsModel::E8000 {
+        return match val {
+            0 => Some("Europe; nominal assist limit 25 km/h".into()),
+            1 => Some("United States; nominal assist limit 32 km/h".into()),
+            _ => None,
+        };
+    }
     let (minimum, maximum) =
         crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
     Some(format!("{}-{} km/h", minimum / 100, maximum / 100))

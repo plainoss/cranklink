@@ -100,7 +100,9 @@ pub fn settings_for_motor(
         .settings
         .ok_or_else(|| anyhow::anyhow!("named settings are not implemented for this motor"))?;
     let version = firmware_version(firmware)?;
-    Ok(if model == SettingsModel::E6002 && version < [3, 3, 0, 0] {
+    Ok(if model == SettingsModel::E8000 && version < [4, 1, 0, 0] {
+        SettingsModel::E8000Pre41
+    } else if model == SettingsModel::E6002 && version < [3, 3, 0, 0] {
         SettingsModel::E6002Pre33
     } else {
         model
@@ -119,6 +121,23 @@ fn firmware_version(firmware: &str) -> Result<[u16; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn e8000_region_support_starts_at_d410_for_both_product_variants() {
+        for params in [[0; 7], [8, 0, 0, 0, 0, 0, 0]] {
+            for (version, expected) in [
+                ("4.0.99.0", SettingsModel::E8000Pre41),
+                ("4.1.0.0", SettingsModel::E8000),
+                ("4.6.0.0", SettingsModel::E8000),
+                ("4.10.0.0", SettingsModel::E8000),
+            ] {
+                assert_eq!(
+                    settings_for_motor(0x12, 0, &params, version).unwrap(),
+                    expected
+                );
+            }
+        }
+    }
 
     #[test]
     fn older_families_select_authorization_at_its_introduction_version() {

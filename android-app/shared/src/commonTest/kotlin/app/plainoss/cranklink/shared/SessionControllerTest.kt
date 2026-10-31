@@ -150,6 +150,21 @@ class SessionControllerTest {
     }
 
     @Test
+    fun e8000RegionSelectionUsesItsOwnFirmwareBoundaryAndSpeedLabels() {
+        for ((version, slug) in listOf("4.0.99.0" to "e8000-pre41", "4.1.0.0" to "e8000", "4.6.0.0" to "e8000")) {
+            val identity = e600xFixture(0x12, slug, version)["identity"]!!.jsonObject
+            assertEquals(slug, TuningRules.parseIdentity(identity).modelSlug)
+            val specs = JsonArray(listOf(schema("destination", 0, 1, choices = listOf(0, 1))))
+            if (slug == "e8000") {
+                assertEquals(listOf("0", "1"), TuningRules.parseSchema(specs, slug).single().choices)
+            } else assertFailsWith<IllegalArgumentException> { TuningRules.parseSchema(specs, slug) }
+        }
+        assertEquals("Europe · 25 km/h", formatSettingValue("destination", "0", "e8000"))
+        assertEquals("United States · 32 km/h", formatSettingValue("destination", "1", "e8000"))
+        assertEquals("Region & assist speed", settingPresentation("destination", "e8000").label)
+    }
+
+    @Test
     fun newE600xIdentitiesSelectTheirFirmwareBoundSchema() {
         for ((series, name, version, slug) in listOf(
             MotorCase(0x0a, "DU-E6001", "3.0.0.0", "e6001"),

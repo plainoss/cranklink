@@ -84,7 +84,17 @@ Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, 
 
 ## E8000 / E8080 drive units
 
-Cranklink currently implements only wheel circumference, mounting angle, and lamp settings for E8000/E8080. Assist-speed and region controls are not implemented for this family, including D4.6.0. An empty `unavailable` object means the implemented fields were read successfully; it does not mean all motor features are implemented. Neither master routing nor drive-unit authentication adds fields to this schema.
+E8000/E8080 implements wheel circumference, mounting angle, and lamp settings. From D4.1.0, including D4.6.0, it also exposes `destination`: `0` Europe or `1` United States. The apps label this **Region & assist speed**, with nominal assist limits of 25 and 32 km/h. This changes the market specification; it does not write an independent speed parameter. [ST Unlocker's E8000 firmware guidance](https://www.stunlocker.com/index.html) likewise distinguishes region changes on firmware newer than D4.3.2 from independent speed adjustment on older firmware.
+
+Use offline schemas `--model e8000-pre41` and `--model e8000`. Live reads select the schema from the motor identity and D firmware. Japan, Taiwan, other region codes, and an arbitrary `speed-limit` setting are not enabled by this implementation. If the current region is outside the admitted EU/US choices, a change is refused before backup or SET so the original value remains restorable.
+
+```sh
+cranklink --port usb settings read destination
+cranklink --port usb -s <SERIAL> settings set destination 1 --backup e8000-region-before.json
+cranklink --port usb settings restore e8000-region-before.json --backup e8000-region-current.json
+```
+
+Region, wheel, and lamp Bluetooth writes need master routing. Automatic browser detection retains normal routing for E8000 reads; saves and restores requiring master routing are refused before a plan or write is sent on that connection. Use USB, or start a fresh connection with **Bluetooth options → Bike system override → STEPS e-bike**, then read and stage the change again. The routing workaround does not repair a gateway's failing master handshake. No automatic role switch or write retry occurs. Writes retain the firmware-dependent authentication rules below. Protocol, backup/restore and app tests cover this addition; physical E8000 region writes and persistence remain unvalidated.
 
 ## E6000-family drive units
 

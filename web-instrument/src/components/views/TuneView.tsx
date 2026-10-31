@@ -51,12 +51,14 @@ export function TuneView({ state, controller, category, query }: TuneViewProps) 
   return (
     <SettingsProvider value={{ state, controller, query }}>
       <div className="w-full flex flex-col gap-6">
-        {state.identity?.modelSlug === "e8000" && (category === "geometry" || category === "all" || searching) && (
+        {["e8000", "e8000-pre41"].includes(state.identity?.modelSlug ?? "") && (category === "geometry" || category === "all" || searching) && (
           <Alert status="default" data-testid="e8000-settings-support">
             <Alert.Indicator />
             <Alert.Content>
               <Alert.Title>Available E8000 / E8080 settings</Alert.Title>
-              <Alert.Description>Cranklink currently supports wheel circumference, mounting angle, and lamp settings for this motor. Assist speed limit and region controls are not implemented. Changing Bluetooth routing does not add these controls.</Alert.Description>
+              <Alert.Description>{state.identity?.modelSlug === "e8000"
+                ? "Use Region & assist speed to select Europe (25 km/h) or United States (32 km/h). This changes the market region; an independent speed slider is not available. Bluetooth saves of region, wheel circumference, or lamp require a new master session; reads can use normal routing."
+                : "This firmware supports wheel circumference, mounting angle, and lamp settings. Region-based assist-speed selection requires D4.1.0 or later."}</Alert.Description>
             </Alert.Content>
           </Alert>
         )}

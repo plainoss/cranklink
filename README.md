@@ -46,12 +46,13 @@ Requires Android 8.0 or later. Releases are published on Google Play as `app.pla
 | EP800 | Profiles, speed, wheel, lamp | Yes² | No |
 | EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Profiles, speed, wheel, lamp | Opt-in¹ | No |
 | E5100 | Common settings, speed | Opt-in¹ | No |
-| E8000, E7000, E6100, E6000, E6001 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
+| E8000, E8080 | Wheel, mounting angle, lamp; EU/US region from D4.1.0 | Opt-in¹ | No |
+| E7000, E6100, E6000, E6001 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
 | E6002, E6012 | Wheel, mounting angle, lamp; EU/US/Korea region from D3.3.0 | Opt-in¹ | No |
 
 All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
-E8000/E8080 has no implemented assist-speed or region control in cranklink. The browser explains this in Bike & Geometry and All Settings. Automatic Bluetooth detection keeps these motors on normal routing, with the bike still identified as STEPS; switching routing does not expand the settings schema.
+E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. Automatic Bluetooth detection uses normal routing for reads, with the bike identified as STEPS. Region, wheel and lamp writes require master routing on a new connection, or USB; the browser refuses them on a retained normal session. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 

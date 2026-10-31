@@ -12,6 +12,8 @@ data class SettingPresentation(
 )
 
 fun settingPresentation(name: String, model: String? = null): SettingPresentation {
+    if (name == "destination" && model == "e8000") return SettingPresentation("Region & assist speed",
+        "Region-based assist-speed selection: Europe uses a nominal 25 km/h limit and the United States 32 km/h. Choose the region that applies where the bike is ridden.")
     if (name == "destination" && model == "e6002") return SettingPresentation("Market region",
         "Motor market selection. Choose the region that applies where the bike is ridden.")
     standardPresentations[name]?.let { return it }
@@ -117,6 +119,7 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
 
 /** E6002 markets have no verified assist-speed range; other motors use the core's range table. */
 private fun marketLabel(model: String?, choice: Int): String? {
+    if (model == "e8000") return mapOf(0 to "Europe · 25 km/h", 1 to "United States · 32 km/h")[choice]
     if (model == "e6002") return mapOf(0 to "Europe (EU)", 1 to "United States (US)", 4 to "Korea")[choice]
     val name = marketName(model, choice) ?: "Region $choice"
     if (model == null) return name

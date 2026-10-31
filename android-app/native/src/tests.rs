@@ -164,13 +164,14 @@ fn tuning_snapshot_never_queries_transmission_groups() {
     }
 }
 
-fn all_motor_models() -> [SettingsModel; 12] {
+fn all_motor_models() -> [SettingsModel; 13] {
     [
         SettingsModel::Ep800Crg,
         SettingsModel::Ep600,
         SettingsModel::Ep801,
         SettingsModel::Ep500,
         SettingsModel::E5100,
+        SettingsModel::E8000Pre41,
         SettingsModel::E8000,
         SettingsModel::E7000,
         SettingsModel::E6100,
@@ -218,13 +219,18 @@ fn every_motor_family_excludes_di2_and_drivetrain_fields() {
                 | SettingsModel::E6002Pre33
                 | SettingsModel::E6100
                 | SettingsModel::E7000
-                | SettingsModel::E8000
+                | SettingsModel::E8000Pre41
         ) {
             assert_eq!(schema.len(), 3);
         }
         if model == SettingsModel::E6002 {
             assert_eq!(schema.len(), 4);
             assert_eq!(spec(&schema, "destination").unwrap().choices, [0, 1, 4]);
+        }
+        if model == SettingsModel::E8000 {
+            assert_eq!(schema.len(), 4);
+            assert_eq!(spec(&schema, "destination").unwrap().choices, [0, 1]);
+            assert!(spec(&schema, "speed-limit").is_err());
         }
         if modern(model) {
             for name in [

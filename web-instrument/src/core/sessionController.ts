@@ -947,6 +947,7 @@ export class SessionController {
       const spec = this.state.schema.find((setting) => setting.name === name);
       if (!spec || spec.read_only || this.state.unavailableValues[name]) this.refuse("save", `Setting ${name} is unavailable or read-only on this component.`);
     }
+    this.requireWriteRouting("save", entries.map(([name]) => name));
 
     // Destination is written before speed-limit so ceiling checks use the updated destination.
     const sortedEntries = [...entries].sort(([a], [b]) => {
@@ -1105,6 +1106,7 @@ export class SessionController {
       }
       settings.set(filename, backup.setting);
     }
+    this.requireWriteRouting("restore", [...settings.values()]);
     filenames = planOrder(filenames, settings);
     this.startOperation({
       phase: "committing",
@@ -1203,6 +1205,16 @@ export class SessionController {
 
     snapshots.sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
     this.update({ snapshots });
+  }
+
+  /** A normal service session cannot acquire master ownership in place. */
+  private requireWriteRouting(kind: "save" | "restore", names: unknown[]): void {
+    if (this.state.transport !== "ble" || !this.state.identity?.isMotor
+        || this.bluetoothSessionFlags() !== "--ble-master=normal ") return;
+    const masterSetting = names.find((name) => typeof name === "string"
+      && ["destination", "tire-circumference", "lamp", "lighting-time"].includes(name));
+    if (masterSetting) this.refuse(kind,
+      `${settingLabel(this.state.schema, String(masterSetting))} requires Bluetooth master routing. No changes were sent. Use USB, or disconnect and select Bluetooth options → Bike system override → STEPS before reconnecting. Read the settings again before saving. Master-mode connection failures must be resolved before these Bluetooth writes can run.`);
   }
 
   /**
