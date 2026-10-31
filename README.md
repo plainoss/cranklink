@@ -54,7 +54,7 @@ All families support component discovery and identification. Other catalogued dr
 
 E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. Automatic Bluetooth detection uses normal routing for reads, with the bike identified as STEPS. Region, wheel and lamp writes require master routing on a new connection, or USB; the browser refuses them on a retained normal session. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
 
-Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. The SC-E8000 4.0.7 firmware simulator reproduces this behavior; full master connection on the reported E8000 bike still requires validation.
+Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. Stock SC-E8000, SC-EM800, SC-E6100 and SC-E7000 firmware probes reproduce this behavior. The fix applies to every gateway through the shared connection code; full master connection on the reported E8000 bike still requires validation.
 
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.

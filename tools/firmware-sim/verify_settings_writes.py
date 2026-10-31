@@ -44,7 +44,7 @@ class PersistentPeer:
         if request.get('op') != 'write' or request.get('id') != FREE_COMMAND:
             return
         raw = bytes(request.get('bytes', []))
-        if raw[1:3] not in (b'\x10\x10', b'\x35\0'):
+        if raw[1:3] not in (b'\x10\x10', b'\x35\0', b'\x16\xa8'):
             return
         matches = []
         for path in self.backups:
@@ -101,7 +101,7 @@ class PersistentPeer:
         self.path.unlink(missing_ok=True)
 
 
-def run(binary, gateway, motor):
+def run(binary, gateway, motor, region_only=False):
     cases = []
     with tempfile.TemporaryDirectory(prefix='clwrite-') as directory:
         root = Path(directory)
@@ -156,6 +156,25 @@ def run(binary, gateway, motor):
                 require(result['passed'], f'current CLI persistent-write check failed: {name}: {process.stderr}')
                 return result
 
+            if region_only:
+                command('region-no-auth-refused', ['--no-auth', 'settings', 'set', 'destination', '1', '--backup', 'blocked.json'],
+                        expect_error='--no-auth was specified', set_count=0)
+                command('region-set-1', ['settings', 'set', 'destination', '1', '--backup', 'region-original.json'],
+                        ['region-original.json'], changed=True, set_count=1)
+                command('region-read-1', ['settings', 'read', 'destination'], expected_value=1, set_count=0)
+                command('region-restore-0', ['settings', 'restore', 'region-original.json', '--backup', 'region-restore.json'],
+                        ['region-restore.json'], changed=True, set_count=1)
+                command('region-read-0', ['settings', 'read', 'destination'], expected_value=0, set_count=0)
+                command('region-save-for-reboot', ['settings', 'set', 'destination', '1', '--backup', 'region-reboot.json'],
+                        ['region-reboot.json'], changed=True, set_count=1)
+                before_power_cycle = peer.device.snapshot()
+                require(before_power_cycle['storage']['commits'] == 3, 'unexpected region commit count')
+                require(all(s['regulation_auth'] == 2 for s in peer.sets), 'region SET lacked stock authorization')
+                peer.power_cycle()
+                command('region-after-reboot', ['settings', 'read', 'destination'], expected_value=1, set_count=0)
+                return dict(passed=True, cases=cases, backup_before_set_observations=peer.sets,
+                            before_power_cycle=before_power_cycle, after_power_cycle=peer.device.snapshot())
+
             command('lamp-set-1', ['--no-auth', 'settings', 'set', 'lamp', '1', '--backup', 'lamp-original.json'],
                     ['lamp-original.json'], changed=True, set_count=1)
             command('lamp-read-1', ['--no-auth', 'settings', 'read', 'lamp'], expected_value=1, set_count=0)
@@ -204,10 +223,13 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--fixtures', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--gateway-id', default='sc-em800-4.6.0', help='gateway profile ID from fixtures')
+    parser.add_argument('--region-only', action='store_true', help='check authenticated region save, restore and reboot')
     args = parser.parse_args()
     manifest = args.fixtures.resolve()
     fixtures = {k:(manifest.parent/v).resolve() for k,v in json.loads(manifest.read_text()).items()}
-    report = run(args.binary.resolve(), fixtures['sc-em800-4.6.0'], fixtures['ep800-4.2.0'])
+    report = run(args.binary.resolve(), fixtures[args.gateway_id], fixtures['ep800-4.2.0'], args.region_only)
+    report['gateway'] = args.gateway_id
     report.update(client_binary_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                   scope='actual current Rust CLI; unchanged stock SC-EM800/EP800 firmware functions; modeled EEPROM commit/boot hydration and GATT radio',
                   not_validated=['physical EEPROM and electrical power loss', 'full reset boot', 'RF/pairing',

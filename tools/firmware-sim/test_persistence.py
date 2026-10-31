@@ -78,6 +78,21 @@ class PersistentFirmwareTests(unittest.TestCase):
         self.assertEqual(rebooted.byte(rebooted.profile['auth_ram']),0)
         self.assertNotIn('auth_key',self.state.read_text())
 
+    def test_region_requires_auth_and_persists_stock_record_and_readback(self):
+        m = self.motor
+        self.assertEqual(m.receive(bytes.fromhex('16ac01'),0)[0]['payload'], '16ae01000000')
+        self.assertEqual(m.receive(bytes.fromhex('16a80101ffff'),0)[0]['payload'], '16ab3a00ffff')
+        # Stock firmware may persist its rejection counter, but not the region.
+        self.assertEqual(m.storage.snapshot()['destination'], 0)
+        self.assertEqual(m.storage.records[0x12], bytes.fromhex('00ffffffffffff06'))
+        self.assertEqual(authenticate(m)[0]['payload'], '16e2ffffffff')
+        self.assertEqual(m.receive(bytes.fromhex('16a80101ffff'),0)[0]['payload'], '16aa01010000')
+        self.assertEqual(m.receive(bytes.fromhex('16ac01'),0)[0]['payload'], '16ae01010000')
+        self.assertEqual(m.storage.records[0x12], bytes.fromhex('01ffffffffffff05'))
+        _, rebooted = self.new_motor()
+        self.assertEqual(rebooted.receive(bytes.fromhex('16ac01'),0)[0]['payload'], '16ae01010000')
+        self.assertEqual(rebooted.byte(rebooted.profile['auth_ram']), 0)
+
     def test_tire_rejects_unauthorized_then_real_crypto_proof_allows_persistent_save(self):
         m = self.motor
         self.assertEqual(m.receive(bytes.fromhex('350400'),0)[0]['payload'],'35066508ffff')
@@ -132,7 +147,7 @@ class PersistentFirmwareTests(unittest.TestCase):
                 self.assertFalse(self.state.exists())
         # Admission stays narrow even with storage installed: unrelated setting,
         # reset, update and alternate write encodings cannot reach firmware.
-        for payload in ('16a80103ffff','01c000','32f000','101100'):
+        for payload in ('16b00103ffff','01c000','32f000','101100'):
             with self.subTest(payload=payload):
                 instructions = m.instructions
                 with self.assertRaises(RuntimeError): m.receive(bytes.fromhex(payload),0)

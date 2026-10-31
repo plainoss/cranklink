@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-31",
+  "passed": true,
+  "hardware_access": false,
+  "client_binary_sha256": "1a6c48fb55a62cea3aa7a1d4a4cb49e5ce70b5496faf5b7f6cba9ab7a8038780",
+  "gateway_role_probes": [
+    {
+      "gateway": "sc-em800-4.0.0",
+      "sha256": "6239988c78ea734cee44c7c61477a9498dfa79f38e392d6c38db580687482bc8",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-em800-4.1.0",
+      "sha256": "9a5e8212034c17cb3ce56db59edacf99c69971f952ff13b03fb55ca59e9b3c82",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-em800-4.3.0",
+      "sha256": "0f2c469d62803df67df6bd09d46fdaa4201c71b8f8d9fec6c84ef964b6415e32",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-em800-4.4.0",
+      "sha256": "e473f3326615d83cd2e60124ebe7df73541b4e23bb417b3ac8615ca4dd970617",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-em800-4.5.0",
+      "sha256": "8aa8bbe626c44daefb56b386f616d68146001dfd60fd284c0c2ba6770c17877d",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-em800-4.6.0",
+      "sha256": "c943c90239efbcf36037cb8fa3399ab34d012913774e26728341750b96e30c6f",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-e6100-4.1.0",
+      "sha256": "8149fe326ddf14e439c83ab09141cfb2b08bd745938b34fbcf603a3fb8e7f71a",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    },
+    {
+      "gateway": "sc-e7000-4.1.0",
+      "sha256": "1f3c42ad0cc3e46d2e9affd5f023245f645acbc1c8ee3d68569bfcb25c9c3e79",
+      "immediate": [],
+      "scheduled": [],
+      "mode": "2493"
+    }
+  ],
+  "legacy_gateway_probe": {
+    "profile": "sc-e8000-4.0.7",
+    "level": "isolated MN101 mode/discovery functions; PC-link peripheral gap traps"
+  },
+  "packet_matrix": {
+    "gateways": 8,
+    "motor_profiles": 10,
+    "pairs": 80,
+    "scenarios": 720,
+    "passed": true
+  },
+  "real_client_matrix": {
+    "gateways": 6,
+    "motor_profiles": 10,
+    "pairs": 60,
+    "commands": 120,
+    "discovery_successes": 60,
+    "region_read_successes": 48,
+    "expected_settings_refusals": [
+      {
+        "motor": "e5000-4.5.0",
+        "count": 6,
+        "reason": "no CLI settings schema"
+      },
+      {
+        "motor": "e6100-4.8.0",
+        "count": 6,
+        "reason": "region not in CLI schema"
+      }
+    ],
+    "unexpected_failures": 0,
+    "simulator_command_replay": false
+  },
+  "region_write_validation": {
+    "motor": "ep800-4.2.0",
+    "gateways": [
+      {
+        "gateway": "sc-em800-4.0.0",
+        "cases": 7,
+        "passed": true
+      },
+      {
+        "gateway": "sc-em800-4.1.0",
+        "cases": 7,
+        "passed": true
+      },
+      {
+        "gateway": "sc-em800-4.3.0",
+        "cases": 7,
+        "passed": true
+      },
+      {
+        "gateway": "sc-em800-4.4.0",
+        "cases": 7,
+        "passed": true
+      },
+      {
+        "gateway": "sc-em800-4.5.0",
+        "cases": 7,
+        "passed": true
+      },
+      {
+        "gateway": "sc-em800-4.6.0",
+        "cases": 7,
+        "passed": true
+      }
+    ],
+    "cases": 42,
+    "changes_with_backup_before_set": 18,
+    "checks": [
+      "CLI refuses --no-auth protected writes",
+      "stock regulation challenge/proof verification",
+      "serial-bound backup exists before SET",
+      "stock region SET and GET",
+      "restore original EU region",
+      "save US region again",
+      "owner release and final cleanup after each command",
+      "new motor instance reads persisted US region"
+    ]
+  },
+  "modeled": [
+    "initialized RAM and plain MMIO",
+    "GATT radio, PIN and notification delivery",
+    "PnP announcement delivery and logical address handoff",
+    "EEPROM commit and boot-cache hydration"
+  ],
+  "not_validated": [
+    "physical RF and electrical EEPROM behavior",
+    "full reset boot and motor M firmware",
+    "SC-E8000 full GATT/PC-link startup",
+    "SC-E6100/SC-E7000 GATT dispatcher",
+    "region writes on motor firmware other than EP800 D4.2.0",
+    "gateway firmware without an executable profile"
+  ]
+}

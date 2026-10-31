@@ -614,11 +614,11 @@ impl BleSession {
             return self.discover_master_units();
         }
         let retained = self.gateway_mode;
-        if !retained {
-            self.gateway(3, &[0], 0x23)?;
-            sleep(Duration::from_secs(1));
-        }
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = if retained {
+            self.gateway(4, &[], 0x24)?
+        } else {
+            self.negotiate_slave_routing()?
+        };
         ensure!(
             !mode.is_empty() && mode[0] & 0xe0 == 0x80,
             "BLE gateway did not enter normal slave mode"
@@ -1531,7 +1531,7 @@ pub(crate) mod tests {
                             notify(&mut s, PCE_RESPONSE, vec![0x23, 1]);
                             return Ok(());
                         }
-                        let silent = s.master_mode && data[2] == 0 && s.silent_slave_restore;
+                        let silent = data[2] == 0 && s.silent_slave_restore;
                         s.master_mode = data[2] == 0x20;
                         s.mode_negotiated = true;
                         if silent {
@@ -2678,6 +2678,15 @@ pub(crate) mod tests {
         assert!(!session.master_routing_active);
         assert!(!session.poisoned);
         assert!(!state.borrow().master_mode);
+    }
+    #[test]
+    fn normal_discovery_confirms_mode_when_slave_requests_are_silent() {
+        let (mut session, state) = mock();
+        state.borrow_mut().silent_slave_restore = true;
+        session.authenticate().unwrap();
+        assert_eq!(session.discover_units().unwrap(), [13]);
+        assert!(!session.poisoned);
+        session.stop().unwrap();
     }
     #[test]
     fn authentication_recovers_a_gateway_left_in_master_without_a_transition_ack() {

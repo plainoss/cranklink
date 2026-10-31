@@ -67,7 +67,9 @@ class Motor(Machine):
         else:
             # Writes are opt-in and limited to the exact-profile storage/auth
             # path. Reset, flashing and unrelated setting writes stay excluded.
-            allowed_write = (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
+            region_write = (len(payload) == 6 and payload[:3] == b'\x16\xa8\x01'
+                            and payload[4:] == b'\xff\xff')
+            allowed_write = region_write or (payload[0],payload[1]) in ((0x10,0x10),(0x35,0),(0x16,0xd8),(0x16,0xe0))
             # Speed SET is an opt-in simulator capability for the exact patch.
             # The unchanged firmware performs its checks and modeled commit.
             speed_write = (self.speed_patch_ceiling is not None
