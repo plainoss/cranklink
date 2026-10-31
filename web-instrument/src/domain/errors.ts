@@ -7,6 +7,7 @@ import { settingLabel } from "./settingFormat.ts";
 
 const CLEANUP_UNCONFIRMED = /PC-link stop.*not.*confirmed|stop could not be confirmed|cleanup.*(?:failed|not.*confirmed)/i;
 const LINK_CLOSED = /GATT Server is disconnected|Bluetooth disconnected|Bluetooth connection is closed|BLE session failed|disconnect and inspect/i;
+const OWNERSHIP_UNCONFIRMED = /BLE component did not confirm (?:local PC ownership|PC owner zero)/i;
 /** WebUSB and Web Serial ports report an unplugged SM-PCE02 this way (usb.js, serial.js, app.js). */
 const WIRED_CLOSED = /(?:USB|Serial) (?:device )?disconnected|(?:USB|Serial) port is closed/i;
 /** usb.js and serial.js close the port for good after an uncertain write or a receive error. */
@@ -52,7 +53,11 @@ export function userFacingError(error: string, transport: TransportType | null =
     if (transport === "usb" || transport === "serial") {
       return "The bike did not confirm it was released over USB. Check the adapter, then reconnect to read its current settings.";
     }
-    return `${link} closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.`;
+    const cleanup = `${link} closed before the bike confirmed it was released. Turn on the bike’s connection mode, then reconnect to read its current settings.`;
+    // connectAndSync appends cleanup errors after the original failure. Preserve
+    // that cause without exposing raw stack traces or replacing recovery advice.
+    const cause = error.split(/\n(?:This )?cleanup also failed:/i);
+    return cause.length > 1 ? `${userFacingError(cause[0], transport)} ${cleanup}` : cleanup;
   }
   if (WIRED_POISONED.test(error)) {
     return "The USB adapter link was closed after a transfer error. Reconnect to read the bike’s current settings before trying again.";
@@ -72,6 +77,9 @@ export function userFacingError(error: string, transport: TransportType | null =
   }
   if (AUTH_REJECTED.test(error)) {
     return "The motor rejected authorization for this change. Nothing was retried; check Diagnostics for details.";
+  }
+  if (OWNERSHIP_UNCONFIRMED.test(error)) {
+    return "The bike did not confirm this connection owns the component’s service session. Disconnect, then reconnect before reading settings again. Details are in Diagnostics & Logs.";
   }
   if (/BLE response timeout|notification overflow/i.test(error)) {
     return `${link} stopped responding. Reconnect to read the bike’s current settings.`;
@@ -106,7 +114,7 @@ export function isFlashCritical(error: string, kind?: OperationFailure["kind"], 
  */
 export function isLinkLost(error: string, kind?: OperationFailure["kind"], transport?: TransportType | null): boolean {
   if (isFlashCritical(error, kind, transport)) return false;
-  return CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error) || WIRED_POISONED.test(error);
+  return OWNERSHIP_UNCONFIRMED.test(error) || CLEANUP_UNCONFIRMED.test(error) || LINK_CLOSED.test(error) || WIRED_CLOSED.test(error) || WIRED_POISONED.test(error);
 }
 
 export interface FailureDescription {

@@ -58,6 +58,20 @@ describe("Pre-service Bluetooth system selection", () => {
     assert.equal(h.controller.getState().bluetoothSystem, "di2");
   });
 
+  it("keeps a detected E8000 bike on normal routing for inventory and subsequent reads", async () => {
+    const h = harness("steps", 0x12);
+    await h.controller.connectAndSync("ble");
+    assert.deepEqual(h.commands.slice(0, 3), ["connect ble", "ble detect-system", "--ble-master=normal units"]);
+    assert.equal(h.controller.getState().bluetoothSystem, "steps");
+    assert.equal(h.controller.getState().bluetoothSystemSource, "detected");
+    assert.equal(h.controller.getState().identity?.modelSlug, "e8000");
+    await h.controller.readAllParameters();
+    assert.ok(h.commands.filter((line) => line.endsWith("settings read")).length >= 2);
+    assert.ok(h.commands.filter((line) => line.endsWith("settings read")).every((line) => line.startsWith("--ble-master=normal ")));
+    assert.ok(!h.commands.some((line) => line.includes("--ble-master=master")));
+    assert.equal(h.controller.getState().failure, null);
+  });
+
   it("holds an unknown identity before inventory and continues on the original connection", async () => {
     const h = harness("unknown", 0x08, null);
     let stop = () => {};

@@ -785,7 +785,8 @@ export class SessionController {
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
     const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
-    const target = `${this.state.transport === "ble" && this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
+    const normalRouting = transport === "ble" && this.bluetoothSessionFlags() === "--ble-master=normal ";
+    const target = `${normalRouting ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
     }
@@ -798,7 +799,11 @@ export class SessionController {
     if (this.state.transport === "sim") return "--ble-master=master ";
     if (this.state.transport !== "ble") return "";
     if (!this.state.bluetoothSystem) throw new Error("Choose the Bluetooth bike system before discovering components.");
-    return this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : "--ble-master=master ";
+    // E8000/E8080 reads work through the existing logical master at slot zero.
+    // Keep that route for the whole retained connection instead of forcing the
+    // gateway into the newer motor workflow (or labelling this bike as Di2).
+    return this.state.bluetoothSystem === "di2" || this.state.bluetoothMasterSeries === 0x12
+      ? "--ble-master=normal " : "--ble-master=master ";
   }
 
   public async disconnect(): Promise<void> {

@@ -1208,11 +1208,26 @@ describe("Concise connection errors", () => {
     assert.equal(controller.getState().linkLost, true);
   });
 
-  it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
-    for (const original of ["BLE authentication failed: rejected", "drive-unit authentication challenge rejected"]) {
+  it("preserves the connection cause alongside uncertain cleanup guidance", () => {
+    for (const [original, cause] of [
+      ["BLE authentication failed: rejected", /PIN was not accepted/],
+      ["drive-unit authentication challenge rejected", /rejected authorization/],
+      ["BLE gateway did not confirm normal\/master source zero", /did not confirm normal\/master source zero/],
+      ["BLE response timeout or notification overflow; reconnect before another command", /stopped responding/],
+    ] as const) {
       const message = userFacingError(`error: ${original}\nThis cleanup also failed: BLE PC-link stop was not confirmed\n    at host_call (host.js:1)\n[exit 1]`);
       assert.match(message, /closed before the bike confirmed/);
-      assert.doesNotMatch(message, /PIN|authorization|host_call|exit/);
+      assert.match(message, cause);
+      assert.doesNotMatch(message, /host_call|exit/);
+    }
+  });
+
+  it("requires reconnect after an unconfirmed component owner and keeps receipts in diagnostics", () => {
+    for (const detail of ["local PC ownership", "PC owner zero; privileged routing is unverified"]) {
+      const failure = describeFailure({ kind: "read", error: `BLE component did not confirm ${detail} (slot 19, expected owner 3, receipt 1332120100ffff); reconnect before another command` }, "ble", []);
+      assert.equal(failure.linkLost, true);
+      assert.match(failure.message, /Disconnect, then reconnect/);
+      assert.doesNotMatch(failure.message, /1332120100ffff/);
     }
   });
 });

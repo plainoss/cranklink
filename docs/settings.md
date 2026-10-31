@@ -82,6 +82,10 @@ Signed values can be supplied directly, for example `cranklink --port usb -c MU-
 
 Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. Browser tests additionally drive the current UI and WASM through SC-EM800 4.6.0 and MU-UR500 3.3.1 save, power-cycle, readback and restore flows, and an unfinished hub adjustment. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
+## E8000 / E8080 drive units
+
+Cranklink currently implements only wheel circumference, mounting angle, and lamp settings for E8000/E8080. Assist-speed and region controls are not implemented for this family, including D4.6.0. An empty `unavailable` object means the implemented fields were read successfully; it does not mean all motor features are implemented. Neither master routing nor drive-unit authentication adds fields to this schema.
+
 ## E6000-family drive units
 
 E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose the [market region](#market-regions) (`destination`) from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.

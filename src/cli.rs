@@ -2641,7 +2641,10 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("cleanup also failed: {cleanup:#}")))
+            // Keep the operation failure first so cleanup cannot hide why a
+            // connection or command failed. The separator is also used by the
+            // browser to show both causes without raw stack traces.
+            Err(cleanup.context(format!("{error:#}\nCleanup also failed")))
         }
     }
 }
@@ -3828,6 +3831,19 @@ fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyh
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn failed_operation_stays_first_when_cleanup_also_fails() {
+        let result = super::finish_operation::<()>(
+            Err(anyhow::anyhow!(
+                "BLE gateway did not confirm normal/master source zero"
+            )),
+            Err(anyhow::anyhow!("BLE response timeout")
+                .context("BLE PC-link cleanup not confirmed")),
+        );
+        let message = format!("{:#}", result.unwrap_err());
+        assert_eq!(message, "BLE gateway did not confirm normal/master source zero\nCleanup also failed: BLE PC-link cleanup not confirmed: BLE response timeout");
+    }
+
     #[test]
     fn e6000_snapshot_keeps_live_identity_when_schema_is_shared() {
         use crate::device::{Identity, UnitCommands};

@@ -51,6 +51,15 @@ export function TuneView({ state, controller, category, query }: TuneViewProps) 
   return (
     <SettingsProvider value={{ state, controller, query }}>
       <div className="w-full flex flex-col gap-6">
+        {state.identity?.modelSlug === "e8000" && (category === "geometry" || category === "all" || searching) && (
+          <Alert status="default" data-testid="e8000-settings-support">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>Available E8000 / E8080 settings</Alert.Title>
+              <Alert.Description>Cranklink currently supports wheel circumference, mounting angle, and lamp settings for this motor. Assist speed limit and region controls are not implemented. Changing Bluetooth routing does not add these controls.</Alert.Description>
+            </Alert.Content>
+          </Alert>
+        )}
         {component && allSettingNames(state).length === 0 ? (
           <Alert status="default" data-testid="component-settings-unavailable">
             <Alert.Indicator />

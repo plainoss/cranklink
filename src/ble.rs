@@ -924,7 +924,8 @@ impl BleSession {
                     receipt.value.len() >= 7
                         && receipt.value[4] == 0
                         && receipt.value[5..7] == [0xff, 0xff],
-                    "BLE component did not confirm PC owner zero; privileged routing is unverified"
+                    "BLE component did not confirm PC owner zero; privileged routing is unverified (slot {slot}, receipt {}); reconnect before another command",
+                    hex::encode(&receipt.value)
                 );
             }
         }
@@ -934,7 +935,11 @@ impl BleSession {
                     && receipt.value[3..7] == [1, self.pc_slot, 0xff, 0xff])
                 {
                     self.poison();
-                    bail!("BLE component did not confirm local PC ownership");
+                    bail!(
+                        "BLE component did not confirm local PC ownership (slot {slot}, expected owner {}, receipt {}); reconnect before another command",
+                        self.pc_slot,
+                        hex::encode(&receipt.value)
+                    );
                 }
             }
             self.slave_component_links.insert(slot, stock);
@@ -3437,11 +3442,13 @@ pub(crate) mod tests {
         let (mut session, state) = component_mock(0x16, 4);
         state.borrow_mut().component_part = Some(4);
         state.borrow_mut().wrong_pc_owner = true;
-        assert!(session
+        let error = session
             .start_component(Some(4), Some("RD-RX815"))
             .unwrap_err()
-            .to_string()
-            .contains("local PC ownership"));
+            .to_string();
+        assert!(error.contains("local PC ownership"));
+        assert!(error.contains("slot 4, expected owner 3, receipt 0432120113ffff"));
+        assert!(error.contains("reconnect before another command"));
         assert!(session.slave_component_links.is_empty());
         assert!(session.poisoned);
         assert!(session.pause_settings_command().is_err());
