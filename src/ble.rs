@@ -561,10 +561,8 @@ impl BleSession {
         }
         // Select normal/slave mode before checking the resulting state.
         // A newly authenticated gateway need not start in that protocol state.
-        self.gateway(3, &[0], 0x23)?;
-        sleep(Duration::from_secs(1));
         // A successful GATT write is insufficient: require a protocol reply.
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = self.negotiate_slave_routing()?;
         ensure!(
             !mode.is_empty() && mode[0] & 0xe0 == 0x80,
             "invalid BLE gateway protocol identity"
@@ -574,6 +572,12 @@ impl BleSession {
         Ok(())
     }
     fn gateway(&mut self, control: u8, params: &[u8], reply: u8) -> Result<Vec<u8>> {
+        self.dispatch_gateway(control, params)?;
+        let n =
+            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply))?;
+        Ok(n.value[1..].to_vec())
+    }
+    fn dispatch_gateway(&mut self, control: u8, params: &[u8]) -> Result<()> {
         ensure!(
             matches!(control, 3 | 4 | 5 | 6 | 0x0c | 0x0d | 0x13 | 0x1b | 0x1d),
             "BLE gateway operation disabled"
@@ -595,11 +599,7 @@ impl BleSession {
         self.drain()?;
         let mut bytes = vec![0, control];
         bytes.extend_from_slice(params);
-        self.write(PCE_COMMAND, &bytes)?;
-        let response =
-            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply));
-        let n = response?;
-        Ok(n.value[1..].to_vec())
+        self.write(PCE_COMMAND, &bytes)
     }
     /// Slave discovery enters gateway PC-link (0C/01), reads master information
     /// (0D/00), then uses routed 01/14 rather than the USB master's PCE 1B.
@@ -1065,16 +1065,7 @@ impl BleSession {
         Ok(())
     }
     fn restore_slave_routing(&mut self) -> Result<()> {
-        let reply = self.gateway(3, &[0], 0x23)?;
-        ensure!(
-            matches!(reply.first(), Some(0 | 0x10)),
-            "BLE normal/slave restoration rejected"
-        );
-        // A master-to-slave transition can complete asynchronously with 23/10
-        // without an immediate 23/00. Neither
-        // receipt proves the resulting mode; the following PCE4 must confirm it.
-        sleep(Duration::from_secs(1));
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = self.negotiate_slave_routing()?;
         ensure!(
             mode.first().is_some_and(|m| m & 0xe0 == 0x80),
             "BLE normal/slave restoration was not confirmed"
@@ -1083,6 +1074,35 @@ impl BleSession {
         self.master_routing_active = false;
         self.linked_slot = None;
         Ok(())
+    }
+    fn negotiate_slave_routing(&mut self) -> Result<Vec<u8>> {
+        self.dispatch_gateway(3, &[0])?;
+        // SC-E8000 4.0.7 executes this transition without an immediate 23
+        // receipt. Other gateways return 23/00 or pending 23/10. Only PCE4
+        // confirms the resulting role; do not time out waiting for optional 23.
+        sleep(Duration::from_secs(1));
+        // Preserve any queued rejection instead of draining it through gateway().
+        self.write(PCE_COMMAND, &[0, 4])?;
+        let mut mode = None;
+        // At most a pending receipt, a completion receipt, then mode readback.
+        for _ in 0..3 {
+            let n = self.wait(|n| {
+                n.characteristic == PCE_RESPONSE && matches!(n.value.first(), Some(0x23 | 0x24))
+            })?;
+            if n.value[0] == 0x24 {
+                mode = Some(n.value[1..].to_vec());
+                break;
+            }
+            ensure!(
+                matches!(n.value.get(1), Some(0 | 0x10)),
+                "BLE normal/slave transition rejected"
+            );
+        }
+        let Some(mode) = mode else {
+            self.poison();
+            bail!("BLE normal/slave transition mode reply missing");
+        };
+        Ok(mode)
     }
     /// Close GATT and invalidate local session state. Normal/slave firmware
     /// owns teardown on disconnect; master routing must call `stop` first.
@@ -1411,6 +1431,10 @@ pub(crate) mod tests {
         wrong_pc_owner: bool,
         omit_gateway_motor_receipt: bool,
         asynchronous_mode_completion: bool,
+        final_slave_ack: bool,
+        silent_slave_restore: bool,
+        reject_slave_restore: bool,
+        drop_slave_mode_reply: bool,
         motor_slot: Option<u8>,
         motor_slots: Vec<u8>,
         gateway_version: Option<Vec<u8>>,
@@ -1489,6 +1513,7 @@ pub(crate) mod tests {
                         );
                         reply
                     }
+                    4 if !s.master_mode && s.drop_slave_mode_reply => return Ok(()),
                     4 if s.master_mode => vec![0x24, 0xa0],
                     4 if s.initial_extended_mode => hex::decode(if s.mode_negotiated {
                         "2493ff00100200f7df80"
@@ -1502,11 +1527,23 @@ pub(crate) mod tests {
                             notify(&mut s, PCE_RESPONSE, vec![0x23, 1]);
                             return Ok(());
                         }
+                        if s.master_mode && data[2] == 0 && s.reject_slave_restore {
+                            notify(&mut s, PCE_RESPONSE, vec![0x23, 1]);
+                            return Ok(());
+                        }
+                        let silent = s.master_mode && data[2] == 0 && s.silent_slave_restore;
                         s.master_mode = data[2] == 0x20;
                         s.mode_negotiated = true;
+                        if silent {
+                            return Ok(());
+                        }
+                        if data[2] == 0 && s.asynchronous_mode_completion && s.final_slave_ack {
+                            notify(&mut s, PCE_RESPONSE, vec![0x23, 0x10]);
+                        }
                         vec![
                             0x23,
-                            if s.asynchronous_mode_completion && data[2] == 0 {
+                            if s.asynchronous_mode_completion && !s.final_slave_ack && data[2] == 0
+                            {
                                 0x10
                             } else {
                                 0
@@ -2629,6 +2666,69 @@ pub(crate) mod tests {
         session.stop().unwrap();
         assert!(!session.master_routing_active);
         assert!(!state.borrow().master_mode);
+    }
+    #[test]
+    fn silent_stock_slave_transition_is_confirmed_by_mode_readback() {
+        let (mut session, state) = mock();
+        state.borrow_mut().silent_slave_restore = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        session.stop().unwrap();
+        assert!(!session.master_routing_active);
+        assert!(!session.poisoned);
+        assert!(!state.borrow().master_mode);
+    }
+    #[test]
+    fn authentication_recovers_a_gateway_left_in_master_without_a_transition_ack() {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_mode = true;
+        state.borrow_mut().silent_slave_restore = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        assert!(session.authenticated);
+        assert!(!state.borrow().master_mode);
+        assert_eq!(session.discover_units().unwrap(), [3, 13]);
+        assert!(state.borrow().master_mode);
+        session.stop().unwrap();
+    }
+    #[test]
+    fn pending_and_completion_receipts_are_followed_by_mode_confirmation() {
+        let (mut session, state) = mock();
+        state.borrow_mut().asynchronous_mode_completion = true;
+        state.borrow_mut().final_slave_ack = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        session.stop().unwrap();
+        assert!(!session.master_routing_active && !session.poisoned);
+    }
+    #[test]
+    fn silent_transition_without_mode_readback_never_confirms_release() {
+        let (mut session, state) = mock();
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        state.borrow_mut().silent_slave_restore = true;
+        state.borrow_mut().drop_slave_mode_reply = true;
+        let before = state.borrow().writes.len();
+        assert!(session.stop().is_err());
+        assert!(session.master_routing_active && session.poisoned);
+        assert_eq!(
+            &state.borrow().writes[before..],
+            &[(PCE_COMMAND, vec![0, 3, 0]), (PCE_COMMAND, vec![0, 4])]
+        );
+    }
+    #[test]
+    fn explicit_slave_transition_rejection_is_not_discarded_by_mode_query() {
+        let (mut session, state) = mock();
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        state.borrow_mut().reject_slave_restore = true;
+        let error = session.stop().unwrap_err();
+        assert!(format!("{error:#}").contains("normal/slave transition rejected"));
+        assert!(session.master_routing_active);
     }
     #[test]
     fn unlisted_gateway_version_uses_runtime_master_capabilities() {

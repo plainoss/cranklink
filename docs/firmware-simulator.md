@@ -245,9 +245,29 @@ Every image runs two probes: a stock interrupt return and a seven-instruction st
 
 The four E6002 images additionally execute their actual region GET reply builders for EU, US and Korea. Original instructions call the selector/cache getter and construct `06 00 16 AE 01 <region> 00 00` in the firmware's reply buffer. The selector and current region cache are explicitly seeded RAM fixtures; there are no substituted firmware calls or injected authorization results. These are isolated reply-builder checks. The separate storage command below adds file-backed SET and cold reload. Inventory keeps both capabilities separate from packet transport support.
 
-The core supports the observed repeated ADDW instruction with the encoded repeat count plus one, charging every execution against the instruction budget. Unsupported repeated operations trap. The persistent profile enables 20-bit byte program addresses for its far ROM call; ordinary probes retain their explicit address width. MULU's data product is executed, while unverified NZC flag effects are tracked: a consumer traps unless another instruction has first redefined those flags.
+The core supports the observed repeated ADD and ADDW instructions with the encoded repeat count plus one, charging every execution against the instruction budget. Unsupported repeated operations trap. The persistent profile enables 20-bit byte program addresses for its far ROM call; ordinary probes retain their explicit address width. MULU's data product is executed, while unverified NZC flag effects are tracked: a consumer traps unless another instruction has first redefined those flags.
 
 The MN101 tests also check odd-nibble instruction starts, signed/unsigned immediates, packed return addresses, calls, ROM vector calls, arithmetic/flag behavior and strict memory/budget traps using synthetic instructions. Byte ADDC/SUBC flags cover every operand/carry combination. To include stock probes in the test suite, set `CRANKLINK_MN101_FIXTURES` to a JSON object mapping CPU profile IDs (`e6000-3.2.3`, `e6001-3.4.7`, `e6002-3.3.0-board1`, `e6002-3.3.0-board2`, `e6002-3.4.0-board1`, `e6002-3.4.0-board2`) to local image paths. Relative paths resolve beside the manifest. Missing files, unknown IDs and mismatched image hashes fail; without this variable only the stock MN101 check skips.
+
+An isolated SC-E8000 4.0.7 probe now executes its MN101 PCE dispatcher,
+firmware-revision reply, master/slave mode changes, discovery countdown and empty
+bitmap builder. It requires the exact decoded image hash recorded in the display
+inventory. Run its stock checks with:
+
+```sh
+CRANKLINK_SC_E8000_IMAGE=/path/to/SCE8000.4.0.7.decoded.bin \
+  python3 -m unittest discover -s tools/firmware-sim -p 'test_legacy_gateway.py'
+```
+
+The probe reproduces `03 20` → `23 00`, `04` → `24 A0`, and `03 00`
+with **no immediate acknowledgement**, followed by `04` → `24 8D`.
+Discovery defers a requested bitmap until its 2,000-call stock countdown expires;
+the probe assigns no wall-clock duration to these calls. Initial caches, plain
+MMIO values and notification delivery are explicit synthetic boundaries. No bus
+announcements are injected. PC-link startup still traps on unmodeled peripheral
+behavior; this is not a GATT/motor topology profile and does not validate the
+reported bike's master connection. The interpreter additionally supports handy
+address writeback, preserving strict memory traps.
 
 The archived [motor inventory](../tools/firmware-sim/inventory-motors.json) and [display inventory](../tools/firmware-sim/inventory-displays.json) record the remaining local coverage gaps. They do not represent every published device/version. Broad support is the target; add a hash-pinned CPU/memory/ABI profile and execute the matrix before extending the support table. New processor families also need a suitable execution backend. SC-EN500/600/610, SC-E8000, SC-M9050, SC-MT800 and unprofiled variants are currently rejected.
 

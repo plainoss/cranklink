@@ -115,7 +115,7 @@ class MN101Machine:
         if self.repeat_pending:
             if self.repeat_start is None: self.repeat_start=self.pc
             instruction=decode(self.image,BASE,self.repeat_start)
-            if instruction['op']!='add_dw_dw':
+            if instruction['op'] not in ('add_dw_dw', 'add_d_d'):
                 raise RuntimeError('unverified repeated instruction '+instruction['op'])
             self.pc=self.repeat_start
             self._execute_instruction()
@@ -176,6 +176,7 @@ class MN101Machine:
             return
         if op in ('cbne_abs','cbeq_abs'):
             value=self.read(args['address'])
+            self.ha=args['address']
             self.compare(value,args['imm'],8)
             if (value==args['imm']) == (op=='cbeq_abs'): self.pc=args['target']
             return
@@ -184,7 +185,9 @@ class MN101Machine:
             if op=='cmp_imm_d': lhs,rhs=self.d[reg],args['imm']
             elif op=='cmp_imm_dw': lhs,rhs,bits=self.dw(reg),args['imm'],16
             elif op=='cmp_imm_a': lhs,rhs,bits=self.a[reg],args['imm'],16
-            elif op=='cmp_imm_abs': lhs,rhs=self.read(args['address']),args['imm']
+            elif op=='cmp_imm_abs':
+                lhs,rhs=self.read(args['address']),args['imm']
+                self.ha=args['address']
             elif op=='cmp_d_d': lhs,rhs=self.d[args['dst']],self.d[args['src']]
             elif op=='cmp_a_a': lhs,rhs,bits=self.a[args['dst']],self.a[args['src']],16
             elif op=='cmp_dw_dw': lhs,rhs,bits=self.dw(args['dst']),self.dw(args['src']),16
@@ -192,12 +195,15 @@ class MN101Machine:
             else: raise RuntimeError(op)
             self.compare(lhs,rhs,bits)
             return
-        if op=='store_imm_abs': self.write(args['address'],args['imm']); return
-        if op=='store_imm_io': self.write(0x3f00+args['address'],args['imm']); return
+        if op=='store_imm_abs':
+            self.write(args['address'],args['imm']); self.ha=args['address']; return
+        if op=='store_imm_io':
+            self.write(0x3f00+args['address'],args['imm']); self.ha=0x3f00+args['address']; return
         if op.startswith(('bset_','bclr_','btst_')):
             if op=='btst_imm_d': self.arithmetic(self.d[reg],args['imm'],8,'and'); return
             if op.endswith('_io'): raise RuntimeError('unmodeled IO operation '+op)
             value=self.read(args['address'])
+            self.ha=args['address']
             mask=1<<args['bit']
             self.arithmetic(value,mask,8,'and')
             if op.startswith('bset_'): self.write(args['address'],value|mask)
@@ -268,7 +274,12 @@ class MN101Machine:
             if source == 'sp': address = self.sp + args['offset']
             elif source == 'a': address = (self.a[args['areg']] + args.get('offset',0)) & 65535
             elif source == 'abs': address = args['address']
+            elif source == 'ha': address = self.ha
             else: raise RuntimeError(f'unmodeled IO operation {op}')
+            # Handy addressing reuses the last explicit data-memory address.
+            # Instruction fetch and implicit call/return stack accesses do not
+            # replace HA (MN101C LSI manual, addressing modes).
+            self.ha = address
             if direction == 'load':
                 value = self.read(address,width)
                 if kind=='d': self.d[reg] = value
@@ -345,6 +356,10 @@ class CPU(MN101Machine):
         pack_pc_strict(self.pc)
         ins = decode(self.image, BASE, self.pc)
         op, args = ins['op'], ins['args']
+        if op in ('store_d_ha', 'store_dw_ha', 'store_a_ha'):
+            self.trace.append(ins)
+            self.pc += ins['size']
+            raise RuntimeError('unmodeled IO operation ' + op)
         if op in ('rep', 'mulu', 'divu', 'asr_d'):
             self.trace.append(ins)
             self.pc += ins['size']
