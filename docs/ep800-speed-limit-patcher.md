@@ -1,14 +1,16 @@
 # Motor firmware speed-limit patcher
 
-`tools/patch_motor_speed.py` changes the speed-setting ceiling in supported D
-application firmware. It works offline with raw `.bin` images and encrypted
+`tools/patch_motor_speed.py` changes the highest assist speed that supported D
+firmware (the motor's communication-processor firmware; see [terms](../README.md#terms))
+will accept. It works offline with raw `.bin` images and encrypted
 Shimano `.dat` containers. Supply your own firmware; none is included.
 
 The default ceiling is **60 km/h**. Choose **15–99 km/h**, with up to two decimal
 places. Raising the ceiling does not change the motor's saved speed setting;
 that setting must be written separately, and `cranklink settings set` itself
-only writes speeds its destination table allows (at most 32 km/h, 45 km/h for
-modern destination 5). The tool does not flash a motor or modify M firmware.
+only writes speeds the motor's market region allows: at most 32 km/h, or 45 km/h
+on EP600, EP801 and EP500 motors set to the US Class 3 region (code 5). The tool
+does not flash a motor or modify M firmware.
 
 ## Supported images
 
