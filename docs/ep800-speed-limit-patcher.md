@@ -1,7 +1,8 @@
 # Motor firmware speed-limit patcher
 
-`tools/patch_motor_speed.py` changes the speed-setting ceiling in supported D
-application firmware. It works offline with raw `.bin` images and encrypted
+`tools/patch_motor_speed.py` changes the highest assist speed that supported D
+firmware (the motor's communication-processor firmware; see [terms](../README.md#terms))
+will accept. It works offline with raw `.bin` images and encrypted
 Shimano `.dat` containers. Supply your own firmware; none is included.
 
 The default ceiling is **60 km/h**. Choose **15–99 km/h**, with up to two decimal

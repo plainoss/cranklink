@@ -9,7 +9,7 @@ Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units ove
 > [!WARNING]
 > Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
 >
-> Firmware flashing has only been tested on a DU-EP800-CRG (`23/00`, DCASX board 1). cranklink checks the image's declared series, unit, and board, and the checksum of encrypted `.dat` containers, but cannot prove an image is correct for a given unit. Plaintext images, such as the EP800 M file, carry no checksum; writing one requires `--expect-sha256` with the SHA-256 of the file you verified. A wrong image can leave the motor unrecoverable, including by dealer tools.
+> Firmware flashing has only been tested on a DU-EP800-CRG (identity `23/00`, board 1; see [terms](#terms)). cranklink checks the image's declared series, unit, and board, and the checksum of encrypted `.dat` containers, but cannot prove an image is correct for a given unit. Plaintext images, such as the EP800 M file, carry no checksum; writing one requires `--expect-sha256` with the SHA-256 of the file you verified. A wrong image can leave the motor unrecoverable, including by dealer tools.
 
 The project began as the recovery of a bricked EP800-CRG that official tools and dealer service could not restore.
 
@@ -26,11 +26,11 @@ The core compiled to WebAssembly; all protocol work runs in the browser. Require
 
 When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
 
-Bluetooth detects supported STEPS and shifting-only master families before entering service mode, using the original connection. An unknown valid identity asks for a choice; **Bluetooth options** contains a manual override. This detection flow is awaiting phone/hardware validation; see the [validation sequence](docs/bluetooth.md#validate-automatic-detection-on-a-phone).
-
 After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.
+
+Bluetooth detects supported STEPS and shifting-only master families before entering service mode, using the original connection. An unknown valid identity asks for a choice; **Bluetooth options** contains a manual override. This detection flow is awaiting phone/hardware validation; see the [validation sequence](docs/bluetooth.md#validate-automatic-detection-on-a-phone).
 
 ## Android app
 
@@ -171,21 +171,41 @@ Ordinary recovery compares the file's SHA-256 only when `--expect-sha256` is giv
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion. M files such as `DUEP800-M.4.1.11.dat` are plaintext, so `--write` also needs `--expect-sha256 <SHA-256>` of the M file you verified (`firmware inspect` prints it and the integrity status, as `Companion SHA-256` and `Companion Integrity` when M is the companion; `--json` has them as `source_sha256` and `integrity`, `md5-verified-container` or `none`, with the companion's under `companion`).
 
-A write that fails after it starts prints `CRITICAL: FLASH WRITE INTERRUPTED` with the journal path and the exact recovery command; do not power-cycle the motor. Bluetooth cannot recover a motor, so after a failed `firmware flash ble-pair` write the command is one to run over a wired SM-PCE02.
+#### If a recovery step fails
 
-If a flash or probe fails while entering the bootloader from the application, or the bootloader reset after a refused image is not acknowledged, nothing was erased, but the motor may stay in its DCAS bootloader at the application's slot. A flash journals `boot-entry-failed` for a failed entry; both print a read-only `cranklink probe` to check whether the application still answers and, only if it does not, the `firmware probe --target dcas --recovery --reset` command, with that `--slot`, that returns it to its application. A journal write that fails after entry is reported with the refusal and never skips the reset.
+Nothing is erased unless a write has started. Each case below says what cranklink prints and what to do.
 
-`firmware probe --target rx` and an RX dry run reset the boot bridge and restart the application after they read the RX bootloader, also when they refuse its reply; a journal write that fails first never skips the reset. If RX update entry fails before a usable reply, RX may stay in update mode with the bridge active, and no reset is sent; a dry run journals `rx-boot-failed`, and a failed bridge reset `rx-reset-failed`. Nothing was erased in either case, and both commands say to check the application with the read-only `cranklink probe` before retrying, or with `firmware probe --target rx --recovery` after a `--recovery` run, since a recovery RX application cannot report its version.
+- **A write fails after it started:** cranklink prints `CRITICAL: FLASH WRITE INTERRUPTED` with the journal path and the exact recovery command. Do not power-cycle the motor. Bluetooth cannot recover a motor, so after a failed `firmware flash ble-pair` write the printed command is one to run over a wired SM-PCE02.
+- **The motor does not enter its bootloader, or does not acknowledge the reset after a refused image:** nothing was erased, but the motor may stay in its DCAS bootloader at the application's slot. A flash journals `boot-entry-failed` for a failed entry. Both cases print a read-only `cranklink probe` to check whether the application still answers and, only if it does not, the `firmware probe --target dcas --recovery --reset` command, with that `--slot`, that returns it to its application. A journal write that fails after entry is reported with the refusal and never skips the reset.
+- **An RX (M) probe or dry run:** `firmware probe --target rx` and an RX dry run reset the boot bridge and restart the application after they read the RX bootloader, also when they refuse its reply; a journal write that fails first never skips the reset. If RX update entry fails before a usable reply, RX may stay in update mode with the bridge active, and no reset is sent; a dry run journals `rx-boot-failed`, and a failed bridge reset `rx-reset-failed`. Nothing was erased in either case. Check the application with the read-only `cranklink probe` before retrying, or with `firmware probe --target rx --recovery` after a `--recovery` run, since a recovery RX application cannot report its version.
+- **A DCAS dry run or probe without `--recovery`:** these reset the bootloader and succeed only after the application comes back with the same cargo and D/M versions. If it does not come back, the dry run journals `application-return-failed`, and both print the same check-then-reset guidance.
+- **The motor is slow to answer after a reset:** after any bootloader reset (a DCAS probe or dry run, the RX probe and dry run, the return after a completed DCAS or RX write, and `firmware probe --target dcas --recovery --reset`), the motor can take a few seconds to answer discovery again. Cranklink repeats discovery up to four times, about 24 s, until the motor answers, and journals the number of discoveries it took as `discoveries`. If no component answers, the error says so. Ordinary probes discover once. `--recovery --reset` succeeds only once a motor answers.
+- **A write finished but the application does not answer:** if the transfer finished with its checksum and reset acknowledged but the application does not answer, the write journals `verification-failed` and prints the same read-only `cranklink probe` check, followed, for D, by the `--recovery --reset` command for the bootloader's slot.
 
-Without `--recovery`, a DCAS dry run and `firmware probe --target dcas` reset the bootloader and succeed only after the application comes back with the same cargo and D/M versions. If it does not come back, the dry run journals `application-return-failed`, and both print the same check-then-reset guidance.
-
-After any bootloader reset (a DCAS probe or dry run, the RX probe and dry run, the return after a completed DCAS or RX write, and `firmware probe --target dcas --recovery --reset`), the motor can take a few seconds to answer discovery again. Cranklink repeats discovery up to four times, about 24 s, until the motor answers, and journals the number of discoveries it took as `discoveries`. If no component answers, the error says so. Ordinary probes discover once. `--recovery --reset` now succeeds only once a motor answers. If a write's transfer finished with its checksum and reset acknowledged but the application does not answer, the write journals `verification-failed` and prints the same read-only `cranklink probe` check, followed, for D, by the `--recovery --reset` command for the bootloader's slot.
+#### Other recovery tools
 
 For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, follow the [temporary bridge recovery guide](docs/ep800-hardware-recovery.md) using `firmware flash dcas --bridge-recovery`.
 
 For bootloader research on a working, powered EP800-CRG, `firmware dump-bootloader --output NEW_DIR` reads the 64 KiB resident window without flashing. See the [extraction instructions](docs/ep800-hardware-recovery.md#read-a-working-motors-bootloader).
 
-`cranklink --help` and `cranklink <command> --help` list all commands and options. `--json` gives machine-readable output. With it, a wired DCAS or RX dry run and a `ble-pair` dry run print one JSON object (`"dry_run": true`, the verified target and serial, and `requires_*` flags, each true when the `--write` command must carry that option, such as `--expect-sha256` for a plaintext image) instead of the text report, and `firmware probe` prints its JSON only once its checks pass. `CRANKLINK_PORT`, `CRANKLINK_SERIAL` and `CRANKLINK_FORMAT` (`json` or `text`) stand in for `--port`, `-s` and `--format` when those are omitted; `CRANKLINK_PASSKEY` supplies the passkey for `ble:` ports. `cranklink --port usb session` serves a read-only JSON-RPC 2.0 driver on stdin and stdout for scripts and agents (wired ports only); see [JSON-RPC session](docs/session.md).
+More options:
+
+- `cranklink --help` and `cranklink <command> --help` list all commands and options.
+- `--json` gives machine-readable output. With it, a wired DCAS or RX dry run and a `ble-pair` dry run print one JSON object (`"dry_run": true`, the verified target and serial, and `requires_*` flags, each true when the `--write` command must carry that option, such as `--expect-sha256` for a plaintext image) instead of the text report, and `firmware probe` prints its JSON only once its checks pass.
+- Environment variables: `CRANKLINK_PORT`, `CRANKLINK_SERIAL` and `CRANKLINK_FORMAT` (`json` or `text`) stand in for `--port`, `-s` and `--format` when those are omitted; `CRANKLINK_PASSKEY` supplies the passkey for `ble:` ports.
+- `cranklink --port usb session` serves a read-only JSON-RPC 2.0 driver on stdin and stdout for scripts and agents (wired ports only); see [JSON-RPC session](docs/session.md).
+
+## Terms
+
+- **Drive unit**: the e-bike motor.
+- **Modern and legacy motors**: modern motors are the EP600, EP801 and EP500 (including their CRG variants). They use a newer authentication scheme and add the Japan and US Class 3 [market regions](docs/settings.md#market-regions). Legacy motors are the EP800 family, E5100 and older drive units.
+- **Market region** (`destination` in the CLI and backups): the sales market the motor is set for, which limits its assist speed.
+- **D and M firmware**: a STEPS motor has two processors. D runs on the Shimano communication chip (DCAS) and talks to the E-TUBE bus; M runs on the Renesas motor-control chip (also called RX). Firmware files come in matching D and M pairs.
+- **Identity** (for example `23/00`): the series and unit numbers a component reports, used to pick the right settings and firmware checks. `23/00` is the EP800 and EP800-CRG.
+- **Gateway**: the part of the bike with Bluetooth (a display such as the SC-EM800, or a wireless unit such as the EW-WU111) that apps connect through.
+- **Slot**: a component's address on the E-TUBE wire. It can change after a power cycle.
+- **OEM or protected field**: a factory limit that needs motor authentication to change.
+- **Master routing**: a Bluetooth mode some motor writes need. Afterwards the bike may need to be switched off and on to return to riding mode.
 
 ## Documentation
 

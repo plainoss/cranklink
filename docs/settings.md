@@ -16,6 +16,22 @@ App controls use physical units for values, ranges, increments, pending changes,
 
 The apps convert at the input/display boundary. Protocol values, CLI commands, saved JSON backups, and existing restore behavior retain their established units. Fields already expressed in physical units, such as km/h, Nm, and rpm, are not scaled again. Supported ranges still come from the connected model; converting units does not expand them.
 
+## Market regions
+
+The market region sets which assist speeds (and, on some motors, maximum power) the motor allows. The CLI and backup files call it `destination` and store it as a number; the apps show the region name and its speed range.
+
+| Code | Region | Assist speed range | Motors |
+| --- | --- | --- | --- |
+| 0 | Europe | 15–25 km/h | All with a speed setting |
+| 1 | United States | 19–32 km/h | All with a speed setting |
+| 2 | Japan | 14–24 km/h | EP600, EP801, EP500 |
+| 3 | Region 3 (market not identified) | 15–25 km/h | All with a speed setting |
+| 4 | Region 4 (market not identified) | 15–25 km/h | EP800, EP800-CRG, E5100 |
+| 4 | Korea | no separate speed setting | E6002, E6012 |
+| 5 | US Class 3 | 19–45 km/h | EP600, EP801, EP500 |
+
+cranklink writes only speeds inside the selected region's range. Codes not listed for a motor are not accepted for it.
+
 ## Component settings
 
 Use `-c <MODEL>` / `--component <MODEL>` with `probe` or `settings read`, `set`, `restore`, and `batch`. A slot from a fresh `units` inventory also works. Named selection uses cached identities to avoid querying unrelated ambiguous components. `units --stock-only` lists stock identities and unresolved candidates without optional part/model queries. When both selectors are supplied they must match the same connected component. Without an explicit selector the CLI retains its drive-unit selection behavior. As for drive units, `set` and batches containing a `set` require `-s <SERIAL>` (from `probe`); sibling components such as left and right levers share a schema, so a slot or model name alone does not identify the unit.
@@ -38,7 +54,18 @@ strict DCAS serial-padding checks.
 
 The schema is authoritative for exact model variants. Modern wireless levers and other components without a verified layout remain without named settings. Firmware may reject an individual service; a full read reports that field under `unavailable`. These layouts are covered by protocol tests, not hardware validation.
 
-Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear down; SW-S705 accepts only 2/3. Writes preserve the sibling nibble and meaningful auxiliary channels, while reserved SET bytes stay zero instead of copying GET padding. Modern event-function extensions remain outside these classic schemas. Component edits also reject current values outside their writable schema so every accepted change has a restorable backup. Rear multi-shift speed is 0 off, 1 very slow, 2 slow, 3 normal, 4 fast, 5 very fast, 6 super fast. Front synchro interval is 0 normal, 1 slow, 2 very slow. Display language is 0 English, 1 French, 2 German, 3 Dutch, 4 Italian, 5 Spanish; beep is 0 off/1 on; distance unit is 0 kilometres/1 miles; backlight is 0 off/1 on/2 manual; brightness is 20/40/60/80/100 percent.
+Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear down; SW-S705 accepts only 2/3. Writes preserve the sibling nibble and meaningful auxiliary channels, while reserved SET bytes stay zero instead of copying GET padding. Modern event-function extensions remain outside these classic schemas. Component edits also reject current values outside their writable schema so every accepted change has a restorable backup. Value meanings:
+
+| Setting | Values |
+| --- | --- |
+| `switch-a-function`, `switch-b-function` | 0 front up, 1 front down, 2 rear up, 3 rear down (SW-S705: 2 or 3 only) |
+| `multi-shift-speed` (rear) | 0 off, 1 very slow, 2 slow, 3 normal, 4 fast, 5 very fast, 6 super fast |
+| `synchro-shift-interval` (front) | 0 normal, 1 slow, 2 very slow |
+| `display-language` | 0 English, 1 French, 2 German, 3 Dutch, 4 Italian, 5 Spanish |
+| `display-beep` | 0 off, 1 on |
+| `display-distance-unit` | 0 kilometres, 1 miles |
+| `display-backlight` | 0 off, 1 on, 2 manual |
+| `display-brightness` | 20, 40, 60, 80 or 100 percent |
 
 ```sh
 cranklink settings schema --model ST-6870-L
@@ -57,7 +84,7 @@ Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, 
 
 ## E6000-family drive units
 
-E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose `destination` from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.
+E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose the [market region](#market-regions) (`destination`) from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.
 
 Offline schemas use `--model e6000`, `e6001`, `e6002-pre33`, or `e6002`. Live identities distinguish the generations: `08/00` E6000, `0A/00` or `0C/00` E6001 family, and `15/00` E6002/E6012. Known product attributes distinguish shared-series variants; unsupported discriminator queries are omitted.
 
@@ -65,7 +92,7 @@ E6000/E6001-family writes require no motor authentication. E6002/E6012 use legac
 
 ## Protected writes
 
-Fields flagged `oem` require drive-unit authentication. A `set`, `restore` or `batch` that writes one runs it automatically with the live serial; with `--no-auth` it is refused instead. `--unit-auth` (alias `--ble-unit-auth`) forces authentication before every connected settings command, reads included, except `set --dry-run`, and cannot be combined with `--no-auth`. The web app adds it for EP600, EP801 and EP500 motors to every save and restore, and to reads over Bluetooth. The protocol is chosen from the live motor identity:
+Fields flagged `oem` (factory limits) require drive-unit authentication. A `set`, `restore` or `batch` that writes one runs it automatically with the live serial; with `--no-auth` it is refused instead. `--unit-auth` (alias `--ble-unit-auth`) forces authentication before every connected settings command, reads included, except `set --dry-run`, and cannot be combined with `--no-auth`. The web app adds it for EP600, EP801 and EP500 motors to every save and restore, and to reads over Bluetooth. The protocol is chosen from the live motor identity; see [modern and legacy motors](../README.md#terms):
 
 | Family | Authentication |
 | --- | --- |
@@ -80,8 +107,10 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 
 ## Backups and restore
 
+In short: every write saves a backup of the old value first, `settings restore <file>` puts it back, and you should power-cycle the bike and read again to confirm a change stuck. The detailed rules follow.
+
 - `set` and batches containing a `set` require `-s <SERIAL>`, checked before connecting; `--dry-run`, reads and restores do not.
-- `set --dry-run` reads the device and runs the same checks as the write (destination limits, OEM torque bounds, drivetrain, calendar), then reports the current value and, for numeric fields, the `planned_parameters` the SET would send and whether it would change the value (`changed`). It takes no backup, sends no SET and skips unit authentication, but refuses `--no-auth` for a protected setting as the write does.
+- `set --dry-run` reads the device and runs the same checks as the write (region limits, OEM torque bounds, drivetrain, calendar), then reports the current value and, for numeric fields, the `planned_parameters` the SET would send and whether it would change the value (`changed`). It takes no backup, sends no SET and skips unit authentication, but refuses `--no-auth` for a protected setting as the write does.
 - Every `set` writes a new backup file (component serial, original value, planned value) before sending, then verifies by readback. Component backups also record the settings model. Backup files are never overwritten.
 - Each write reads the serial for its backup right before the SET and refuses, with no backup and no SET, if it differs from the serial verified when the session started. In a batch, earlier writes stay applied.
 - If the PC-link stop or Bluetooth disconnect fails after a command completed, its receipt (including the backup path) is still printed before the error, and the command exits with an error.
@@ -106,12 +135,12 @@ Only EP800-CRG settings are validated on hardware. Other families have protocol-
 cranklink -s <SERIAL> settings batch plan.json --backup-prefix run-01
 ```
 
-1–128 operations run in order on one connection; relative `file` paths resolve from the plan's directory. One exception keeps region changes valid: when a destination write (or restore) comes first, a later `speed-limit` or `max-power.*` write of the same change that fits both the current and the new destination runs before it. It never moves past a read, another destination write or an earlier write of the same setting; results and backup numbers keep plan order, and the journal's `order` lists the sequence that ran. In a plan with a destination write, a step that would still fall outside its destination is refused before any write. Each write gets its own backup. A batch is not atomic: on failure, earlier writes stay applied; restore them from their backups.
+1–128 operations run in order on one connection; relative `file` paths resolve from the plan's directory. One exception keeps region changes valid: when a region change (a `destination` write or restore) comes first, a later `speed-limit` or `max-power.*` write of the same change that fits both the current and the new region runs before it. It never moves past a read, another region change or an earlier write of the same setting; results and backup numbers keep plan order, and the journal's `order` lists the sequence that ran. In a plan with a region change, a step that would still fall outside its region is refused before any write. Each write gets its own backup. A batch is not atomic: on failure, earlier writes stay applied; restore them from their backups.
 
 ## Constraints
 
-- Speed and maximum power are validated against the destination (region). An unset EP800 destination blocks speed changes; set a destination first. The web and Android apps stage a compatible destination automatically, and a staged region change moves the assist speed into the new range.
-- A destination write or restore is refused while the current speed limit or maximum power is outside the new destination's range (for example 32 km/h before destination 0, 15 km/h before destination 1, or more than 400 W before destination 3). Change it first, or put the destination and the new limit in one batch, destination first. When neither order fits, as from 15 km/h in destination 0 to 30 km/h in destination 1, the batch is refused before any write; save a speed both destinations permit (19–25 km/h here) first.
-- On EP600, EP801 and EP500, per-mode torque must be one of the vendor levels for the motor's OEM torque bounds. Only the 20–85 and 20–50 Nm tables are verified; torque writes are refused on motors with other bounds.
+- Speed and maximum power are checked against the [market region](#market-regions). An EP800 with no region set cannot change speed; set a region first. The web and Android apps pick a compatible region automatically, and a staged region change moves the assist speed into the new range.
+- A region change is refused while the current speed limit or maximum power is outside the new region's range: for example 32 km/h before switching to Europe (0), 15 km/h before switching to United States (1), or more than 400 W before switching to Region 3. Change the limit first, or put the region change and the new limit in one batch, region first. When neither order fits, as going from 15 km/h in Europe to 30 km/h in United States, the batch is refused before any write; first save a speed both regions allow (19–25 km/h here).
+- On EP600, EP801 and EP500 ([modern motors](../README.md#terms)), per-mode torque must be one of the vendor levels for the motor's OEM torque bounds. Only the 20–85 and 20–50 Nm tables are verified; torque writes are refused on motors with other bounds.
 - An unset maintenance calendar must be initialized with `maintenance-date YYYY-MM-DD` before editing year, month, or day individually.
 - Bus slots can change after a power cycle. Select a component with `-c <MODEL>` or a slot from a fresh `cranklink units`.

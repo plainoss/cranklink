@@ -30,9 +30,11 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 `units --stock-only` skips optional part-number and model-discriminator GETs. Unresolved models remain candidates. Named component selection resolves only candidates for the requested model, so an unrelated unresponsive lever cannot block another target. Each new connection still discovers its own current slots.
 
-Writes that need gateway master routing (destination, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
+Writes that need gateway [master routing](../README.md#terms) (market region, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
 
 ## Disconnect and Di2 recovery
+
+When you are done, press **Disconnect** (or let the CLI command finish) and wait until the display, buttons and shifting respond normally before riding. The rest of this section explains how the link is closed.
 
 Ordinary normal/slave sessions end by closing GATT, leaving the gateway firmware to handle its radio-disconnect event. They do not send an explicit logical-master `32/10` stop, gateway `0C/00` stop or gateway reset. This matches the standard client normal-disconnect path. Explicit stop acknowledgements did not restore either tested bike; closing GATT alone preserved normal operation on both EW-WU111/BT-DN110 Di2 and SC-EM800/EP800 STEPS hardware.
 
