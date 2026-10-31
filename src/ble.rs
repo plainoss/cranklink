@@ -433,7 +433,26 @@ impl BleSession {
         if result.is_err() {
             self.poison();
         }
-        result.context("BLE write failed; outcome may be uncertain")
+        result.with_context(|| {
+            // Only protocol headers enter errors. Parameters can contain PIN
+            // proofs, regulation keys or firmware data and must stay private.
+            let operation = match id {
+                PCE_COMMAND => match bytes {
+                    [0, 3, mode] => format!("gateway PCE 03 mode {mode:02X}"),
+                    [0, command, ..] => format!("gateway PCE {command:02X}"),
+                    _ => "gateway PCE".into(),
+                },
+                FREE_COMMAND => match bytes {
+                    [slot, group, command, ..] => {
+                        format!("unit slot {slot}, group {group:02X}, command {command:02X}")
+                    }
+                    _ => "unit command".into(),
+                },
+                AUTH_CONTROL => "gateway authentication".into(),
+                _ => "gateway access check".into(),
+            };
+            format!("BLE write failed; outcome may be uncertain ({operation})")
+        })
     }
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>> {
         let result = self.io.receive(timeout);
@@ -708,6 +727,20 @@ impl BleSession {
                 && stock[3] != 0xff,
             "truncated or invalid BLE gateway stock identity"
         );
+        let names = crate::unit_models::candidates(stock[2], stock[3], None, None);
+        let gateway = if names.is_empty() {
+            format!("stock {:02X}/{:02X}", stock[2], stock[3])
+        } else {
+            names.join(" / ")
+        };
+        self.enter_master_routing().with_context(|| {
+            format!(
+                "BLE master setup through {gateway}, gateway firmware {}",
+                version(&revision).unwrap_or_else(|_| "unknown".into())
+            )
+        })
+    }
+    fn enter_master_routing(&mut self) -> Result<Vec<u8>> {
         self.master_routing_active = true; // Also restore after a partial setup.
         let reply = self.gateway(3, &[0x20], 0x23)?;
         ensure!(
@@ -1407,6 +1440,7 @@ pub(crate) mod tests {
         drop_query: Option<(u8, u8)>,
         flood_query: bool,
         fail_receive: bool,
+        fail_write: Option<(u16, Vec<u8>)>,
         drop_master_metadata: bool,
         invalid_nonce: bool,
         bad_mode: bool,
@@ -1495,6 +1529,12 @@ pub(crate) mod tests {
             assert!(!without_response);
             let mut s = self.0.borrow_mut();
             s.writes.push((id, data.to_vec()));
+            if s.fail_write
+                .as_ref()
+                .is_some_and(|(failed_id, failed_bytes)| *failed_id == id && failed_bytes == data)
+            {
+                bail!("GATT operation failed for unknown reason");
+            }
             if id == PCE_COMMAND {
                 assert_eq!(data[0], 0);
                 let response = match data[1] {
@@ -2637,11 +2677,7 @@ pub(crate) mod tests {
         state.borrow_mut().reject_master_mode = true;
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
-        assert!(session
-            .discover_units()
-            .unwrap_err()
-            .to_string()
-            .contains("routing rejected"));
+        assert!(format!("{:#}", session.discover_units().unwrap_err()).contains("routing rejected"));
         assert!(
             !state
                 .borrow()
@@ -2687,6 +2723,50 @@ pub(crate) mod tests {
         assert_eq!(session.discover_units().unwrap(), [13]);
         assert!(!session.poisoned);
         session.stop().unwrap();
+    }
+    #[test]
+    fn master_write_failure_names_gateway_firmware_and_command_without_replay() {
+        for packet in [
+            vec![0, 3, 0x20],
+            vec![0, 4],
+            vec![0, 0x1d, 0],
+            vec![0, 0x1b],
+            vec![0, 0x0c, 1],
+        ] {
+            let (mut session, state) = mock();
+            session.set_master_routing(true).unwrap();
+            session.authenticate().unwrap();
+            state.borrow_mut().fail_write = Some((PCE_COMMAND, packet.clone()));
+            let error = format!("{:#}", session.discover_units().unwrap_err());
+            assert!(
+                error.contains("SC-EM800, gateway firmware 4.6.0.0"),
+                "{error}"
+            );
+            assert!(
+                error.contains(&format!("gateway PCE {:02X}", packet[1])),
+                "{error}"
+            );
+            assert!(error.contains("GATT operation failed for unknown reason"));
+            assert!(session.poisoned);
+            let written = state.borrow().writes.len();
+            assert!(session.stop().is_err());
+            assert_eq!(state.borrow().writes.len(), written);
+            assert_eq!(state.borrow().writes.last(), Some(&(PCE_COMMAND, packet)));
+        }
+    }
+    #[test]
+    fn failed_write_diagnostics_never_include_authentication_parameters() {
+        for (id, packet) in [
+            (AUTH_CONTROL, vec![1, 0xaa, 0xbb, 0xcc, 0xdd]),
+            (FREE_COMMAND, vec![13, 0x16, 0xe0, 0xaa, 0xbb, 0xcc, 0xdd]),
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().fail_write = Some((id, packet.clone()));
+            let error = format!("{:#}", session.write(id, &packet).unwrap_err());
+            assert!(error.contains("BLE write failed; outcome may be uncertain"));
+            assert!(!error.contains("aabbccdd"));
+            assert!(!error.contains("AA BB CC DD"));
+        }
     }
     #[test]
     fn authentication_recovers_a_gateway_left_in_master_without_a_transition_ack() {
@@ -2863,11 +2943,9 @@ pub(crate) mod tests {
         state.borrow_mut().unit_bitmap = Some([0; 4]);
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
-        assert!(session
-            .discover_units()
-            .unwrap_err()
-            .to_string()
-            .contains("no remote components"));
+        assert!(
+            format!("{:#}", session.discover_units().unwrap_err()).contains("no remote components")
+        );
         assert!(!state
             .borrow()
             .writes

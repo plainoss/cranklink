@@ -79,3 +79,18 @@ the stages into an automatic retry loop. A failed read closes the link and ends
 the test; it is not retried automatically.
 
 E6000/E6001-family writes require no motor authentication; E6002/E6012 use legacy authentication from D3.4.0. E6002 region selection is available from D3.3.0. These additions remain hardware-unvalidated; see [E6000-family settings](settings.md#e6000-family-drive-units).
+
+## Failed-connection diagnostics
+
+On the connection screen, select **View details & logs**, then **Copy diagnostic
+report**. This remains available after setup or cleanup fails, without another
+connection attempt. Clipboard denial offers selectable report text. Copy before
+reloading: logs stay in this tab's memory. The report includes the deployed
+revision so production and preview builds can be distinguished.
+
+GATT write errors identify the PCE command (including the role for PCE3), or the
+unit slot/group/command. Parameters and authentication material are omitted.
+Once the gateway revision and stock identity have been read, master-setup errors
+also include those identifiers. A failed write still poisons the session and is
+never retried; this diagnostic context does not establish that an unmodeled
+physical master-mode failure has been repaired.

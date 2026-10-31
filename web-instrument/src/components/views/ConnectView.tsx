@@ -13,9 +13,10 @@ interface ConnectViewProps {
   state: InstrumentState;
   controller: SessionController;
   onOpenWarning: () => void;
+  onOpenDiagnostics: () => void;
 }
 
-export function ConnectView({ state, controller, onOpenWarning }: ConnectViewProps) {
+export function ConnectView({ state, controller, onOpenWarning, onOpenDiagnostics }: ConnectViewProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [simModel, setSimModel] = useState<SimulatedModel>("ep800-crg");
   const [simFault, setSimFault] = useState<FaultInjectionType>("none");
@@ -100,8 +101,15 @@ export function ConnectView({ state, controller, onOpenWarning }: ConnectViewPro
               <Alert.Title>{failure.title}</Alert.Title>
               {failure.outcome && <p className="mt-1 text-sm font-medium" data-testid="error-outcome">{failure.outcome}</p>}
               <Alert.Description className="[overflow-wrap:anywhere]">{failure.message}</Alert.Description>
+              <Button variant="tertiary" size="sm" className="mt-3" onPress={onOpenDiagnostics} data-testid="btn-connect-diagnostics">
+                View details &amp; logs
+              </Button>
             </Alert.Content>
           </Alert>
+        )}
+
+        {!failure && state.logs.length > 0 && (
+          <Button variant="tertiary" onPress={onOpenDiagnostics} data-testid="btn-connect-diagnostics">Diagnostics &amp; Logs</Button>
         )}
 
         {bluetoothBlocked && !platform.isIOS && (

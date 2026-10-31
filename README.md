@@ -26,6 +26,8 @@ The core compiled to WebAssembly; all protocol work runs in the browser. Require
 
 When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
 
+If connecting fails, choose **View details & logs** on the connection screen. Diagnostics remains available without a connection. **Copy diagnostic report** includes the full failure and cleanup details, command history, routing choice, browser and deployed build revision; if clipboard access fails, select and copy the report text. Logs remain in the current tab until reload.
+
 After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.

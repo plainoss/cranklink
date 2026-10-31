@@ -35,6 +35,52 @@ async function openInstrument(page: Page) {
 }
 
 test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
+  test("failed connection logs stay reachable and copyable without reconnecting", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openInstrument(page);
+    const failure = await page.evaluate(async () => {
+      const controller = (window as any).cranklinkInstrumentController;
+      await controller.connectAndSync("sim", { model: "ep800-crg", fault: "disconnect_on_connect" }).catch(() => {});
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: async (text: string) => { (window as any).copiedDiagnosticReport = text; },
+      } });
+      const state = controller.getState();
+      return { error: state.failure?.error, entries: state.logs.length };
+    });
+    expect(failure.error).toBeTruthy();
+    expect(failure.entries).toBeGreaterThan(0);
+    await page.getByTestId("btn-connect-diagnostics").click();
+    await expect(page).toHaveURL(/\/diagnostics$/);
+    await expect(page.getByTestId("offline-diagnostics")).toBeVisible();
+    await expect(page.getByTestId("console-input")).toHaveCount(0);
+    await page.getByTestId("btn-copy-diagnostics").click();
+    await expect(page.getByRole("status")).toContainText("Diagnostic report copied.");
+    const report = await page.evaluate(() => (window as any).copiedDiagnosticReport);
+    expect(report).toContain(failure.error);
+    expect(report).toContain("Build:");
+    expect(report).toContain("connect sim");
+    await page.getByRole("button", { name: "Back to connection", exact: true }).click();
+    await expect(page.getByTestId("error-banner")).toBeVisible();
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.dismissError());
+    await page.getByTestId("btn-connect-diagnostics").click();
+    expect(await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs.length)).toBe(failure.entries);
+    await page.screenshot({ path: "test-results/offline-diagnostics-mobile.png", fullPage: true });
+  });
+
+  test("offline diagnostics offers manual copy when clipboard access fails", async ({ page }) => {
+    await openInstrument(page);
+    await page.goto("./#/diagnostics");
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: async () => { throw new Error("Clipboard denied"); },
+      } });
+    });
+    await page.getByTestId("btn-copy-diagnostics").click();
+    await expect(page.getByRole("textbox", { name: "Diagnostic report" })).toHaveValue(/cranklink diagnostic report/);
+    await expect(page.getByRole("status")).toContainText("Select and copy");
+    await expect(page.getByTestId("console-input")).toHaveCount(0);
+  });
+
   test("zero-click connect, inline staging, ordered batch commit, and snapshot rollback @smoke", async ({
     page,
   }) => {

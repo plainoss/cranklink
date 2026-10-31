@@ -7,6 +7,14 @@ shows the pending cleanup operation, then keeps a Bluetooth completion view
 visible until the user returns to the connection screen. Link closure does not
 confirm the bike's physical return to riding mode; the view explains that wait.
 
+Connection failures offer **View details & logs**. The hash route `#/diagnostics`
+is accessible offline. The copyable report includes the latest 300 log entries,
+full failure/cleanup text, routing state, browser and build revision. Explicit
+`--passkey` arguments are redacted from exports; authentication payloads stay out
+of core traces and GATT write errors. Clipboard denial offers manual selection.
+Logs live in tab memory and are lost on reload; opening/copying them sends no
+bike commands. Offline command entry is hidden.
+
 ## Build
 
 Requires Node.js 22.12 or later and Python 3. From `web-instrument/`:
