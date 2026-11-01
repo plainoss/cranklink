@@ -24,15 +24,17 @@ class SessionController(private val backend: AppBackend) {
     private val operation = Mutex()
     /** A region change staged only because the assist speed needed it, and the region staged before it. */
     private var autoRegion: AutoRegion? = null
+    private var experimentalNormal = false
 
     private data class AutoRegion(val before: String?, val staged: String?)
 
-    suspend fun connect() = operation.withLock {
+    suspend fun connect(experimentalE8000Normal: Boolean = false) = operation.withLock {
         if (state.value.phase != AppPhase.Disconnected) return@withLock
+        experimentalNormal = experimentalE8000Normal
         mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null, restartBike = false,
             status = "Connecting to your bike and reading its settings…")
         try {
-            val result = execute(buildJsonObject { put("op", "connect"); put("master", true) })
+            val result = execute(buildJsonObject { put("op", "connect"); put("master", !experimentalE8000Normal); put("experimental_e8000_normal", experimentalE8000Normal) })
             applySnapshot(result, expected = null, status = "Connected. Review changes before saving them to the bike.")
         } catch (error: Throwable) {
             failUncertain(error, "Connection failed. If the bike does not return to riding mode, turn it off and on again before reconnecting.")
@@ -61,6 +63,7 @@ class SessionController(private val backend: AppBackend) {
             return
         }
         try {
+            require(!experimentalNormal || (current.identity.modelSlug == "e8000" && name in setOf("destination", "tire-circumference"))) { "Experimental normal routing supports E8000 region and wheel circumference only." }
             require(TuningRules.allowedName(name)) { "This setting is not available in the STEPS app." }
             val setting = current.settings.singleOrNull { it.name == name }
                 ?: error("This setting is not supported by the connected motor.")
@@ -168,6 +171,7 @@ class SessionController(private val backend: AppBackend) {
         try {
             val result = execute(buildJsonObject {
                 put("op", "commit")
+                put("master", identity.masterRouting)
                 put("serial", identity.serial)
                 put("changes", changes)
             })
@@ -210,6 +214,7 @@ class SessionController(private val backend: AppBackend) {
         try {
             val result = execute(buildJsonObject {
                 put("op", "restore")
+                put("master", identity.masterRouting)
                 put("serial", identity.serial)
                 put("file", file)
             })
@@ -290,8 +295,16 @@ class SessionController(private val backend: AppBackend) {
         val identity = TuningRules.parseIdentity(result["identity"] as? JsonObject ?: error("Missing motor identity."))
         if (expected != null) require(identity.serial == expected.serial && identity.modelSlug == expected.modelSlug
             && identity.modelSeries == expected.modelSeries) { "The response belongs to a different drive unit." }
+        require(!experimentalNormal || (identity.modelSlug == "e8000" && !identity.masterRouting)) {
+            "Experimental normal routing requires an E8000/E8080 normal session."
+        }
+        if (expected != null) require(identity.masterRouting == expected.masterRouting) {
+            "BLE route changed; disconnect before choosing another route."
+        }
         val settings = TuningRules.parseSchema(result["schema"] as? JsonArray ?: error("Missing motor settings schema."),
-            identity.modelSlug, result["constraints"] as? JsonObject)
+            identity.modelSlug, result["constraints"] as? JsonObject).map { setting ->
+            if (experimentalNormal && setting.name !in setOf("destination", "tire-circumference")) setting.copy(writable = false) else setting
+        }
         require(settings.isNotEmpty()) { "The connected drive unit has no supported tuning settings." }
         val snapshot = result["snapshot"] as? JsonObject ?: error("Missing motor settings snapshot.")
         require(snapshot.int("slot") == identity.slot) { "The snapshot belongs to another motor slot." }

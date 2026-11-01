@@ -13,8 +13,9 @@ function connected(transport: "usb" | "ble", normal = false) {
   const files = new Map<string, Uint8Array>();
   const commands: string[] = [];
   let region = 0;
+  let circumference = 2100;
   const identity = { slot: 13, model_series: 0x12, model_unit: 0, model_name: "DU-E8000", settings_model: "e8000", dcas_version: "4.6.0.0", rx_version: "4.6.0.0", serial: "010203040506" };
-  const snapshot = () => ({ identity, values: { destination: { value: region, raw: `01${region === 0 ? "00" : "01"}ffff` } }, unavailable: {} });
+  const snapshot = () => ({ identity, values: { destination: { value: region, raw: `01${region === 0 ? "00" : "01"}ffff` }, "tire-circumference": { value: circumference, raw: "0000" } }, unavailable: {} });
   controller.attachTerminal({
     setPasskeyPrompt() {},
     status: () => ({ ready: true, busy: false, usbSelected: transport === "usb", transport }),
@@ -29,10 +30,12 @@ function connected(transport: "usb" | "ble", normal = false) {
         assert.ok(planPath, line);
         const plan = JSON.parse(new TextDecoder().decode(files.get(planPath)));
         const results = plan.map((operation: any) => {
-          const before = region;
-          if (operation.op === "restore") region = JSON.parse(new TextDecoder().decode(files.get(operation.file))).before;
-          else { assert.equal(operation.name, "destination"); region = Number(operation.value); }
-          return { setting: "destination", before, after: region };
+          const name = operation.op === "restore" ? JSON.parse(new TextDecoder().decode(files.get(operation.file))).setting : operation.name;
+          assert.ok(["destination", "tire-circumference"].includes(name));
+          const before = name === "destination" ? region : circumference;
+          const after = operation.op === "restore" ? JSON.parse(new TextDecoder().decode(files.get(operation.file))).before : Number(operation.value);
+          if (name === "destination") region = after; else circumference = after;
+          return { setting: name, before, after };
         });
         print({ completed: results.length, results });
       }
@@ -80,15 +83,87 @@ describe("E8000 region-based assist speed", () => {
   it("refuses master-required saves and restores on a normal retained connection before importing a plan", async () => {
     const h = connected("ble", true);
     h.controller.stageParameter("destination", 1);
-    await assert.rejects(h.controller.commitStagedBatch(), /requires Bluetooth master routing.*No changes were sent/);
+    await assert.rejects(h.controller.commitStagedBatch(), /normal Bluetooth routing are blocked by default.*No changes were sent/);
     assert.deepEqual(h.controller.getState().stagedValues, { destination: 1 });
     assert.equal(h.files.size, 0);
     h.controller.discardAllStaged();
     h.files.set("before.json", new TextEncoder().encode(JSON.stringify({ format: "cranklink-setting-backup-v1", settings_model: "e8000", serial: "010203040506", setting: "destination", before: 0 })));
-    await assert.rejects(h.controller.restoreBackupFiles(["before.json"]), /requires Bluetooth master routing/);
+    await assert.rejects(h.controller.restoreBackupFiles(["before.json"]), /normal Bluetooth routing are blocked by default/);
     assert.equal(h.files.size, 1);
     assert.deepEqual(h.commands, []);
     assert.throws(() => h.controller.stageParameter("speed-limit", 25), /unavailable or read-only/);
     assert.throws(() => h.controller.stageParameter("destination", 5), /outside the permitted/);
   });
+  it("allows only opted-in E8000 region and wheel saves/restores while retaining normal routing", async () => {
+    for (const name of ["destination", "tire-circumference"]) {
+      const h = connected("ble", true);
+      (h.controller as any).update({ experimentalNormalWrites: true });
+      const value = name === "destination" ? 1 : 2200;
+      h.controller.stageParameter(name, value);
+      await h.controller.commitStagedBatch();
+      assert.equal(h.controller.getState().liveValues[name].value, value);
+      h.files.set("before.json", new TextEncoder().encode(JSON.stringify({ format: "cranklink-setting-backup-v1", settings_model: "e8000", serial: "010203040506", setting: name, before: name === "destination" ? 0 : 2100 })));
+      await h.controller.restoreBackupFiles(["before.json"]);
+      assert.equal(h.controller.getState().liveValues[name].value, name === "destination" ? 0 : 2100);
+      assert.ok(h.commands.every((command) => command.includes("--ble-master=normal")));
+      assert.ok(h.commands.every((command) => !command.includes("--ble-master=master")));
+      assert.ok(h.commands.filter((command) => command.includes("settings batch")).every((command) => command.includes("--backup-prefix")));
+    }
+  });
+
+  it("keeps lamp and other models blocked despite experimental opt-in", () => {
+    const h = connected("ble", true);
+    (h.controller as any).update({ experimentalNormalWrites: true });
+    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination", "lamp"]), /requires Bluetooth master routing/);
+    assert.throws(() => (h.controller as any).requireWriteRouting("restore", ["lighting-time"]), /requires Bluetooth master routing/);
+    for (const modelSlug of ["ep800-crg", "e8000-pre41"]) {
+      (h.controller as any).update({ identity: { ...h.controller.getState().identity!, modelSlug } });
+      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination"]), /requires Bluetooth master routing/);
+      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]), /requires Bluetooth master routing/);
+    }
+  });
+
+  it("defaults off and requires choosing the experiment before connection", () => {
+    const controller = new SessionController();
+    assert.equal(controller.getState().experimentalNormalWrites, false);
+    controller.setExperimentalNormalWrites(true);
+    assert.equal(controller.getState().experimentalNormalWrites, true);
+    const h = connected("ble", true);
+    assert.throws(() => h.controller.setExperimentalNormalWrites(true), /Disconnect before changing/);
+  });
+
+  it("selects normal discovery and reads before connecting even with the STEPS override", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = new SessionController();
+    controller.setBluetoothBike("steps");
+    controller.setExperimentalNormalWrites(true);
+    const commands: string[] = [];
+    const identity = { slot: 0, model_series: 0x12, model_unit: 0, model_name: "DU-E8000", settings_model: "e8000", dcas_version: "4.6.0.0", rx_version: "4.6.0.0", serial: "010203040506" };
+    controller.attachTerminal({
+      setPasskeyPrompt() {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "ble" }),
+      files: { list: () => [], bytes: () => new Uint8Array(), import: async () => {}, initialize: async () => {} },
+      run: async (line) => {
+        commands.push(line);
+        const print = (data: unknown) => (globalThis as any).estepsTerminalPrint(JSON.stringify(data), "stdout");
+        if (line === "connect ble") return { code: 0 };
+        if (line === "--ble-master=normal units") print({ units: [{ slot: 0, model_series: 0x12, model_unit: 0, model: "DU-E8000", model_candidates: ["DU-E8000"] }] });
+        else if (line.startsWith("settings schema")) print(rawSchema("e8000"));
+        else {
+          assert.match(line, /^--ble-master=normal --slot 0 --component 'DU-E8000' settings read$/);
+          print({ identity, values: { destination: { value: 0, raw: "0100ffff" } }, unavailable: {} });
+        }
+        return { code: 0 };
+      },
+    });
+    const selected = await controller.connectAndSync("ble");
+    assert.ok(selected, JSON.stringify(controller.getState().failure));
+    assert.equal(selected.modelSlug, "e8000");
+    assert.equal(controller.getState().phase, "ready");
+    assert.ok(commands.includes("--ble-master=normal units"));
+    assert.ok(commands.some((line) => line.endsWith("settings read")));
+    assert.ok(commands.every((line) => !line.includes("--ble-master=master")));
+    assert.throws(() => controller.setExperimentalNormalWrites(false), /Disconnect before changing/);
+  });
+
 });

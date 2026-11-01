@@ -2,6 +2,74 @@
 
 Requires a build with the default `ble` feature (not `--no-default-features`) and a bike with an E-TUBE Bluetooth gateway (e.g. SC-EM800); a bare motor has no radio. macOS needs Bluetooth permission for the terminal; Linux needs BlueZ and D-Bus.
 
+Native connection failures distinguish peripheral connection from service discovery.
+These setup failures happen before the protocol trace is opened; stdout/stderr
+captures are needed alongside `--trace` when investigating them.
+
+When connecting to a known peripheral ID, the native CLI checks discovery every
+100 ms and stops scanning as soon as that device appears, instead of always
+waiting five seconds. If it is absent, discovery still waits up to five seconds.
+An explicit `ble scan` keeps its full requested duration. Connection and command
+failures are not retried.
+
+Native sessions also watch the discovery adapter's disconnect events for the
+selected peripheral. A confirmed disconnection interrupts pending operations
+and avoids querying a peripheral that the Bluetooth backend has already removed.
+This shortens failure reporting; it does not restore gateway role or bike controls.
+Normal discovery requires an explicit successful gateway service-start status
+before querying the bus; a refused or truncated receipt ends that attempt.
+
+### SC-E8000 4.0.6 native hardware observation
+
+On 2026-10-31, a macOS native read-only test on SC-E8000 gateway firmware
+4.0.6.0 with a DU-E8000 reproduced the master-setup failure previously reported
+on Android Chrome. Link authentication and normal-routing stock inventory passed
+on separate connections, with normal controls confirmed after the link test.
+The master attempt read the gateway revision and stock identity, received
+`23/00` for `PCE03/20`, then sent `PCE04` 1003 ms after that acknowledgement.
+There was no mode reply; native GATT reported a device disconnection, and cleanup
+could not confirm PC-link release. Bike controls remained unavailable until a
+power cycle, after which the rider confirmed normal operation.
+
+The native build used commit `222a4452042d` plus setup-error context and the
+early peripheral-discovery change described above. No PnP, component ownership
+verification or settings writes were reached. This establishes reproduction
+beyond Android/Chrome, not a radio-level root cause. macOS Bluetooth logs record
+a link timeout near the PCE04 write; a transmission trace records the attempted
+write, not proof of delivery or proof that it caused the link failure.
+
+An isolated diagnostic subsequently sent `PCE03/20` once and passively observed
+the connection without sending PCE04, PnP, settings or protocol cleanup commands.
+One attempt observed no disconnection for three seconds before deliberately
+closing GATT. A later attempt, with a three-second initial slave-settling delay,
+received the master acknowledgement but macOS logged a link timeout about
+1.06 seconds afterwards, before any subsequent GATT write. The native observation
+operation eventually timed out. Thus PCE04 is not necessary for this link failure;
+the master acknowledgement alone still does not establish that the asynchronous
+role transition completed. The inconsistent passive outcomes do not validate a
+longer delay as a fix. The exact gateway/radio transition remains unmodeled.
+
+A further native diagnostic connected promptly, held GATT for seven seconds
+before protocol startup and confirmed in macOS logs that the supervision timeout
+had changed from 360 ms to 6000 ms before requesting master mode. Initial slave
+confirmation and gateway identity reads succeeded. Master `23/00` was received,
+but the subsequent PCE04 still got no reply and the link timed out about
+6.7 seconds after that acknowledgement. Waiting for the initial connection
+parameter negotiation therefore did not resolve the reported failure.
+
+Starting pairing explicitly through the SC-E8000's Bluetooth LE menu also
+reproduced the same acknowledged master request followed by PCE04 disconnection.
+Automatic power-on advertising alone therefore does not explain this failure.
+
+A 2026-11-01 native read-only diagnostic established normal gateway service and
+successfully inventoried all four components before sending one master request.
+The gateway acknowledged it, but the first PCE04 write, 1000 ms later, failed;
+macOS reported lost synchronization and disconnection about 1.03 seconds after
+the acknowledgement. The rider confirmed that the bike stayed powered throughout
+the attempt and that controls recovered after a subsequent power cycle. This
+tested service-first ordering is insufficient on this bike. No master mode reply,
+PnP or settings write was reached, and the full-master follow-up was not run.
+
 Activate the gateway's connection mode shortly before scanning, and close other apps connected to the bike. The web app includes the same connection help.
 
 ## Connection mode
@@ -30,7 +98,9 @@ cranklink --port 'ble:DEVICE_ID' -s <SERIAL> settings read --output settings.jso
 
 `units --stock-only` skips optional part-number and model-discriminator GETs. Unresolved models remain candidates. Named component selection resolves only candidates for the requested model, so an unrelated unresponsive lever cannot block another target. Each new connection still discovers its own current slots.
 
-Writes that need gateway [master routing](../README.md#terms) (market region, wheel circumference, lamp, lighting time) select it automatically (`--ble-master=auto`, the default). `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
+Cranklink's current routing policy selects gateway [master routing](../README.md#terms) for market region, wheel circumference, lamp and lighting-time writes (`--ble-master=auto`, the default). This policy does not establish that every E8000 firmware requires master routing; normal-routing settings writes on the tested D4.6.0 bike have not been hardware validated. `--ble-master` forces master routing and `--ble-master=normal` forces normal routing; the value needs `=`, as `--ble-master normal` reads `normal` as a subcommand. Drive-unit authentication for protected fields, and `--unit-auth`, work as over USB; see [protected writes](settings.md#protected-writes).
+
+The CLI reports that automatic routing choice as a policy. Explicit normal routing still applies the usual identity, session, authentication and read-only checks; selecting it does not establish that a particular bike supports the requested write.
 
 ## Disconnect and Di2 recovery
 
@@ -46,9 +116,9 @@ Read and write errors still fail the operation; closing the link never converts 
 
 The web app detects supported master families before starting service, keeping the original GATT connection. It queries gateway master metadata (`00 0d 00`) after normal/slave authentication, before PC-link (`00 0c 01`). Supported STEPS families select the existing master-routing workflow; BM-DN100/BT-DN110/BT-DN300 master families select ordinary routing. Di2 components on a STEPS bike do not change that decision.
 
-E8000/E8080 (master series `12` hex) is an exception: automatic detection selects normal routing for discovery, component selection, and subsequent settings commands, while retaining the STEPS label and identity checks. This follows successful E8000 D4.6.0 inventory and motor reads on normal routing; the automatic selection still needs a physical preview check. The explicit STEPS override retains the master workflow. A failed master connection is never retried automatically on another route.
+E8000/E8080 (master series `12` hex) is an exception: automatic detection selects normal routing for discovery, component selection, and subsequent settings commands, while retaining the STEPS label and identity checks. This follows successful E8000 D4.6.0 inventory and motor reads on normal routing; the automatic selection still needs a physical preview check. The explicit STEPS override retains the master workflow unless the experimental normal-routing option below is selected. A failed master connection is never retried automatically on another route.
 
-Normal routing establishes read access, not authorization for all writes. The browser refuses motor saves and restores containing destination, wheel circumference, lamp or lighting time on a retained normal connection, before creating a plan or sending a SET. Use USB or reconnect with the explicit STEPS override for master routing. E8000 region-based assist-speed selection is described in [settings](settings.md#e8000--e8080-drive-units).
+The browser blocks destination, wheel circumference, lamp and lighting-time saves/restores on normal routing by default. To test E8000/E8080 region and wheel writes, disconnect and select **Bluetooth options → Experimental E8000 region & wheel writes → Allow experimental writes in normal routing**, then reconnect and read the settings again. This explicitly selects normal routing, including when the STEPS identification override is selected, and cannot be changed on an active connection. Only the `e8000` profile's region and wheel fields gain this exception; other write guards remain. Authentication, serial-bound backups, verified readback and restore still apply. Hardware writes and persistence remain unvalidated. See [E8000 settings](settings.md#e8000--e8080-drive-units) and the [Android option](../android-app/README.md#experimental-e8000-normal-routing).
 
 An unconfirmed component PC owner ends usable access to that session and requires disconnect/reconnect. Diagnostics retain the target slot, expected owner and received startup bytes; the app does not accept a foreign owner or retry the start. If connection cleanup also fails, the connection error remains visible alongside cleanup guidance. A normal-routed motor read succeeding at logical slot zero does not establish that shifter or derailleur sessions will succeed.
 

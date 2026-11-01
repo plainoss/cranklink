@@ -2771,7 +2771,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                     route: "master",
                     policy: resolved_policy,
                     reason: format!(
-                        "setting '{}' write requires PC-link owner zero (master routing)",
+                        "automatic routing selects master for setting '{}' writes",
                         name
                     ),
                 },
@@ -2783,7 +2783,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                         route: "master",
                         policy: resolved_policy,
                         reason: format!(
-                            "setting '{}' restore requires PC-link owner zero (master routing)",
+                            "automatic routing selects master for setting '{}' restores",
                             parsed.setting
                         ),
                     }
@@ -2807,7 +2807,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                             route: "master",
                             policy: resolved_policy,
                             reason: format!(
-                                "batch includes '{}' write requiring PC-link owner zero (master routing)",
+                                "automatic routing selects master for a batch including '{}' writes",
                                 setting
                             ),
                         }
@@ -2815,7 +2815,8 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                         BleRoutingDecision {
                             route: "normal",
                             policy: resolved_policy,
-                            reason: "batch operations do not require master routing".to_string(),
+                            reason: "automatic routing selects normal for these batch operations"
+                                .to_string(),
                         }
                     }
                 }

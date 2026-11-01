@@ -43,7 +43,7 @@ fn dispatch_cannot_represent_firmware_usb_di2_or_raw_commands() {
     }
     assert!(matches!(
         parse_request(r#"{"op":"connect"}"#).unwrap(),
-        Request::Connect { master: true }
+        Request::Connect { master: true, .. }
     ));
     assert!(parse_request(&" ".repeat(MAX_REQUEST_BYTES + 1)).is_err());
 }
@@ -480,4 +480,33 @@ fn only_shifting_only_systems_are_refused_before_service_mode() {
     assert!(require_steps_system(&detection("steps")).is_ok());
     assert!(require_steps_system(&detection("unknown")).is_ok());
     assert!(require_steps_system(&detection("shifting-only")).is_err());
+}
+
+#[test]
+fn experimental_normal_requires_optin_and_narrow_consistent_route() {
+    assert!(parse_request(r#"{"op":"connect","master":false}"#).is_err());
+    assert!(
+        parse_request(r#"{"op":"connect","master":false,"experimental_e8000_normal":true}"#)
+            .is_ok()
+    );
+    let mut m = motor();
+    m.model = SettingsModel::E8000;
+    m.model_name = "DU-E8000".into();
+    assert!(!write_route(
+        &m,
+        true,
+        false,
+        ["destination", "tire-circumference"].into_iter()
+    )
+    .unwrap());
+    assert!(write_route(&m, true, false, ["lamp"].into_iter()).is_err());
+    assert!(write_route(&m, true, false, ["lighting-time"].into_iter()).is_err());
+    assert!(write_route(&m, true, true, ["destination"].into_iter()).is_err());
+    assert!(write_route(&m, false, false, ["destination"].into_iter()).unwrap());
+    m.model_name = "DU-E8080".into();
+    assert!(!write_route(&m, true, false, ["tire-circumference"].into_iter()).unwrap());
+    m.model_name = "unresolved".into();
+    assert!(write_route(&m, true, false, ["destination"].into_iter()).is_err());
+    m.model = SettingsModel::Ep800Crg;
+    assert!(write_route(&m, true, false, ["destination"].into_iter()).is_err());
 }

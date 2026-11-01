@@ -209,6 +209,14 @@ export function ConnectView({ state, controller, onOpenWarning, onOpenDiagnostic
                     ]}
                     isDisabled={isBusy} data-testid="bluetooth-bike-select" />
                   <p className="text-xs text-muted">Use an override only if detection fails. STEPS bikes can also have Di2 components; choose based on the motor.</p>
+                  <OptionSelect label="Experimental E8000 region & wheel writes" value={state.experimentalNormalWrites ? "normal" : "default"}
+                    onChange={(value) => controller.setExperimentalNormalWrites(value === "normal")}
+                    options={[
+                      { id: "default", label: "Conservative routing (default)" },
+                      { id: "normal", label: "Allow experimental writes in normal routing" },
+                    ]}
+                    isDisabled={isBusy} data-testid="experimental-normal-writes-select" />
+                  <p className="text-xs text-muted">E8000/E8080 region and wheel circumference only. Normal-routing writes are experimental and have not been verified on your bike. Authentication, backups and verified readback still apply. This option selects normal routing before connection, including with the STEPS override. Routing stays fixed after connection.</p>
                 </Disclosure.Body>
               </Disclosure.Content>
             </Disclosure>

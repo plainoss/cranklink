@@ -54,9 +54,13 @@ Requires Android 8.0 or later. Releases are published on Google Play as `app.pla
 
 All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
-E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. Automatic Bluetooth detection uses normal routing for reads, with the bike identified as STEPS. Region, wheel and lamp writes require master routing on a new connection, or USB; the browser refuses them on a retained normal session. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
+E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. Automatic Bluetooth detection uses normal routing for reads, with the bike identified as STEPS. CLI automatic routing selects master for region, wheel and lamp writes; USB is also supported. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
 
-Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. Stock SC-E8000, SC-EM800, SC-E6100 and SC-E7000 firmware probes reproduce this behavior. The fix applies to every gateway through the shared connection code; full master connection on the reported E8000 bike still requires validation.
+To test the normal-routing hypothesis, explicitly enable **Experimental E8000 region & wheel writes** in the web app's **Bluetooth options** before connecting, or select the corresponding checkbox in Android's Bluetooth scan dialog. This option is off by default and keeps normal routing for that connection. Region and wheel writes retain firmware-dependent authentication, serial checks, backups, verified readback and restore. Physical normal-routing writes and persistence remain unvalidated; the option does not establish that master mode works on the bike.
+
+The CLI's automatic route selection is a conservative policy. An explicit `--ble-master=normal` uses normal routing with the usual session and authentication checks; hardware support for those writes still needs validation.
+
+Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. Stock SC-E8000, SC-EM800, SC-E6100 and SC-E7000 firmware probes reproduce this behavior. The fix applies to every gateway through the shared connection code; full master connection on the reported E8000 bike remains unresolved, including a native test that established normal service before requesting master routing. See [hardware observations](docs/bluetooth.md#sc-e8000-406-native-hardware-observation).
 
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
@@ -89,6 +93,9 @@ cargo build --release --locked --bin cranklink
 ```
 
 Bluetooth support is a default feature; add `--no-default-features` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
+
+Native connections stop scanning as soon as the requested peripheral appears;
+explicit `ble scan` commands retain their full scan duration. See [Bluetooth](docs/bluetooth.md).
 
 The prebuilt binaries are all built on Linux, and CI runs only the Linux one. The macOS binaries are not notarized: if macOS blocks the extracted binary, run `xattr -d com.apple.quarantine ./cranklink`.
 

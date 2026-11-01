@@ -34,6 +34,8 @@ enum Request {
     Connect {
         #[serde(default = "default_master_routing")]
         master: bool,
+        #[serde(default)]
+        experimental_e8000_normal: bool,
     },
     Read {
         serial: String,
@@ -91,6 +93,7 @@ struct Active {
     session: BleSession,
     motor: Motor,
     java_gatt: GlobalRef,
+    experimental_e8000_normal: bool,
 }
 
 // Kotlin calls JNI only from one dedicated executor. The session never crosses
@@ -106,8 +109,14 @@ fn parse_request(request: &str) -> Result<Request> {
     );
     let request = serde_json::from_str(request).context("invalid Android app request")?;
     ensure!(
-        !matches!(request, Request::Connect { master: false }),
-        "the STEPS app requires master BLE routing"
+        !matches!(
+            request,
+            Request::Connect {
+                master: false,
+                experimental_e8000_normal: false
+            }
+        ),
+        "normal BLE routing requires the explicit experimental E8000 opt-in"
     );
     Ok(request)
 }
@@ -339,7 +348,15 @@ fn execute(
         close_active()?;
         return Ok(json!({"disconnected":true,"backups":list_backups(directory)?}));
     }
-    if let Request::Connect { master } = request {
+    if let Request::Connect {
+        master,
+        experimental_e8000_normal,
+    } = request
+    {
+        ensure!(
+            !experimental_e8000_normal || !master,
+            "experimental normal routing cannot select master"
+        );
         close_active()?;
         let java_gatt = env.new_global_ref(gatt)?;
         let io = java_gatt::JavaGatt::new(env, java_gatt.clone())?;
@@ -352,6 +369,12 @@ fn execute(
             require_steps_system(&session.detect_system()?)?;
             let identity = session.start(None)?;
             let motor = read_identity(&mut session, &identity)?;
+            if experimental_e8000_normal {
+                ensure!(
+                    experimental_normal_model(&motor),
+                    "experimental normal routing supports E8000/E8080 only"
+                );
+            }
             if modern(motor.model) {
                 session.authenticate_unit_settings(&motor.serial)?;
             }
@@ -362,6 +385,7 @@ fn execute(
             session,
             motor,
             java_gatt,
+            experimental_e8000_normal,
         };
         let result = snapshot(&mut active, directory, None)
             .map_err(|error| cleanup_error(&mut active.session, error))?;
@@ -394,10 +418,12 @@ fn execute(
                 changes, master, ..
             } => {
                 preflight_changes(&schema, &changes)?;
-                let needs_master = master
-                    || changes
-                        .keys()
-                        .any(|name| settings::requires_ble_master_routing(name));
+                let needs_master = write_route(
+                    &active.motor,
+                    active.experimental_e8000_normal,
+                    master,
+                    changes.keys().map(String::as_str),
+                )?;
                 let needs_auth = modern(active.motor.model)
                     || changes
                         .keys()
@@ -419,7 +445,12 @@ fn execute(
                 let file = restore_path(directory, &file)?;
                 let parsed = settings::parse_restore_file(&file)?;
                 preflight_restore(&parsed, &active.motor, &schema)?;
-                let needs_master = master || settings::requires_ble_master_routing(&parsed.setting);
+                let needs_master = write_route(
+                    &active.motor,
+                    active.experimental_e8000_normal,
+                    master,
+                    std::iter::once(parsed.setting.as_str()),
+                )?;
                 let needs_auth = modern(active.motor.model) || spec(&schema, &parsed.setting)?.oem;
                 (
                     needs_master,
@@ -521,3 +552,38 @@ pub extern "system" fn Java_app_plainoss_cranklink_NativeCore_invoke(
 
 #[cfg(test)]
 mod tests;
+
+fn experimental_normal_model(motor: &Motor) -> bool {
+    motor.model == SettingsModel::E8000
+        && matches!(motor.model_name.as_str(), "DU-E8000" | "DU-E8080")
+}
+fn write_route<'a>(
+    motor: &Motor,
+    experimental: bool,
+    requested_master: bool,
+    names: impl Iterator<Item = &'a str>,
+) -> Result<bool> {
+    let names: Vec<_> = names.collect();
+    if experimental {
+        ensure!(
+            experimental_normal_model(motor),
+            "experimental normal writes require E8000/E8080"
+        );
+        ensure!(
+            !requested_master,
+            "disconnect before changing the selected BLE route"
+        );
+        ensure!(
+            names
+                .iter()
+                .all(|name| matches!(*name, "destination" | "tire-circumference")),
+            "experimental normal writes support region and wheel circumference only"
+        );
+        Ok(false)
+    } else {
+        Ok(requested_master
+            || names
+                .iter()
+                .any(|name| settings::requires_ble_master_routing(name)))
+    }
+}

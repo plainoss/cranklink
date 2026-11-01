@@ -1673,11 +1673,10 @@ fn validate_combination(s: &SettingSpec, p: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-/// Whether a setting requires BLE master routing (PC owner distinct from the cycle computer).
-/// This is distinct from `oem` regulation authentication: `destination` and `tire-circumference`
-/// require both drive-unit authentication and master routing, `lamp` and `lighting-time` require
-/// master routing without drive-unit authentication, and other `oem` settings require drive-unit
-/// authentication without master routing.
+/// Whether automatic BLE routing conservatively selects master routing for a setting.
+/// This setting-name policy is independent of firmware-specific drive-unit authentication.
+/// It is not a per-model determination that normal routing cannot write the setting.
+/// Explicit routing retains the ordinary identity, session and authentication checks.
 pub fn requires_ble_master_routing(setting_name: &str) -> bool {
     matches!(
         setting_name.to_ascii_lowercase().as_str(),

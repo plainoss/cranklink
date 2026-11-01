@@ -219,6 +219,8 @@ export interface InstrumentState {
   transport: TransportType | null;
   simulatorOptions: SimulatorOptions;
   bluetoothBike: BluetoothBike;
+  /** Explicit opt-in for experimental E8000 region/wheel writes on a normal BLE session. */
+  experimentalNormalWrites: boolean;
   bluetoothSystem: "steps" | "di2" | null;
   bluetoothSystemSource: "detected" | "manual" | null;
   bluetoothMasterSeries: number | null;
