@@ -2,7 +2,7 @@
 //! All writes preserve shared fields, journal the original before sending, and read back.
 use crate::device::UnitCommands;
 use crate::storage::OpenOptions;
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, io::Write, path::Path};
@@ -140,6 +140,12 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
                 "tire-circumference" | "mounting-angle" | "lamp"
             ) || (matches!(model, SettingsModel::E6002 | SettingsModel::E8000)
                 && s.name == "destination")
+                || (model == SettingsModel::E6100 && s.name == "assist-pattern")
+                || (matches!(model, SettingsModel::E8000 | SettingsModel::E7000)
+                    && matches!(
+                        s.name.as_str(),
+                        "assist-pattern" | "boost-level" | "trail-level"
+                    ))
         });
         for spec in &mut specs {
             if spec.name == "lamp" {
@@ -171,6 +177,23 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
                 // Only the EU and US selections are admitted for this family.
                 spec.choices = vec![0, 1];
             }
+            if model == SettingsModel::E6100 && spec.name == "assist-pattern" {
+                spec.min = 0;
+                spec.max = 1;
+                spec.choices = vec![0, 1];
+            }
+            if matches!(model, SettingsModel::E8000 | SettingsModel::E7000) {
+                if spec.name == "assist-pattern" {
+                    spec.min = 2;
+                    spec.max = 4;
+                    spec.choices = vec![2, 3, 4];
+                }
+                if model == SettingsModel::E7000
+                    && matches!(spec.name.as_str(), "boost-level" | "trail-level")
+                {
+                    spec.template[3] = 60;
+                }
+            }
         }
         return specs;
     }
@@ -196,6 +219,7 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
         return specs;
     }
     if !model.modern() {
+        specs.retain(|s| !matches!(s.name.as_str(), "boost-level" | "trail-level"));
         return specs;
     }
     specs.retain(|s| {
@@ -432,6 +456,19 @@ impl SettingSpec {
         if self.signed && b[self.width - 1] & 128 != 0 {
             n -= 1i64 << (8 * self.width);
         }
+        if self.group == 0x16 && self.set == 0x98 {
+            let mode = self.query[0];
+            let level = match (mode, n) {
+                (3, 150 | 143) => 0,
+                (3, 200 | 191) => 1,
+                (3, 300 | 238) => 2,
+                (2, 70 | 76) => 0,
+                (2, 90 | 91) => 1,
+                (2, 110 | 105) => 2,
+                _ => bail!("unknown assist ratio {n} for mode {mode}"),
+            };
+            return Ok(json!(level));
+        }
         if self.scale == 1.0 {
             Ok(json!(n))
         } else {
@@ -564,6 +601,32 @@ pub fn schema() -> Vec<SettingSpec> {
             0,
             1,
         ),
+        SettingSpec::new(
+            "boost-level",
+            "level",
+            (0, 2, 1),
+            0x16,
+            0x98,
+            &[3],
+            &[3, 0, 0, 70, 0xf4, 0x01],
+            1,
+            2,
+        )
+        .choices(&[0, 1, 2])
+        .selectors(1),
+        SettingSpec::new(
+            "trail-level",
+            "level",
+            (0, 2, 1),
+            0x16,
+            0x98,
+            &[2],
+            &[2, 0, 0, 70, 0xf4, 0x01],
+            1,
+            2,
+        )
+        .choices(&[0, 1, 2])
+        .selectors(1),
         SettingSpec::new(
             "speed-limit",
             "km/h",
@@ -1608,6 +1671,7 @@ fn meaningful_len(s: &SettingSpec) -> usize {
         | (0x0b, 0)
         | (0x0b, 0xd8)
         | (0x48, 0x40) => 1,
+        (0x16, 0x98) => 6,
         (0x16, 0xf8) => 5,
         (0x17, 0x10) => 3,
         (0x0b, 0x88) => 2,
@@ -1628,6 +1692,31 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
     let mut payload = s.template.clone();
     payload[..meaningful].copy_from_slice(&original[..meaningful]);
     payload[..s.selector_len].copy_from_slice(&s.query[..s.selector_len]);
+    if s.group == 0x16 && s.set == 0x98 {
+        let mode = s.query[0];
+        let is_e7000 =
+            original.get(3).copied() == Some(60) || s.template.get(3).copied() == Some(60);
+        let (ratio, torque) = match (mode, n, is_e7000) {
+            (3, 0, false) => (150u16, 70u8),
+            (3, 1, false) => (200u16, 70u8),
+            (3, 2, false) => (300u16, 70u8),
+            (3, 0, true) => (143u16, 60u8),
+            (3, 1, true) => (191u16, 60u8),
+            (3, 2, true) => (238u16, 60u8),
+            (2, 0, false) => (70u16, 70u8),
+            (2, 1, false) => (90u16, 70u8),
+            (2, 2, false) => (110u16, 70u8),
+            (2, 0, true) => (76u16, 60u8),
+            (2, 1, true) => (91u16, 60u8),
+            (2, 2, true) => (105u16, 60u8),
+            _ => bail!("invalid assist level {n} for mode {mode}"),
+        };
+        payload[0] = mode;
+        payload[1..3].copy_from_slice(&ratio.to_le_bytes());
+        payload[3] = torque;
+        payload[4..6].copy_from_slice(&500u16.to_le_bytes());
+        return Ok(payload);
+    }
     if s.name.starts_with("speed-limit") {
         payload[2] = s.query[0];
         payload[3] = 255;
@@ -2198,12 +2287,7 @@ mod tests {
     }
     #[test]
     fn older_schemas_expose_only_common_fields_with_their_own_ranges_and_layouts() {
-        for model in [
-            SettingsModel::E8000Pre41,
-            SettingsModel::E7000,
-            SettingsModel::E6100,
-            SettingsModel::E6000,
-        ] {
+        for model in [SettingsModel::E8000Pre41, SettingsModel::E6000] {
             let specs = schema_for_model(model);
             assert_eq!(specs.len(), 3);
             let tire = spec_for_model("tire-circumference", model).unwrap();
@@ -2227,8 +2311,43 @@ mod tests {
                 assert!(angle.raw_value("61").is_err());
             }
             assert!(spec_for_model("destination", model).is_err());
+            assert!(spec_for_model("assist-pattern", model).is_err());
+            assert!(spec_for_model("boost-level", model).is_err());
+            assert!(spec_for_model("trail-level", model).is_err());
             assert!(spec_for_model("profile1.boost.torque", model).is_err());
         }
+        let e6100 = schema_for_model(SettingsModel::E6100);
+        assert_eq!(e6100.len(), 4);
+        let pattern_e6100 = spec_for_model("assist-pattern", SettingsModel::E6100).unwrap();
+        assert_eq!(pattern_e6100.choices, [0, 1]);
+        assert_eq!(pattern_e6100.min, 0);
+        assert_eq!(pattern_e6100.max, 1);
+        assert!(spec_for_model("boost-level", SettingsModel::E6100).is_err());
+
+        let e7000 = schema_for_model(SettingsModel::E7000);
+        assert_eq!(e7000.len(), 6);
+        let pattern_e7000 = spec_for_model("assist-pattern", SettingsModel::E7000).unwrap();
+        assert_eq!(pattern_e7000.choices, [2, 3, 4]);
+        assert_eq!(pattern_e7000.min, 2);
+        assert_eq!(pattern_e7000.max, 4);
+        let boost_e7000 = spec_for_model("boost-level", SettingsModel::E7000).unwrap();
+        assert_eq!(boost_e7000.choices, [0, 1, 2]);
+        assert_eq!(boost_e7000.template[3], 60);
+        let trail_e7000 = spec_for_model("trail-level", SettingsModel::E7000).unwrap();
+        assert_eq!(trail_e7000.choices, [0, 1, 2]);
+        assert_eq!(trail_e7000.template[3], 60);
+
+        let e8000 = schema_for_model(SettingsModel::E8000);
+        assert_eq!(e8000.len(), 7);
+        let pattern_e8000 = spec_for_model("assist-pattern", SettingsModel::E8000).unwrap();
+        assert_eq!(pattern_e8000.choices, [2, 3, 4]);
+        let boost_e8000 = spec_for_model("boost-level", SettingsModel::E8000).unwrap();
+        assert_eq!(boost_e8000.choices, [0, 1, 2]);
+        assert_eq!(boost_e8000.template[3], 70);
+        let trail_e8000 = spec_for_model("trail-level", SettingsModel::E8000).unwrap();
+        assert_eq!(trail_e8000.choices, [0, 1, 2]);
+        assert_eq!(trail_e8000.template[3], 70);
+
         let e5100 = schema_for_model(SettingsModel::E5100);
         assert!(e5100.iter().any(|s| s.name == "tire-circumference"));
         assert!(e5100.iter().any(|s| s.name == "speed-limit"));
@@ -2241,6 +2360,110 @@ mod tests {
                 .template
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn legacy_assist_tuning_encodes_and_decodes_model_specific_output_payloads() {
+        let e8000_boost = spec_for_model("boost-level", SettingsModel::E8000).unwrap();
+        let e8000_trail = spec_for_model("trail-level", SettingsModel::E8000).unwrap();
+        let e7000_boost = spec_for_model("boost-level", SettingsModel::E7000).unwrap();
+        let e7000_trail = spec_for_model("trail-level", SettingsModel::E7000).unwrap();
+
+        // E8000 Boost: Low=150, Med=200, High=300; Torque=70; Power=500
+        assert_eq!(
+            e8000_boost
+                .decode(&[3, 0x96, 0x00, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(0)
+        );
+        assert_eq!(
+            e8000_boost
+                .decode(&[3, 0xc8, 0x00, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            e8000_boost
+                .decode(&[3, 0x2c, 0x01, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(2)
+        );
+        assert_eq!(
+            updated_payload(&e8000_boost, &[3, 0x96, 0x00, 70, 0xf4, 0x01], 2, false).unwrap(),
+            vec![3, 0x2c, 0x01, 70, 0xf4, 0x01]
+        );
+
+        // E8000 Trail: Low=70, Med=90, High=110; Torque=70; Power=500
+        assert_eq!(
+            e8000_trail
+                .decode(&[2, 0x46, 0x00, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(0)
+        );
+        assert_eq!(
+            e8000_trail
+                .decode(&[2, 0x5a, 0x00, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            e8000_trail
+                .decode(&[2, 0x6e, 0x00, 70, 0xf4, 0x01])
+                .unwrap(),
+            json!(2)
+        );
+        assert_eq!(
+            updated_payload(&e8000_trail, &[2, 0x46, 0x00, 70, 0xf4, 0x01], 1, false).unwrap(),
+            vec![2, 0x5a, 0x00, 70, 0xf4, 0x01]
+        );
+
+        // E7000 Boost: Low=143, Med=191, High=238; Torque=60; Power=500
+        assert_eq!(
+            e7000_boost
+                .decode(&[3, 0x8f, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(0)
+        );
+        assert_eq!(
+            e7000_boost
+                .decode(&[3, 0xbf, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            e7000_boost
+                .decode(&[3, 0xee, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(2)
+        );
+        assert_eq!(
+            updated_payload(&e7000_boost, &[3, 0x8f, 0x00, 60, 0xf4, 0x01], 1, false).unwrap(),
+            vec![3, 0xbf, 0x00, 60, 0xf4, 0x01]
+        );
+
+        // E7000 Trail: Low=76, Med=91, High=105; Torque=60; Power=500
+        assert_eq!(
+            e7000_trail
+                .decode(&[2, 0x4c, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(0)
+        );
+        assert_eq!(
+            e7000_trail
+                .decode(&[2, 0x5b, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            e7000_trail
+                .decode(&[2, 0x69, 0x00, 60, 0xf4, 0x01])
+                .unwrap(),
+            json!(2)
+        );
+        assert_eq!(
+            updated_payload(&e7000_trail, &[2, 0x4c, 0x00, 60, 0xf4, 0x01], 2, false).unwrap(),
+            vec![2, 0x69, 0x00, 60, 0xf4, 0x01]
         );
     }
 
@@ -2287,7 +2510,7 @@ mod tests {
         assert!(spec.oem);
         assert!(spec_for_model("destination", SettingsModel::E8000Pre41).is_err());
         assert!(spec_for_model("speed-limit", model).is_err());
-        assert_eq!(schema_for_model(model).len(), 4);
+        assert_eq!(schema_for_model(model).len(), 7);
         let prefix = format!(
             "cranklink-e8000-region-{}-{}",
             std::process::id(),
@@ -2369,9 +2592,11 @@ mod tests {
             .raw_value("14")
             .is_err());
         assert_eq!(
-            schema().len(),
-            schema_for_model(SettingsModel::Ep800Crg).len()
+            schema_for_model(SettingsModel::Ep800Crg).len(),
+            schema().len() - 2
         );
+        assert!(spec_for_model("boost-level", SettingsModel::Ep800Crg).is_err());
+        assert!(spec_for_model("trail-level", SettingsModel::Ep800Crg).is_err());
     }
     #[test]
     fn modern_torque_uses_vendor_levels_and_mode_ranges_in_nm() {

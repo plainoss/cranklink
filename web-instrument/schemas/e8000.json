@@ -52,5 +52,53 @@
     "oem": true,
     "nullable": false,
     "wire_units_per_input": 1.0
+  },
+  {
+    "name": "assist-pattern",
+    "unit": "profile",
+    "value_type": "number",
+    "min_raw": 2,
+    "max_raw": 4,
+    "step_raw": 1,
+    "choices": [
+      2,
+      3,
+      4
+    ],
+    "oem": false,
+    "nullable": false,
+    "wire_units_per_input": 1.0
+  },
+  {
+    "name": "boost-level",
+    "unit": "level",
+    "value_type": "number",
+    "min_raw": 0,
+    "max_raw": 2,
+    "step_raw": 1,
+    "choices": [
+      0,
+      1,
+      2
+    ],
+    "oem": false,
+    "nullable": false,
+    "wire_units_per_input": 1.0
+  },
+  {
+    "name": "trail-level",
+    "unit": "level",
+    "value_type": "number",
+    "min_raw": 0,
+    "max_raw": 2,
+    "step_raw": 1,
+    "choices": [
+      0,
+      1,
+      2
+    ],
+    "oem": false,
+    "nullable": false,
+    "wire_units_per_input": 1.0
   }
 ]

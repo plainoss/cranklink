@@ -147,4 +147,29 @@ describe("E8000 region-based assist speed", () => {
     assert.ok(commands.every((line) => !line.includes("--ble-master=master")));
   });
 
+  it("exposes legacy assist tuning controls for DU-E8000 and DU-E6100", () => {
+    const e8000Schema = enrichSchema(rawSchema("e8000"), "e8000");
+    const pattern8000 = e8000Schema.find((s) => s.name === "assist-pattern")!;
+    assert.ok(pattern8000);
+    assert.equal(pattern8000.label, "Assist Mode Preset");
+    assert.deepEqual(pattern8000.choiceLabels, { 2: "Dynamic", 3: "Explorer", 4: "Custom" });
+
+    const boost = e8000Schema.find((s) => s.name === "boost-level")!;
+    assert.ok(boost);
+    assert.equal(boost.label, "Boost Assist Level");
+    assert.deepEqual(boost.choiceLabels, { 0: "Low", 1: "Medium", 2: "High" });
+
+    const trail = e8000Schema.find((s) => s.name === "trail-level")!;
+    assert.ok(trail);
+    assert.equal(trail.label, "Trail Assist Level");
+    assert.deepEqual(trail.choiceLabels, { 0: "Low", 1: "Medium", 2: "High" });
+
+    const e6100Raw = JSON.parse(fs.readFileSync(new URL("./schemas/e6100.json", import.meta.url), "utf8"));
+    const e6100Schema = enrichSchema(e6100Raw, "e6100");
+    const pattern6100 = e6100Schema.find((s) => s.name === "assist-pattern")!;
+    assert.ok(pattern6100);
+    assert.equal(pattern6100.label, "Assist Pattern");
+    assert.deepEqual(pattern6100.choiceLabels, { 0: "Comfort", 1: "Sportive" });
+    assert.equal(e6100Schema.some((s) => s.name === "boost-level"), false);
+  });
 });

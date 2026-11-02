@@ -742,6 +742,17 @@ class SessionControllerTest {
         assertEquals("On", formatSettingValue("lamp", "1"))
         assertEquals("Disabled", formatSettingValue("walk-assist", "0"))
         assertEquals("Sport", formatSettingValue("assist-pattern", "6"))
+        assertEquals("Comfort", formatSettingValue("assist-pattern", "0", "e6100"))
+        assertEquals("Sportive", formatSettingValue("assist-pattern", "1", "e6100"))
+        assertEquals("Dynamic", formatSettingValue("assist-pattern", "2", "e8000"))
+        assertEquals("Explorer", formatSettingValue("assist-pattern", "3", "e7000"))
+        assertEquals("Custom", formatSettingValue("assist-pattern", "4", "e8000"))
+        assertEquals("Low", formatSettingValue("boost-level", "0", "e8000"))
+        assertEquals("Medium", formatSettingValue("boost-level", "1", "e8000"))
+        assertEquals("High", formatSettingValue("boost-level", "2", "e8000"))
+        assertEquals("Low", formatSettingValue("trail-level", "0", "e7000"))
+        assertEquals("Medium", formatSettingValue("trail-level", "1", "e7000"))
+        assertEquals("High", formatSettingValue("trail-level", "2", "e7000"))
         assertEquals("Eco / Trail / Boost", formatSettingValue("profile1.display-oem", "1"))
         assertEquals("Level 3", formatSettingValue("profile1.eco.character", "3"))
         assertEquals("45°", formatSettingValue("mounting-angle", "45"))
@@ -752,7 +763,8 @@ class SessionControllerTest {
         val known = mutableListOf("lamp", "light-output", "lighting-time", "walk-assist", "tire-circumference",
             "mounting-angle", "destination", "assist-pattern", "speed-limit", "display-speed-adjustment",
             "maintenance-alert", "maintenance-distance", "maintenance-year", "maintenance-month",
-            "maintenance-day", "maintenance-date", "torque-minimum", "torque-maximum")
+            "maintenance-day", "maintenance-date", "torque-minimum", "torque-maximum",
+            "boost-level", "trail-level")
         for (profile in 1..2) {
             known += "profile$profile.name"
             for (factory in listOf("", "-oem")) {
@@ -774,6 +786,44 @@ class SessionControllerTest {
         assertTrue(settingPresentation("profile1.eco.character").description.contains("pedaling effort"))
         assertTrue(settingPresentation("profile1.eco.start-oem").description.contains("startup response"))
         assertTrue(settingPresentation("profile1.eco.start-oem").description.startsWith("Factory default"))
+    }
+
+    @Test
+    fun legacyAssistTuningSchemaAndPresentationFitModelRules() {
+        assertEquals("Assist pattern", settingPresentation("assist-pattern", "e6100").label)
+        assertTrue(settingPresentation("assist-pattern", "e6100").description.contains("Comfort"))
+        assertEquals("Assist mode preset", settingPresentation("assist-pattern", "e8000").label)
+        assertEquals("Assist mode preset", settingPresentation("assist-pattern", "e7000").label)
+        assertTrue(settingPresentation("assist-pattern", "e8000").description.contains("Boost and Trail"))
+        assertEquals("Boost assist level", settingPresentation("boost-level").label)
+        assertEquals("Trail assist level", settingPresentation("trail-level").label)
+
+        val e6100Pattern = schema("assist-pattern", 0, 1, choices = listOf(0, 1))
+        val e6100Settings = TuningRules.parseSchema(JsonArray(listOf(e6100Pattern)), "e6100")
+        assertEquals(1, e6100Settings.size)
+        assertEquals("profiles", e6100Settings.single().section)
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(JsonArray(listOf(schema("boost-level", 0, 2, choices = listOf(0, 1, 2)))), "e6100")
+        }
+
+        val e8000Specs = JsonArray(listOf(
+            schema("assist-pattern", 2, 4, choices = listOf(2, 3, 4)),
+            schema("boost-level", 0, 2, choices = listOf(0, 1, 2)),
+            schema("trail-level", 0, 2, choices = listOf(0, 1, 2)),
+        ))
+        val e8000Settings = TuningRules.parseSchema(e8000Specs, "e8000")
+        assertEquals(3, e8000Settings.size)
+        assertTrue(e8000Settings.all { it.section == "profiles" })
+
+        val e7000Settings = TuningRules.parseSchema(e8000Specs, "e7000")
+        assertEquals(3, e7000Settings.size)
+
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(e8000Specs, "e8000-pre41")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(e8000Specs, "ep800-crg")
+        }
     }
 
     @Test
