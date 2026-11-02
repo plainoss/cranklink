@@ -37,5 +37,20 @@
     "oem": true,
     "nullable": false,
     "wire_units_per_input": 1.0
+  },
+  {
+    "name": "assist-pattern",
+    "unit": "profile",
+    "value_type": "number",
+    "min_raw": 0,
+    "max_raw": 1,
+    "step_raw": 1,
+    "choices": [
+      0,
+      1
+    ],
+    "oem": false,
+    "nullable": false,
+    "wire_units_per_input": 1.0
   }
 ]

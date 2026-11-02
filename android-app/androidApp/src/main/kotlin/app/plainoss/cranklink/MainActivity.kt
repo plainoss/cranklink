@@ -511,7 +511,7 @@ private fun TuneScreen(tuneSection: TuneSection, state: AppState, enabled: Boole
     }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text(tuneSection.subtitle, fontSize = 14.sp, color = Muted) }
-        if (section == "profiles") {
+        if (section == "profiles" && state.settings.any { it.name.startsWith("profile") }) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     (1..2).forEach { number ->

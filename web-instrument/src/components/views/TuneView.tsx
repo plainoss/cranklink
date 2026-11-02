@@ -28,7 +28,7 @@ import { AllSettingsList, allSettingNames } from "../settings/AllSettingsList.ts
 const CURATED = new Set([
   "destination", "speed-limit", "tire-circumference", "lamp", "mounting-angle",
   "display-speed-adjustment", "lighting-time", "walk-assist",
-  "assist-pattern", "profile1.display", "profile2.display",
+  "assist-pattern", "boost-level", "trail-level", "profile1.display", "profile2.display",
   ...["profile1", "profile2"].flatMap((p) =>
     ["boost", "trail", "eco"].flatMap((mode) => ["torque", "character", "start"].map((field) => `${p}.${mode}.${field}`))),
   "shifting-system", "rear-max-gear", "front-teeth", "rear-teeth", "auto-gear-cadence", "start-mode",
@@ -281,53 +281,103 @@ function ProfilesSection({ state }: { state: InstrumentState }) {
   };
   const torqueLevels = (mode: "eco" | "trail" | "boost") =>
     modernTorqueLevels(state.identity?.modelSlug, mode, bound("torque-minimum", 20), bound("torque-maximum", 85));
+  const hasProfiles = state.schema.some((s) => s.name.startsWith("profile1."));
+  const isLegacyE8000Family = ["e8000", "e7000"].includes(state.identity?.modelSlug ?? "");
+  const isE6100 = state.identity?.modelSlug === "e6100";
+
   return (
     <SettingsSection
-      title="Assist Profiles"
-      description="Peak torque, assist character, and start response for each mode."
+      title={isE6100 || isLegacyE8000Family ? "Assist Tuning" : "Assist Profiles"}
+      description={
+        isE6100
+          ? "Riding characteristic and assist delivery pattern."
+          : isLegacyE8000Family
+            ? "Riding characteristic presets and Boost / Trail assist output levels."
+            : "Peak torque, assist character, and start response for each mode."
+      }
       icon={<Sliders size={18} className="text-muted" aria-hidden="true" />}
       data-testid="section-profiles"
     >
-      <Tabs defaultSelectedKey="profile1" className="pt-4">
-        <Tabs.ListContainer className="px-4 sm:px-5">
-          <Tabs.List aria-label="Assist profile">
-            {(["profile1", "profile2"] as const).map((profile, index) => (
-              <Tabs.Tab key={profile} id={profile}>
-                Profile {index + 1}
-                <Tabs.Indicator />
-              </Tabs.Tab>
-            ))}
-          </Tabs.List>
-        </Tabs.ListContainer>
-        {(["profile1", "profile2"] as const).map((p) => (
-          <Tabs.Panel key={p} id={p} className="p-0">
-            {MODES.map((mode) => (
-              <div key={mode.id} className="flex flex-col divide-y divide-separator [&:not(:has([data-setting-row]))]:hidden">
-                <h3 className="flex items-center gap-2 px-4 pt-4 sm:px-5 text-sm font-bold">
-                  <span className={`w-2.5 h-2.5 rounded-full ${mode.dot}`} aria-hidden="true" />
-                  {mode.title} mode
-                </h3>
-                <SettingRow name={`${p}.${mode.id}.torque`} title={`${mode.title} peak torque`} showValue>
-                  {torqueLevels(mode.id) ? (
-                    <SettingSegmented name={`${p}.${mode.id}.torque`} values={torqueLevels(mode.id)} data-testid={`levels-${mode.id}-torque`} />
-                  ) : (
-                    <SettingSlider name={`${p}.${mode.id}.torque`} data-testid={`slider-${mode.id}-torque`} />
-                  )}
-                </SettingRow>
-                <SettingRow name={`${p}.${mode.id}.character`} title={`${mode.title} assist character`} showValue>
-                  <SettingSlider name={`${p}.${mode.id}.character`} />
-                </SettingRow>
-                <SettingRow name={`${p}.${mode.id}.start`} title={`${mode.title} start response`} showValue>
-                  <SettingSlider name={`${p}.${mode.id}.start`} />
-                </SettingRow>
-              </div>
-            ))}
-            <SettingRow name={`${p}.display`} title="Mode names on the display" inlineControl={<SettingSegmented name={`${p}.display`} />} />
-          </Tabs.Panel>
-        ))}
-      </Tabs>
-      <SettingRow name="assist-pattern" inlineControl={<SettingSegmented name="assist-pattern" />} />
+      {hasProfiles && (
+        <Tabs defaultSelectedKey="profile1" className="pt-4">
+          <Tabs.ListContainer className="px-4 sm:px-5">
+            <Tabs.List aria-label="Assist profile">
+              {(["profile1", "profile2"] as const).map((profile, index) => (
+                <Tabs.Tab key={profile} id={profile}>
+                  Profile {index + 1}
+                  <Tabs.Indicator />
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs.ListContainer>
+          {(["profile1", "profile2"] as const).map((p) => (
+            <Tabs.Panel key={p} id={p} className="p-0">
+              {MODES.map((mode) => (
+                <div key={mode.id} className="flex flex-col divide-y divide-separator [&:not(:has([data-setting-row]))]:hidden">
+                  <h3 className="flex items-center gap-2 px-4 pt-4 sm:px-5 text-sm font-bold">
+                    <span className={`w-2.5 h-2.5 rounded-full ${mode.dot}`} aria-hidden="true" />
+                    {mode.title} mode
+                  </h3>
+                  <SettingRow name={`${p}.${mode.id}.torque`} title={`${mode.title} peak torque`} showValue>
+                    {torqueLevels(mode.id) ? (
+                      <SettingSegmented name={`${p}.${mode.id}.torque`} values={torqueLevels(mode.id)} data-testid={`levels-${mode.id}-torque`} />
+                    ) : (
+                      <SettingSlider name={`${p}.${mode.id}.torque`} data-testid={`slider-${mode.id}-torque`} />
+                    )}
+                  </SettingRow>
+                  <SettingRow name={`${p}.${mode.id}.character`} title={`${mode.title} assist character`} showValue>
+                    <SettingSlider name={`${p}.${mode.id}.character`} />
+                  </SettingRow>
+                  <SettingRow name={`${p}.${mode.id}.start`} title={`${mode.title} start response`} showValue>
+                    <SettingSlider name={`${p}.${mode.id}.start`} />
+                  </SettingRow>
+                </div>
+              ))}
+              <SettingRow name={`${p}.display`} title="Mode names on the display" inlineControl={<SettingSegmented name={`${p}.display`} />} />
+            </Tabs.Panel>
+          ))}
+        </Tabs>
+      )}
+      {isLegacyE8000Family ? (
+        <LegacyE8000AssistControls />
+      ) : (
+        <SettingRow name="assist-pattern" inlineControl={<SettingSegmented name="assist-pattern" />} />
+      )}
     </SettingsSection>
+  );
+}
+
+function LegacyE8000AssistControls() {
+  return (
+    <div className="flex flex-col divide-y divide-separator">
+      <SettingRow
+        name="assist-pattern"
+        inlineControl={
+          <SettingSegmented
+            name="assist-pattern"
+            data-testid="segmented-assist-pattern"
+          />
+        }
+      />
+      <SettingRow
+        name="boost-level"
+        inlineControl={
+          <SettingSegmented
+            name="boost-level"
+            data-testid="segmented-boost-level"
+          />
+        }
+      />
+      <SettingRow
+        name="trail-level"
+        inlineControl={
+          <SettingSegmented
+            name="trail-level"
+            data-testid="segmented-trail-level"
+          />
+        }
+      />
+    </div>
   );
 }
 

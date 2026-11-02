@@ -16,6 +16,10 @@ fun settingPresentation(name: String, model: String? = null): SettingPresentatio
         "Region-based assist-speed selection: Europe uses a nominal 25 km/h limit and the United States 32 km/h. Choose the region that applies where the bike is ridden.")
     if (name == "destination" && model == "e6002") return SettingPresentation("Market region",
         "Motor market selection. Choose the region that applies where the bike is ridden.")
+    if (name == "assist-pattern" && model == "e6100") return SettingPresentation("Assist pattern",
+        "Selects between smooth, gradual assist ramp-up (Comfort) or responsive, higher initial torque delivery (Sportive).")
+    if (name == "assist-pattern" && (model == "e8000" || model == "e7000")) return SettingPresentation("Assist mode preset",
+        "Selects a riding characteristic preset or custom assist tuning for Boost and Trail modes.")
     standardPresentations[name]?.let { return it }
     val profile = Regex("profile([12])\\.(eco|trail|boost)\\.(torque|character|start)(-oem)?").matchEntire(name)
     if (profile != null) {
@@ -105,7 +109,12 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
             "lamp" -> mapOf(0 to "Off", 1 to "On", 2 to "Auto")[choice]
             "maintenance-alert" -> mapOf(0 to "Off", 1 to "On")[choice]
             "walk-assist" -> mapOf(0 to "Disabled", 2 to "Enabled")[choice]
-            "assist-pattern" -> mapOf(5 to "Standard", 6 to "Sport")[choice]
+            "assist-pattern" -> when (model) {
+                "e6100" -> mapOf(0 to "Comfort", 1 to "Sportive")[choice]
+                "e8000", "e7000" -> mapOf(2 to "Dynamic", 3 to "Explorer", 4 to "Custom")[choice]
+                else -> mapOf(5 to "Standard", 6 to "Sport")[choice]
+            }
+            "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
             "destination" -> marketLabel(model, choice)
             else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
                 mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
@@ -166,6 +175,10 @@ private val standardPresentations = mapOf(
         "Selects the market region and its permitted assist-speed range. Choose the region where the bike is ridden."),
     "assist-pattern" to SettingPresentation("Assist pattern",
         "Selects the motor response pattern shared by both assist profiles."),
+    "boost-level" to SettingPresentation("Boost assist level",
+        "Assistance output level for Boost mode."),
+    "trail-level" to SettingPresentation("Trail assist level",
+        "Assistance output level for Trail mode."),
     "speed-limit" to SettingPresentation("Assist speed limit",
         "Speed at which motor assistance cuts out. Higher values allow assistance to a higher speed within the selected region's limits.", "km/h"),
     "display-speed-adjustment" to SettingPresentation("Speedometer calibration",

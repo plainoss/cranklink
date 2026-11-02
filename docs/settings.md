@@ -96,6 +96,27 @@ cranklink --port usb settings restore e8000-region-before.json --backup e8000-re
 
 Automatic CLI routing selects master for region, wheel and lamp writes. On bikes with SC-E8000 displays, the web and Android apps automatically select normal Bluetooth routing, allowing region and wheel circumference saves/restores with verified readback and backups. Settings requiring bus master routing (such as lamp output) or bikes requiring master separation (such as DU-EP800 on SC-E7000/EW-EN100 displays) provide clear guidance to connect using a USB PCE cable. See [Bluetooth routing](bluetooth.md#connection-mode).
 
+## Legacy assist tuning (E8000, E7000, E6100)
+
+Older e-MTB and trekking drive units use dedicated assist opcodes rather than dual profile structures:
+
+- **DU-E8000** (from D4.1.0) and **DU-E7000**:
+  - `assist-pattern`: Preset mode (`2` Dynamic, `3` Explorer, `4` Custom). The apps label this **Assist mode preset**. Dynamic stages Boost High and Trail Low; Explorer stages Boost Medium and Trail Medium; manual Boost/Trail level changes select Custom.
+  - `boost-level`: Boost assist level (`0` Low, `1` Medium, `2` High).
+  - `trail-level`: Trail assist level (`0` Low, `1` Medium, `2` High).
+  - On DU-E8000, Boost levels correspond to assist ratios of 150%, 200%, and 300% at 70 Nm torque limit and 500 W power ceiling; Trail levels correspond to 70%, 90%, and 110%.
+  - On DU-E7000, Boost levels correspond to assist ratios of 143%, 191%, and 238% at 60 Nm torque limit; Trail levels correspond to 76%, 91%, and 105%.
+- **DU-E6100**:
+  - `assist-pattern`: Motor response pattern (`0` Comfort, `1` Sportive). Comfort delivers smooth, gradual assist ramp-up; Sportive delivers responsive, higher initial torque.
+
+Offline schemas use `--model e8000`, `--model e7000`, or `--model e6100`. Earlier E8000 firmware (`--model e8000-pre41`) does not support assist mode tuning.
+
+```sh
+cranklink --port usb settings read assist-pattern
+cranklink --port usb -s <SERIAL> settings set boost-level 2 --backup boost-before.json
+cranklink --port usb settings restore boost-before.json --backup boost-current.json
+```
+
 ## E6000-family drive units
 
 E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose the [market region](#market-regions) (`destination`) from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.

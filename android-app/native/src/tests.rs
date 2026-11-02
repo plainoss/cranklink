@@ -217,19 +217,30 @@ fn every_motor_family_excludes_di2_and_drivetrain_fields() {
             SettingsModel::E6000
                 | SettingsModel::E6001
                 | SettingsModel::E6002Pre33
-                | SettingsModel::E6100
-                | SettingsModel::E7000
                 | SettingsModel::E8000Pre41
         ) {
             assert_eq!(schema.len(), 3);
+        }
+        if model == SettingsModel::E6100 {
+            assert_eq!(schema.len(), 4);
+            assert_eq!(spec(&schema, "assist-pattern").unwrap().choices, [0, 1]);
+        }
+        if model == SettingsModel::E7000 {
+            assert_eq!(schema.len(), 6);
+            assert_eq!(spec(&schema, "assist-pattern").unwrap().choices, [2, 3, 4]);
+            assert_eq!(spec(&schema, "boost-level").unwrap().choices, [0, 1, 2]);
+            assert_eq!(spec(&schema, "trail-level").unwrap().choices, [0, 1, 2]);
         }
         if model == SettingsModel::E6002 {
             assert_eq!(schema.len(), 4);
             assert_eq!(spec(&schema, "destination").unwrap().choices, [0, 1, 4]);
         }
         if model == SettingsModel::E8000 {
-            assert_eq!(schema.len(), 4);
+            assert_eq!(schema.len(), 7);
             assert_eq!(spec(&schema, "destination").unwrap().choices, [0, 1]);
+            assert_eq!(spec(&schema, "assist-pattern").unwrap().choices, [2, 3, 4]);
+            assert_eq!(spec(&schema, "boost-level").unwrap().choices, [0, 1, 2]);
+            assert_eq!(spec(&schema, "trail-level").unwrap().choices, [0, 1, 2]);
             assert!(spec(&schema, "speed-limit").is_err());
         }
         if modern(model) {

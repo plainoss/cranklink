@@ -24,6 +24,7 @@ internal object TuningRules {
         "mounting-angle", "destination", "assist-pattern", "speed-limit", "display-speed-adjustment",
         "maintenance-alert", "maintenance-distance", "maintenance-year", "maintenance-month",
         "maintenance-day", "maintenance-date", "torque-minimum", "torque-maximum",
+        "boost-level", "trail-level",
     )
     private val profile = Regex("profile[12]\\.(?:name|display(?:-oem)?|(?:eco|trail|boost)\\.(?:torque|character|start)(?:-oem)?)")
     private val power = Regex("max-power\\.(?:eco|trail|boost)")
@@ -93,13 +94,16 @@ internal object TuningRules {
     }
 
     private fun allowedForModel(name: String, model: String): Boolean = when (model) {
-        "e6000", "e6001", "e6002-pre33", "e8000-pre41", "e6100", "e7000" -> name in setOf("lamp", "tire-circumference", "mounting-angle")
-        "e6002", "e8000" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "destination")
+        "e6000", "e6001", "e6002-pre33", "e8000-pre41" -> name in setOf("lamp", "tire-circumference", "mounting-angle")
+        "e6002" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "destination")
+        "e6100" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "assist-pattern")
+        "e7000" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "assist-pattern", "boost-level", "trail-level")
+        "e8000" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "destination", "assist-pattern", "boost-level", "trail-level")
         "e5100" -> name in setOf("lamp", "lighting-time", "walk-assist", "tire-circumference", "mounting-angle",
             "destination", "speed-limit", "display-speed-adjustment") || name.startsWith("maintenance-")
-        "ep600", "ep801", "ep500" -> name !in setOf("light-output", "torque-minimum", "torque-maximum") &&
+        "ep600", "ep801", "ep500" -> name !in setOf("light-output", "torque-minimum", "torque-maximum", "boost-level", "trail-level") &&
             !name.startsWith("max-power.")
-        "ep800-crg" -> true
+        "ep800-crg" -> name !in setOf("boost-level", "trail-level")
         else -> false
     }
 
@@ -214,7 +218,7 @@ internal object TuningRules {
     private fun section(name: String): String = when {
         name.startsWith("maintenance-") -> "maintenance"
         name.endsWith("-oem") || name.startsWith("torque-") || name.startsWith("max-power.") -> "oem"
-        name.startsWith("profile") || name == "assist-pattern" -> "profiles"
+        name.startsWith("profile") || name == "assist-pattern" || name == "boost-level" || name == "trail-level" -> "profiles"
         else -> "geometry"
     }
 

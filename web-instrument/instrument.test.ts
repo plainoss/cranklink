@@ -707,12 +707,12 @@ describe("BLE initial settings connection", () => {
     (globalThis as any).window = globalThis;
     for (const [series, slug, model, count] of [
       [0x38, "e5100", "DU-E5100", 14],
-      [0x12, "e8000", "DU-E8080", 4],
-      [0x21, "e7000", "DU-E7000", 3],
-      [0x20, "e6100", "DU-E6110", 3],
-      [0x20, "e6100", "DU-E6180", 3],
-      [0x20, "e6100", "DU-E6100-CRG", 3],
-      [0x20, "e6100", "DU-E6180-TRK", 3],
+      [0x12, "e8000", "DU-E8080", 7],
+      [0x21, "e7000", "DU-E7000", 6],
+      [0x20, "e6100", "DU-E6110", 4],
+      [0x20, "e6100", "DU-E6180", 4],
+      [0x20, "e6100", "DU-E6100-CRG", 4],
+      [0x20, "e6100", "DU-E6180-TRK", 4],
       [0x08, "e6000", "E6000 family", 3],
     ] as const) {
       const controller = new SessionController();
@@ -730,7 +730,7 @@ describe("BLE initial settings connection", () => {
       assert.ok(commands.includes(`settings schema --model '${slug}'`));
       const schema = controller.getState().schema;
       assert.equal(schema.length, count);
-      assert.equal(schema.some((setting) => setting.section === "profiles"), false);
+      assert.equal(schema.some((setting) => setting.name.startsWith("profile1.")), false);
       assert.equal(schema.some((setting) => setting.name === "speed-limit"), slug === "e5100");
       if (slug === "e5100") {
         assert.equal(schema.find((setting) => setting.name === "speed-limit")?.userMax, 32);

@@ -158,7 +158,7 @@ export class DeviceSimulator extends EventTarget {
       lightingTimeMinutes: 30,  // 0x16 0xa4 read / 0x16 0xa0 write
       walkAssistMode: 2,        // 0x16 0x6c read / 0x16 0x68 write (2 = Enabled)
       mountingAngle: 12,        // 0x16 0x5c read / 0x16 0x58 write
-      assistPattern: 5,         // 0x16 0x84 read / 0x16 0x80 write
+      assistPattern: preset === "e6100" ? 0 : ["e8000", "e7000"].includes(preset) ? 2 : 5,
       displaySpeedAdjustment: 0,// 0x16 0xd4 read / 0x16 0xd0 write
       torqueMinimum: 20,
       torqueMaximum: 85,
@@ -612,10 +612,21 @@ export class DeviceSimulator extends EventTarget {
         this.registers.destinationRegion =
           params.length > 1 ? params[1] : params[0];
       } else if (group === 0x16 && command === 0x9c) {
-        const tc = this.registers.tireCircumferenceMm;
-        response.push(tc & 0xff, (tc >> 8) & 0xff, 0, 0);
+        const mode = params[0] !== undefined ? params[0] : 3;
+        const out = this.registers.assistOutput?.[mode] ?? (
+          this.model === "e7000"
+            ? (mode === 3 ? { ratio: 238, torque: 60 } : mode === 2 ? { ratio: 76, torque: 60 } : { ratio: 57, torque: 30 })
+            : (mode === 3 ? { ratio: 300, torque: 70 } : mode === 2 ? { ratio: 70, torque: 70 } : { ratio: 60, torque: 30 })
+        );
+        response.push(mode, out.ratio & 0xff, (out.ratio >> 8) & 0xff, out.torque, 0xf4, 0x01);
       } else if (group === 0x16 && command === 0x98) {
-        this.registers.tireCircumferenceMm = params[0] | (params[1] << 8);
+        const mode = params[0];
+        if (!this.registers.assistOutput) this.registers.assistOutput = {};
+        this.registers.assistOutput[mode] = {
+          ratio: params[1] | (params[2] << 8),
+          torque: params[3],
+          powerLimit: params[4] | (params[5] << 8),
+        };
       } else if (group === 0x35 && command === 0x04) {
         const tc = this.registers.tireCircumferenceMm;
         response.push(tc & 0xff, (tc >> 8) & 0xff, 0, 0);

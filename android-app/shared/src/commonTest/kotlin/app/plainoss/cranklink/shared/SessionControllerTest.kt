@@ -742,6 +742,17 @@ class SessionControllerTest {
         assertEquals("On", formatSettingValue("lamp", "1"))
         assertEquals("Disabled", formatSettingValue("walk-assist", "0"))
         assertEquals("Sport", formatSettingValue("assist-pattern", "6"))
+        assertEquals("Comfort", formatSettingValue("assist-pattern", "0", "e6100"))
+        assertEquals("Sportive", formatSettingValue("assist-pattern", "1", "e6100"))
+        assertEquals("Dynamic", formatSettingValue("assist-pattern", "2", "e8000"))
+        assertEquals("Explorer", formatSettingValue("assist-pattern", "3", "e7000"))
+        assertEquals("Custom", formatSettingValue("assist-pattern", "4", "e8000"))
+        assertEquals("Low", formatSettingValue("boost-level", "0", "e8000"))
+        assertEquals("Medium", formatSettingValue("boost-level", "1", "e8000"))
+        assertEquals("High", formatSettingValue("boost-level", "2", "e8000"))
+        assertEquals("Low", formatSettingValue("trail-level", "0", "e7000"))
+        assertEquals("Medium", formatSettingValue("trail-level", "1", "e7000"))
+        assertEquals("High", formatSettingValue("trail-level", "2", "e7000"))
         assertEquals("Eco / Trail / Boost", formatSettingValue("profile1.display-oem", "1"))
         assertEquals("Level 3", formatSettingValue("profile1.eco.character", "3"))
         assertEquals("45°", formatSettingValue("mounting-angle", "45"))
@@ -752,7 +763,8 @@ class SessionControllerTest {
         val known = mutableListOf("lamp", "light-output", "lighting-time", "walk-assist", "tire-circumference",
             "mounting-angle", "destination", "assist-pattern", "speed-limit", "display-speed-adjustment",
             "maintenance-alert", "maintenance-distance", "maintenance-year", "maintenance-month",
-            "maintenance-day", "maintenance-date", "torque-minimum", "torque-maximum")
+            "maintenance-day", "maintenance-date", "torque-minimum", "torque-maximum",
+            "boost-level", "trail-level")
         for (profile in 1..2) {
             known += "profile$profile.name"
             for (factory in listOf("", "-oem")) {
@@ -774,6 +786,87 @@ class SessionControllerTest {
         assertTrue(settingPresentation("profile1.eco.character").description.contains("pedaling effort"))
         assertTrue(settingPresentation("profile1.eco.start-oem").description.contains("startup response"))
         assertTrue(settingPresentation("profile1.eco.start-oem").description.startsWith("Factory default"))
+    }
+
+    @Test
+    fun legacyAssistTuningSchemaAndPresentationFitModelRules() {
+        assertEquals("Assist pattern", settingPresentation("assist-pattern", "e6100").label)
+        assertTrue(settingPresentation("assist-pattern", "e6100").description.contains("Comfort"))
+        assertEquals("Assist mode preset", settingPresentation("assist-pattern", "e8000").label)
+        assertEquals("Assist mode preset", settingPresentation("assist-pattern", "e7000").label)
+        assertTrue(settingPresentation("assist-pattern", "e8000").description.contains("Boost and Trail"))
+        assertEquals("Boost assist level", settingPresentation("boost-level").label)
+        assertEquals("Trail assist level", settingPresentation("trail-level").label)
+
+        val e6100Pattern = schema("assist-pattern", 0, 1, choices = listOf(0, 1))
+        val e6100Settings = TuningRules.parseSchema(JsonArray(listOf(e6100Pattern)), "e6100")
+        assertEquals(1, e6100Settings.size)
+        assertEquals("profiles", e6100Settings.single().section)
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(JsonArray(listOf(schema("boost-level", 0, 2, choices = listOf(0, 1, 2)))), "e6100")
+        }
+
+        val e8000Specs = JsonArray(listOf(
+            schema("assist-pattern", 2, 4, choices = listOf(2, 3, 4)),
+            schema("boost-level", 0, 2, choices = listOf(0, 1, 2)),
+            schema("trail-level", 0, 2, choices = listOf(0, 1, 2)),
+        ))
+        val e8000Settings = TuningRules.parseSchema(e8000Specs, "e8000")
+        assertEquals(3, e8000Settings.size)
+        assertTrue(e8000Settings.all { it.section == "profiles" })
+
+        val e7000Settings = TuningRules.parseSchema(e8000Specs, "e7000")
+        assertEquals(3, e7000Settings.size)
+
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(e8000Specs, "e8000-pre41")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            TuningRules.parseSchema(e8000Specs, "ep800-crg")
+        }
+    }
+
+    @Test
+    fun legacyAssistPresetsAndLevelsCoordinateInSessionController() = runTest {
+        val specs = listOf(
+            schema("lamp", 0, 1, choices = listOf(0, 1)),
+            schema("tire-circumference", 2000, 2400),
+            schema("mounting-angle", 0, 45),
+            schema("assist-pattern", 2, 4, choices = listOf(2, 3, 4)),
+            schema("boost-level", 0, 2, choices = listOf(0, 1, 2)),
+            schema("trail-level", 0, 2, choices = listOf(0, 1, 2)),
+        )
+        val values = mapOf(
+            "lamp" to "0", "tire-circumference" to "2280", "mounting-angle" to "0",
+            "assist-pattern" to "2", "boost-level" to "2", "trail-level" to "0",
+        )
+        val snapshot = fixture()
+            .withIdentity("model_series", JsonPrimitive(0x12))
+            .withIdentity("model_name", JsonPrimitive("DU-E8000"))
+            .withIdentity("settings_model", JsonPrimitive("e8000"))
+            .withIdentity("dcas_version", JsonPrimitive("4.8.0.0"))
+            .withSnapshotValues(values.mapValues { buildJsonObject { put("value", it.value) } })
+            .let { JsonObject(it + ("schema" to JsonArray(specs))) }
+        val controller = SessionController(FakeBackend(snapshot))
+        controller.connect()
+
+        // Staging Explorer (3) stages assist-pattern=3, boost-level=1, trail-level=1
+        controller.stage("assist-pattern", "3")
+        assertEquals("3", controller.state.value.staged["assist-pattern"])
+        assertEquals("1", controller.state.value.staged["boost-level"])
+        assertEquals("1", controller.state.value.staged["trail-level"])
+
+        // Changing Boost to 0 auto-stages Custom (4)
+        controller.stage("boost-level", "0")
+        assertEquals("0", controller.state.value.staged["boost-level"])
+        assertEquals("1", controller.state.value.staged["trail-level"])
+        assertEquals("4", controller.state.value.staged["assist-pattern"])
+
+        // Staging Dynamic (2) re-sets Boost=2 and Trail=0; pattern=2 matches initial so it un-stages
+        controller.stage("assist-pattern", "2")
+        assertFalse(controller.state.value.staged.containsKey("assist-pattern"))
+        assertFalse(controller.state.value.staged.containsKey("boost-level"))
+        assertFalse(controller.state.value.staged.containsKey("trail-level"))
     }
 
     @Test

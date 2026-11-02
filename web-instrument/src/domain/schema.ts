@@ -201,6 +201,20 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     displayUnit: "",
     choiceLabels: { 5: "Standard", 6: "Sport" },
   },
+  "boost-level": {
+    label: "Boost Assist Level",
+    description: "Assistance output level for Boost mode.",
+    section: "profiles",
+    displayUnit: "",
+    choiceLabels: { 0: "Low", 1: "Medium", 2: "High" },
+  },
+  "trail-level": {
+    label: "Trail Assist Level",
+    description: "Assistance output level for Trail mode.",
+    section: "profiles",
+    displayUnit: "",
+    choiceLabels: { 0: "Low", 1: "Medium", 2: "High" },
+  },
   "torque-minimum": {
     label: "Minimum Profile Torque",
     description: "Factory lower bound for the peak torque you can select in an assist profile. Torque is the motor's turning force, measured in newton-metres.",
@@ -477,6 +491,17 @@ function enrichSetting(
         const name = destinationName(modelSlug, choice) ?? `Region ${choice}`;
         return range ? [[choice, `${name} · ${range.min}–${range.max} km/h`]] : [];
       }));
+    }
+  }
+
+  if (spec.name === "assist-pattern") {
+    if (modelSlug === "e6100") {
+      description = "Selects between smooth, gradual assist ramp-up (Comfort) or responsive, higher initial torque delivery (Sportive).";
+      choiceLabels = { 0: "Comfort", 1: "Sportive" };
+    } else if (modelSlug === "e8000" || modelSlug === "e7000") {
+      label = "Assist Mode Preset";
+      description = "Selects a riding characteristic preset or custom assist tuning for Boost and Trail modes.";
+      choiceLabels = { 2: "Dynamic", 3: "Explorer", 4: "Custom" };
     }
   }
 
