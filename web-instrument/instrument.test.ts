@@ -120,6 +120,26 @@ describe("Domain Schema Enrichment & Ordering", () => {
       formatValue({ name: "battery-protection-events", displayUnit: "events" } as any, 3),
       "3 events",
     );
+    assert.equal(
+      formatValue(
+        {
+          name: "switch-mode",
+          choiceLabels: { 0: "Shifting", 2: "Assist" },
+        } as any,
+        2,
+      ),
+      "Assist",
+    );
+    assert.equal(
+      formatValue(
+        {
+          name: "switch-c-function",
+          choiceLabels: { 10: "D-Fly channel 1" },
+        } as any,
+        10,
+      ),
+      "D-Fly channel 1",
+    );
   });
 
   it("offers modern torque levels only for OEM bounds with a vendor table", async () => {

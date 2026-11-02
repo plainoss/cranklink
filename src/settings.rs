@@ -463,6 +463,17 @@ impl SettingSpec {
         if self.nullable && b.iter().all(|&x| x == 255) {
             return Ok(Value::Null);
         }
+        if self.name == "switch-mode" {
+            let b0 = b.first().copied().unwrap_or(0);
+            let upper = (b0 & 0xf0) >> 4;
+            let lower = b0 & 0x0f;
+            let mode = if upper == 6 || upper == 7 || lower == 6 || lower == 7 {
+                2
+            } else {
+                0
+            };
+            return Ok(json!(mode));
+        }
         let mut n = 0i64;
         for (i, x) in b.iter().enumerate() {
             n |= (*x as i64) << (8 * i);
@@ -1762,6 +1773,13 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
         payload[4..6].copy_from_slice(&500u16.to_le_bytes());
         return Ok(payload);
     }
+    if s.name == "switch-mode" {
+        payload[0] = match n {
+            2 => 0x67,
+            _ => 0x23,
+        };
+        return Ok(payload);
+    }
     if s.name.starts_with("speed-limit") {
         payload[2] = s.query[0];
         payload[3] = 255;
@@ -1947,6 +1965,17 @@ pub fn restore_parsed_for_model(
             model,
         );
     }
+    if setting.name == "switch-mode" {
+        return restore_switch_mode(
+            session,
+            slot,
+            &setting,
+            &parsed.raw_backup,
+            new_backup_path,
+            Some(&serial),
+            model,
+        );
+    }
     if setting.name == "bluetooth-passkey" {
         return set_passkey(
             session,
@@ -2063,6 +2092,80 @@ fn restore_date(
         ensure!(
             got.get(..3) == Some(&original[..3]),
             "date restore readback mismatch"
+        );
+    }
+    Ok(ChangeReceipt {
+        setting: s.name.clone(),
+        before,
+        after,
+        backup: path.display().to_string(),
+        changed,
+    })
+}
+
+fn restore_switch_mode(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    s: &SettingSpec,
+    backup: &Value,
+    path: &Path,
+    expected_serial: Option<&str>,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
+    let original = hex::decode(
+        backup["original_parameters"]
+            .as_str()
+            .context("switch-mode backup lacks original parameters")?,
+    )?;
+    ensure!(original.len() >= 2, "short original switch parameters");
+    let current = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+    validate_model_reply(s, &current).context("invalid switch readback")?;
+    let before = s.decode(&current)?;
+    let after = s.decode(&original)?;
+    let mut payload = vec![0u8; 4];
+    payload[0] = original[0];
+    payload[1] = current[1];
+    let serial = checked_serial(session, slot, expected_serial, model)?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .context("create new restore backup")?;
+    serde_json::to_writer_pretty(
+        &mut file,
+        &json!({
+            "format": "cranklink-setting-backup-v1",
+            "serial": serial,
+            "slot": slot,
+            "settings_model": model.slug(),
+            "setting": s.name,
+            "before": before,
+            "original_parameters": hex::encode(&current),
+            "planned_parameters": hex::encode(&payload),
+            "group": s.group,
+            "command": s.set,
+            "query": s.query
+        }),
+    )?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    crate::storage::sync_parent(path).context("persist settings backup directory")?;
+    let changed = current[0] != payload[0];
+    if changed {
+        session
+            .command(slot, s.group, s.set, &payload, s.set + 2)
+            .context("switch mode restore failed; backup retained")?;
+        let got = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+        validate_model_reply(s, &got).context("invalid switch restore readback")?;
+        ensure!(
+            got[0] == payload[0],
+            "switch mode restore readback mismatch; original preserved in {}",
+            path.display()
+        );
+        ensure!(
+            got[1] == current[1],
+            "switch auxiliary settings changed unexpectedly; original preserved in {}",
+            path.display()
         );
     }
     Ok(ChangeReceipt {

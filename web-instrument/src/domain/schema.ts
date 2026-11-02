@@ -107,9 +107,30 @@ interface SettingAnnotation {
 }
 
 const ANNOTATIONS: Record<string, SettingAnnotation> = {
+  "switch-mode": {
+    label: "Switch operation mode",
+    description: "Switch control function: shifting or motor assist mode.",
+    section: "drivetrain",
+    displayUnit: "",
+    choiceLabels: { 0: "Shifting", 2: "Assist" },
+  },
   ...Object.fromEntries(["a", "b", "c", "s"].map((channel) => [`switch-${channel}-function`, {
     label: `Switch ${channel.toUpperCase()} function`, description: "Button assignment for this control.", section: "drivetrain",
-    displayUnit: "", choiceLabels: { 0: "Front shift up", 1: "Front shift down", 2: "Rear shift up", 3: "Rear shift down" },
+    displayUnit: "", choiceLabels: {
+      0: "Front shift up",
+      1: "Front shift down",
+      2: "Rear shift up",
+      3: "Rear shift down",
+      4: "Display screen / left",
+      5: "Display mode / right",
+      6: "Assist mode up",
+      7: "Assist mode down",
+      10: "D-Fly channel 1",
+      11: "D-Fly channel 2",
+      12: "D-Fly channel 3",
+      13: "D-Fly channel 4",
+      15: "Disabled",
+    },
   }])),
   "multi-shift-speed": {
     label: "Multi-shift speed", description: "How quickly repeated shifts are made while a button is held.", section: "drivetrain", displayUnit: "",

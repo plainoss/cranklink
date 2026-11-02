@@ -45,7 +45,9 @@ strict DCAS serial-padding checks.
 
 | Components | Fields |
 | --- | --- |
-| Classic wired ST/SW Di2 controls, including 6770, 6870, 9070, R785, R8050/R8070, R9150/R9170 and RX815 variants | `switch-a-function`, `switch-b-function`; extended C/S wire channels are read-only |
+| Classic wired ST/SW Di2 controls (6770, 6870, 9070, R785) | `switch-a-function`, `switch-b-function`; auxiliary C/S channels are read-only |
+| Modern dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
+| STEPS handlebar switches (SW-E7000, SW-E8000, SW-EM800, SW-EN600, SW-E6000, SW-E6010) | `switch-mode` (0 shifting, 2 assist mode swap); `switch-a-function`, `switch-b-function`; auxiliary `switch-s-function` or `switch-c-function` where fitted |
 | Classic rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150 and RX805/RX815/RX817 | `multi-shift-speed`; current and maximum derailleur adjustment are read-only |
 | Classic front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150 and RX815 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
 | SM-BMR1, SM-BMR2, BM-DN100, BT-DN110, BT-DN300 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
@@ -60,7 +62,9 @@ Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear
 
 | Setting | Values |
 | --- | --- |
-| `switch-a-function`, `switch-b-function` | 0 front up, 1 front down, 2 rear up, 3 rear down (SW-S705: 2 or 3 only) |
+| `switch-mode` | 0 shifting, 2 assist mode swap |
+| `switch-a-function`, `switch-b-function` | 0 front up, 1 front down, 2 rear up, 3 rear down (SW-S705: 2 or 3 only; modern levers: 10..13 D-Fly; STEPS: 6 assist up, 7 assist down) |
+| `switch-c-function`, `switch-s-function` | 0..3 shifting, 4 display screen/left, 5 display mode/right, 6/7 assist, 10..13 D-Fly, 15 disabled |
 | `multi-shift-speed` (rear) | 0 off, 1 very slow, 2 slow, 3 normal, 4 fast, 5 very fast, 6 super fast |
 | `synchro-shift-interval` (front) | 0 normal, 1 slow, 2 very slow |
 | `display-language` | 0 English, 1 French, 2 German, 3 Dutch, 4 Italian, 5 Spanish |

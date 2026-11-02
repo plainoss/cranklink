@@ -22,10 +22,19 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         | "ST-9071-R" | "SW-9071-L" | "SW-9071-R" | "ST-6871-L" | "ST-6871-R" | "SW-S705" => {
             switch_schema(false)
         }
-        "ST-9070-L" | "ST-9070-R" | "ST-6870-L" | "ST-6870-R" | "ST-R785-L" | "ST-R785-R"
-        | "ST-R9150-L" | "ST-R9150-R" | "ST-R9170-L" | "ST-R9170-R" | "ST-R8050-L"
-        | "ST-R8050-R" | "ST-R8070-L" | "ST-R8070-R" | "ST-RX815-L" | "ST-RX815-R"
-        | "ST-R9171-L" | "ST-R9171-R" | "ST-R8071-L" | "ST-R8071-R" => switch_schema(true),
+        "ST-9070-L" | "ST-9070-R" | "ST-6870-L" | "ST-6870-R" | "ST-R785-L" | "ST-R785-R" => {
+            switch_schema(true)
+        }
+        "ST-R9150-L" | "ST-R9150-R" | "ST-R9170-L" | "ST-R9170-R" | "ST-R8050-L" | "ST-R8050-R"
+        | "ST-R8070-L" | "ST-R8070-R" | "ST-RX815-L" | "ST-RX815-R" | "ST-R9171-L"
+        | "ST-R9171-R" | "ST-R8071-L" | "ST-R8071-R" => extended_switch_schema(),
+        "SW-E7000-L" | "SW-E8000-L" => steps_switch_schema(true, None),
+        "SW-E7000-R" => steps_switch_schema(false, None),
+        "SW-EM800-L" | "SW-EN600-L" | "SW-E6010-L" => {
+            steps_switch_schema(true, Some("switch-s-function"))
+        }
+        "SW-EN600-R" | "SW-E6010-R" => steps_switch_schema(false, Some("switch-s-function")),
+        "SW-E6000" => steps_switch_schema(true, Some("switch-c-function")),
         _ => Vec::new(),
     };
     // S705's ordinary Di2/single-system S4 assignment pattern contains rear
@@ -135,6 +144,133 @@ fn switch_schema(four_byte_layout: bool) -> Vec<SettingSpec> {
         }
         specs.push(spec);
     }
+    specs
+}
+
+fn extended_switch_schema() -> Vec<SettingSpec> {
+    let query = vec![0; 4];
+    let template = query.clone();
+    let mut specs = Vec::new();
+    for (name, offset, mask, choices, desc) in [
+        (
+            "switch-a-function",
+            0,
+            0xf0,
+            &[0, 1, 2, 3, 10, 11, 12, 13][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+        ),
+        (
+            "switch-b-function",
+            0,
+            0x0f,
+            &[0, 1, 2, 3, 10, 11, 12, 13][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+        ),
+        (
+            "switch-c-function",
+            1,
+            0xf0,
+            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+        ),
+        (
+            "switch-s-function",
+            1,
+            0x0f,
+            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+        ),
+    ] {
+        let mut spec = SettingSpec::new(
+            name,
+            desc,
+            (0, 15, 1),
+            0x04,
+            0x10,
+            &query,
+            &template,
+            offset,
+            1,
+        )
+        .choices(choices);
+        spec.bit_mask = Some(mask);
+        spec.preserve = Some(2);
+        specs.push(spec);
+    }
+    specs
+}
+
+fn steps_switch_schema(
+    has_switch_mode: bool,
+    third_button: Option<&'static str>,
+) -> Vec<SettingSpec> {
+    let query = vec![0; 4];
+    let template = query.clone();
+    let mut specs = Vec::new();
+
+    if has_switch_mode {
+        let mut mode = SettingSpec::new(
+            "switch-mode",
+            "0 shifting, 2 assist",
+            (0, 2, 2),
+            0x04,
+            0x10,
+            &query,
+            &template,
+            0,
+            1,
+        )
+        .choices(&[0, 2]);
+        mode.preserve = Some(2);
+        specs.push(mode);
+    }
+
+    let primary_choices: &[i64] = &[0, 1, 2, 3, 6, 7, 10, 11, 12, 13, 15];
+    for (name, offset, mask) in [
+        ("switch-a-function", 0, 0xf0),
+        ("switch-b-function", 0, 0x0f),
+    ] {
+        let mut spec = SettingSpec::new(
+            name,
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 6 assist up, 7 assist down, 10..13 D-Fly, 15 disabled",
+            (0, 15, 1),
+            0x04,
+            0x10,
+            &query,
+            &template,
+            offset,
+            1,
+        )
+        .choices(primary_choices);
+        spec.bit_mask = Some(mask);
+        spec.preserve = Some(2);
+        specs.push(spec);
+    }
+
+    if let Some(third) = third_button {
+        let (offset, mask) = if third == "switch-c-function" {
+            (1, 0xf0)
+        } else {
+            (1, 0x0f)
+        };
+        let third_choices: &[i64] = &[0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 15];
+        let mut spec = SettingSpec::new(
+            third,
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 6 assist up, 7 assist down, 10..13 D-Fly, 15 disabled",
+            (0, 15, 1),
+            0x04,
+            0x10,
+            &query,
+            &template,
+            offset,
+            1,
+        )
+        .choices(third_choices);
+        spec.bit_mask = Some(mask);
+        spec.preserve = Some(2);
+        specs.push(spec);
+    }
+
     specs
 }
 
@@ -269,5 +405,59 @@ mod tests {
                 assert!(!spec.oem);
             }
         }
+    }
+
+    #[test]
+    fn extended_switch_supports_dfly_and_custom_assignments() {
+        let specs = schema("ST-R9150-L");
+        assert_eq!(specs.len(), 4);
+        let a = &specs[0];
+        let c = &specs[2];
+        assert_eq!(a.choices, vec![0, 1, 2, 3, 10, 11, 12, 13]);
+        assert_eq!(c.choices, vec![0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15]);
+        assert!(!c.read_only);
+
+        let original = [0x23, 0x0f, 0, 0];
+        assert_eq!(c.decode(&original).unwrap(), json!(0));
+        assert_eq!(
+            super::super::updated_payload(c, &original, 10, false).unwrap(),
+            [0x23, 0xaf, 0, 0]
+        );
+        assert!(super::super::validate_input(c, "10").is_ok());
+        assert!(super::super::validate_input(c, "15").is_ok());
+        assert!(super::super::validate_input(c, "6").is_err());
+    }
+
+    #[test]
+    fn steps_switch_variable_mode_and_button_swap() {
+        let e7000 = schema("SW-E7000-L");
+        assert_eq!(e7000.len(), 3);
+        let mode = &e7000[0];
+        let a = &e7000[1];
+        let b = &e7000[2];
+        assert_eq!(mode.name, "switch-mode");
+        assert_eq!(mode.choices, vec![0, 2]);
+
+        let assist_payload = [0x67, 0x00, 0x00, 0x00];
+        assert_eq!(mode.decode(&assist_payload).unwrap(), json!(2));
+        assert_eq!(a.decode(&assist_payload).unwrap(), json!(6));
+        assert_eq!(b.decode(&assist_payload).unwrap(), json!(7));
+
+        let shifting_payload =
+            super::super::updated_payload(mode, &assist_payload, 0, false).unwrap();
+        assert_eq!(shifting_payload, [0x23, 0x00, 0x00, 0x00]);
+        assert_eq!(mode.decode(&shifting_payload).unwrap(), json!(0));
+
+        let em800 = schema("SW-EM800-L");
+        assert_eq!(em800.len(), 4);
+        let s = &em800[3];
+        assert_eq!(s.name, "switch-s-function");
+        assert_eq!(s.bit_mask, Some(0x0f));
+        let third_payload = [0x67, 0x04, 0x00, 0x00];
+        assert_eq!(s.decode(&third_payload).unwrap(), json!(4));
+        assert_eq!(
+            super::super::updated_payload(s, &third_payload, 15, false).unwrap(),
+            [0x67, 0x0f, 0x00, 0x00]
+        );
     }
 }
