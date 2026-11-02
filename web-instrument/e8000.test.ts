@@ -172,4 +172,37 @@ describe("E8000 region-based assist speed", () => {
     assert.deepEqual(pattern6100.choiceLabels, { 0: "Comfort", 1: "Sportive" });
     assert.equal(e6100Schema.some((s) => s.name === "boost-level"), false);
   });
+
+  it("coordinates legacy assist presets and boost/trail levels in session controller", () => {
+    const h = connected("usb");
+    const state = h.controller.getState();
+    (h.controller as any).update({
+      liveValues: {
+        ...state.liveValues,
+        "assist-pattern": { value: 2, raw: "02" },
+        "boost-level": { value: 2, raw: "02" },
+        "trail-level": { value: 0, raw: "00" },
+      },
+    });
+
+    // Staging Explorer (3) stages pattern=3, boost=1 (Med), trail=1 (Med)
+    h.controller.stageParameter("assist-pattern", 3);
+    assert.deepEqual(h.controller.getState().stagedValues, {
+      "assist-pattern": 3,
+      "boost-level": 1,
+      "trail-level": 1,
+    });
+
+    // Changing Boost level to 0 auto-stages Custom (4) alongside Boost=0
+    h.controller.stageParameter("boost-level", 0);
+    assert.equal(h.controller.getState().stagedValues["boost-level"], 0);
+    assert.equal(h.controller.getState().stagedValues["trail-level"], 1);
+    assert.equal(h.controller.getState().stagedValues["assist-pattern"], 4);
+
+    // Staging Dynamic (2) re-sets Boost=2 and Trail=0; pattern=2 matches live so pattern un-stages
+    h.controller.stageParameter("assist-pattern", 2);
+    assert.equal(h.controller.getState().stagedValues["boost-level"], undefined);
+    assert.equal(h.controller.getState().stagedValues["trail-level"], undefined);
+    assert.equal(h.controller.getState().stagedValues["assist-pattern"], undefined);
+  });
 });

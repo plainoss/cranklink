@@ -905,6 +905,22 @@ export class SessionController {
       if (range && Number.isFinite(speed) && this.state.schema.some((setting) => setting.name === "speed-limit")) {
         stage("speed-limit", Math.min(range.max, Math.max(range.min, speed)));
       }
+    } else if (model === "e8000" || model === "e7000") {
+      if (name === "assist-pattern") {
+        const p = Number(value);
+        if (p === 2) {
+          if (this.state.schema.some((s) => s.name === "boost-level")) stage("boost-level", 2);
+          if (this.state.schema.some((s) => s.name === "trail-level")) stage("trail-level", 0);
+        } else if (p === 3) {
+          if (this.state.schema.some((s) => s.name === "boost-level")) stage("boost-level", 1);
+          if (this.state.schema.some((s) => s.name === "trail-level")) stage("trail-level", 1);
+        }
+      } else if (name === "boost-level" || name === "trail-level") {
+        const currentPattern = Number(nextStaged["assist-pattern"] ?? this.state.liveValues["assist-pattern"]?.value);
+        if (currentPattern !== 4 && this.state.schema.some((s) => s.name === "assist-pattern")) {
+          stage("assist-pattern", 4);
+        }
+      }
     }
     stage(name, value);
     this.update({ stagedValues: nextStaged, failure: this.state.failure?.kind === "stage" ? null : this.state.failure });

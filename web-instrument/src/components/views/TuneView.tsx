@@ -348,35 +348,6 @@ function ProfilesSection({ state }: { state: InstrumentState }) {
 }
 
 function LegacyE8000AssistControls() {
-  const pattern = useSetting("assist-pattern");
-  const boost = useSetting("boost-level");
-  const trail = useSetting("trail-level");
-
-  const selectPreset = (p: number) => {
-    pattern.stage(p);
-    if (p === 2) {
-      boost.stage(2);
-      trail.stage(0);
-    } else if (p === 3) {
-      boost.stage(1);
-      trail.stage(1);
-    }
-  };
-
-  const onBoostChange = (lvl: number) => {
-    boost.stage(lvl);
-    if (pattern.numeric !== 4) {
-      pattern.stage(4);
-    }
-  };
-
-  const onTrailChange = (lvl: number) => {
-    trail.stage(lvl);
-    if (pattern.numeric !== 4) {
-      pattern.stage(4);
-    }
-  };
-
   return (
     <div className="flex flex-col divide-y divide-separator">
       <SettingRow
@@ -384,7 +355,6 @@ function LegacyE8000AssistControls() {
         inlineControl={
           <SettingSegmented
             name="assist-pattern"
-            onValueChange={selectPreset}
             data-testid="segmented-assist-pattern"
           />
         }
@@ -394,7 +364,6 @@ function LegacyE8000AssistControls() {
         inlineControl={
           <SettingSegmented
             name="boost-level"
-            onValueChange={onBoostChange}
             data-testid="segmented-boost-level"
           />
         }
@@ -404,7 +373,6 @@ function LegacyE8000AssistControls() {
         inlineControl={
           <SettingSegmented
             name="trail-level"
-            onValueChange={onTrailChange}
             data-testid="segmented-trail-level"
           />
         }

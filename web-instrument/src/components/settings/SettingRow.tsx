@@ -277,7 +277,6 @@ interface SettingChoiceProps {
   /** Discrete values the device accepts, e.g. modern torque levels. */
   values?: number[];
   "data-testid"?: string;
-  onValueChange?: (value: number) => void;
 }
 
 /** Curated options, explicit values, or the schema's labelled choices, limited to values this unit accepts. */
@@ -289,7 +288,7 @@ function choiceOptions(setting: SettingAccess, options?: ChoiceOption[], values?
   return spec && !values ? candidates.filter((option) => settingAcceptsValue(spec, option.value)) : candidates;
 }
 
-export function SettingSegmented({ name, options, values, "data-testid": testId, onValueChange }: SettingChoiceProps) {
+export function SettingSegmented({ name, options, values, "data-testid": testId }: SettingChoiceProps) {
   const setting = useSetting(name);
   return (
     <ToggleButtonGroup
@@ -300,14 +299,7 @@ export function SettingSegmented({ name, options, values, "data-testid": testId,
       selectedKeys={Number.isFinite(setting.numeric) ? [String(setting.numeric)] : []}
       onSelectionChange={(keys) => {
         const [key] = [...keys];
-        if (key !== undefined) {
-          const val = Number(key);
-          if (onValueChange) {
-            onValueChange(val);
-          } else {
-            setting.stage(val);
-          }
-        }
+        if (key !== undefined) setting.stage(Number(key));
       }}
       isDisabled={setting.isDisabled}
       size="sm"

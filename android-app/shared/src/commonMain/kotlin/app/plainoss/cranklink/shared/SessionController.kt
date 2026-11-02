@@ -112,6 +112,22 @@ class SessionController(private val backend: AppBackend) {
                     put("speed-limit", fitted)
                     note = "Assist speed changes to $fitted km/h to fit this market region."
                 }
+            } else if (model in setOf("e8000", "e7000")) {
+                if (name == "assist-pattern") {
+                    val p = normalized.toIntOrNull()
+                    if (p == 2) {
+                        if (current.settings.any { it.name == "boost-level" }) put("boost-level", "2")
+                        if (current.settings.any { it.name == "trail-level" }) put("trail-level", "0")
+                    } else if (p == 3) {
+                        if (current.settings.any { it.name == "boost-level" }) put("boost-level", "1")
+                        if (current.settings.any { it.name == "trail-level" }) put("trail-level", "1")
+                    }
+                } else if (name == "boost-level" || name == "trail-level") {
+                    val currentPattern = (changes["assist-pattern"] ?: current.values["assist-pattern"])?.toIntOrNull()
+                    if (currentPattern != 4 && current.settings.any { it.name == "assist-pattern" }) {
+                        put("assist-pattern", "4")
+                    }
+                }
             }
             put(name, normalized)
             TuningRules.validateCombination(current.identity, current.values, changes)

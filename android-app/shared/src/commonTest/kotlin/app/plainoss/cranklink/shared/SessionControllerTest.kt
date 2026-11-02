@@ -827,6 +827,49 @@ class SessionControllerTest {
     }
 
     @Test
+    fun legacyAssistPresetsAndLevelsCoordinateInSessionController() = runTest {
+        val specs = listOf(
+            schema("lamp", 0, 1, choices = listOf(0, 1)),
+            schema("tire-circumference", 2000, 2400),
+            schema("mounting-angle", 0, 45),
+            schema("assist-pattern", 2, 4, choices = listOf(2, 3, 4)),
+            schema("boost-level", 0, 2, choices = listOf(0, 1, 2)),
+            schema("trail-level", 0, 2, choices = listOf(0, 1, 2)),
+        )
+        val values = mapOf(
+            "lamp" to "0", "tire-circumference" to "2280", "mounting-angle" to "0",
+            "assist-pattern" to "2", "boost-level" to "2", "trail-level" to "0",
+        )
+        val snapshot = fixture()
+            .withIdentity("model_series", JsonPrimitive(0x12))
+            .withIdentity("model_name", JsonPrimitive("DU-E8000"))
+            .withIdentity("settings_model", JsonPrimitive("e8000"))
+            .withIdentity("dcas_version", JsonPrimitive("4.8.0.0"))
+            .withSnapshotValues(values.mapValues { buildJsonObject { put("value", it.value) } })
+            .let { JsonObject(it + ("schema" to JsonArray(specs))) }
+        val controller = SessionController(FakeBackend(snapshot))
+        controller.connect()
+
+        // Staging Explorer (3) stages assist-pattern=3, boost-level=1, trail-level=1
+        controller.stage("assist-pattern", "3")
+        assertEquals("3", controller.state.value.staged["assist-pattern"])
+        assertEquals("1", controller.state.value.staged["boost-level"])
+        assertEquals("1", controller.state.value.staged["trail-level"])
+
+        // Changing Boost to 0 auto-stages Custom (4)
+        controller.stage("boost-level", "0")
+        assertEquals("0", controller.state.value.staged["boost-level"])
+        assertEquals("1", controller.state.value.staged["trail-level"])
+        assertEquals("4", controller.state.value.staged["assist-pattern"])
+
+        // Staging Dynamic (2) re-sets Boost=2 and Trail=0; pattern=2 matches initial so it un-stages
+        controller.stage("assist-pattern", "2")
+        assertFalse(controller.state.value.staged.containsKey("assist-pattern"))
+        assertFalse(controller.state.value.staged.containsKey("boost-level"))
+        assertFalse(controller.state.value.staged.containsKey("trail-level"))
+    }
+
+    @Test
     fun physicalEditsKeepCanonicalStateAndNativeSaveContract() = runTest {
         val backend = FakeBackend(fixture(
             extraSchema = listOf(schema("light-output", 135, 2700), schema("display-speed-adjustment", -50, 50, step = 5)),
