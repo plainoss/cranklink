@@ -35,8 +35,24 @@ class SessionControllerTest {
         controller.stage("lamp", "1")
         assertTrue(controller.state.value.staged.isEmpty())
         controller.stage("tire-circumference", "2300")
+        controller.stage("mounting-angle", "10")
+        assertEquals("2300", controller.state.value.staged["tire-circumference"])
+        assertEquals("10", controller.state.value.staged["mounting-angle"])
         controller.commit()
         assertEquals("false", backend.requests.single { it.string("op") == "commit" }.string("master"))
+
+        // e8000-pre41 also allows wheel circumference and mounting angle, but blocks lamp
+        val pre41Snapshot = e600xFixture(0x12, "e8000-pre41", "4.0.1.0")
+            .withIdentity("model_name", JsonPrimitive("DU-E8000"))
+            .withIdentity("master_routing", JsonPrimitive(false))
+        val pre41Controller = SessionController(FakeBackend(pre41Snapshot))
+        pre41Controller.connect(master = false)
+        pre41Controller.stage("tire-circumference", "2250")
+        pre41Controller.stage("mounting-angle", "15")
+        assertEquals("2250", pre41Controller.state.value.staged["tire-circumference"])
+        assertEquals("15", pre41Controller.state.value.staged["mounting-angle"])
+        pre41Controller.stage("lamp", "1")
+        assertFalse(pre41Controller.state.value.staged.containsKey("lamp"))
     }
 
     @Test
@@ -109,8 +125,8 @@ class SessionControllerTest {
 
     @Test
     fun disconnectWithoutMasterRoutingNeedsNoRestart() = runTest {
-        val controller = SessionController(FakeBackend())
-        controller.connect()
+        val controller = SessionController(FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(false))))
+        controller.connect(master = false)
         controller.disconnect()
         assertFalse(controller.state.value.restartBike)
     }
@@ -833,7 +849,8 @@ private fun fixture(
 ): JsonObject = buildJsonObject {
     put("identity", Json.parseToJsonElement("""{
       "model_name":"DU-EP800","serial":"010203040506","slot":0,"model_series":35,"model_unit":0,
-      "settings_model":"ep800-crg","dcas_version":"4.2.0.0","rx_version":"4.2.0.0"
+      "settings_model":"ep800-crg","dcas_version":"4.2.0.0","rx_version":"4.2.0.0",
+      "master_routing":true
     }"""))
     put("schema", JsonArray(listOf(
         schema("lamp", 0, 2, choices = listOf(0, 1, 2)),

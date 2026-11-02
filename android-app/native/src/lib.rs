@@ -34,9 +34,6 @@ enum Request {
     Connect {
         #[serde(default = "default_master_routing")]
         master: bool,
-        #[serde(default)]
-        #[allow(dead_code)]
-        experimental_e8000_normal: bool,
     },
     Read {
         serial: String,
@@ -548,7 +545,7 @@ fn write_route<'a>(
                 is_e8000_motor(motor) && matches!(*name, "destination" | "tire-circumference");
             if !is_e8000_safe && settings::requires_ble_master_routing(name) {
                 bail!(
-                    "{name} requires a USB connection on bikes with this display (such as SC-E7000 or EW-EN100). Please connect using a USB PCE cable to modify {name}."
+                    "{name} requires a USB connection on this bike. Please connect using a USB PCE cable to modify {name}."
                 );
             }
         }

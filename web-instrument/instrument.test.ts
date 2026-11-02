@@ -886,7 +886,7 @@ describe("Speed and destination staging", () => {
     assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 31 });
   });
 
-  it("automatically sequences downscaling when changing destination to EU", async () => {
+  it("generates a batch plan containing destination and clamped speed when downscaling to EU", async () => {
     (globalThis as any).window = globalThis;
     const controller = connected("ep800-crg", 1, 32);
     let operations: any[] = [];

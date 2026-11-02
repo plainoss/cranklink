@@ -207,9 +207,6 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (connected && !demo && state.identity?.masterRouting == false) {
-                Text("Experimental normal routing · region & wheel only · hardware unvalidated", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = Muted, fontSize = 12.sp)
-            }
             if (busy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth(), color = Pine, trackColor = Lime)
                 Row(Modifier.padding(horizontal = 24.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {

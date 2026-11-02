@@ -1211,13 +1211,13 @@ export class SessionController {
   private requireWriteRouting(kind: "save" | "restore", names: unknown[]): void {
     if (this.state.transport !== "ble" || !this.state.identity?.isMotor
         || this.bluetoothSessionFlags() !== "--ble-master=normal ") return;
+    const isE8000 = ["e8000", "e8000-pre41"].includes(this.state.identity!.modelSlug);
     const masterSetting = names.find((name) => typeof name === "string"
       && ["destination", "tire-circumference", "lamp", "lighting-time"].includes(name)
-      && !(this.state.identity!.modelSlug === "e8000"
-        && ["destination", "tire-circumference"].includes(name)));
+      && !(isE8000 && ["destination", "tire-circumference"].includes(name)));
     if (masterSetting) {
       this.refuse(kind,
-        `${settingLabel(this.state.schema, String(masterSetting))} requires a USB connection on bikes with this display (such as SC-E7000 or EW-EN100). Please connect using a USB PCE cable to modify ${settingLabel(this.state.schema, String(masterSetting))}.`);
+        `${settingLabel(this.state.schema, String(masterSetting))} requires a USB connection on this bike. Please connect using a USB PCE cable to modify ${settingLabel(this.state.schema, String(masterSetting))}.`);
     }
   }
 

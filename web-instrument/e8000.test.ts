@@ -99,16 +99,20 @@ describe("E8000 region-based assist speed", () => {
   it("refuses master-required settings on normal routing with friendly USB PCE message", () => {
     const h = connected("ble", true);
     assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination", "lamp"]),
-      /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
+      /requires a USB connection on this bike/);
     assert.throws(() => (h.controller as any).requireWriteRouting("restore", ["lighting-time"]),
-      /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
-    for (const modelSlug of ["ep800-crg", "e8000-pre41"]) {
-      (h.controller as any).update({ identity: { ...h.controller.getState().identity!, modelSlug } });
-      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination"]),
-        /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
-      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]),
-        /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
-    }
+      /requires a USB connection on this bike/);
+    (h.controller as any).update({ identity: { ...h.controller.getState().identity!, modelSlug: "ep800-crg" } });
+    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination"]),
+      /requires a USB connection on this bike/);
+    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]),
+      /requires a USB connection on this bike/);
+
+    // e8000-pre41 permits tire-circumference on normal routing, but blocks lamp
+    (h.controller as any).update({ identity: { ...h.controller.getState().identity!, modelSlug: "e8000-pre41" } });
+    assert.doesNotThrow(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]));
+    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["lamp"]),
+      /requires a USB connection on this bike/);
   });
 
   it("selects normal discovery and reads automatically when an E8000 gateway is detected", async () => {

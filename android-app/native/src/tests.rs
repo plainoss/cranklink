@@ -485,10 +485,6 @@ fn only_shifting_only_systems_are_refused_before_service_mode() {
 #[test]
 fn normal_routing_e8000_and_boundary_checks() {
     assert!(parse_request(r#"{"op":"connect","master":false}"#).is_ok());
-    assert!(
-        parse_request(r#"{"op":"connect","master":false,"experimental_e8000_normal":true}"#)
-            .is_ok()
-    );
     let mut m = motor();
     m.model = SettingsModel::E8000;
     m.model_name = "DU-E8000".into();

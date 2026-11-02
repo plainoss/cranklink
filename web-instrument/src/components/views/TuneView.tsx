@@ -57,7 +57,7 @@ export function TuneView({ state, controller, category, query }: TuneViewProps) 
             <Alert.Content>
               <Alert.Title>Available E8000 / E8080 settings</Alert.Title>
               <Alert.Description>{state.identity?.modelSlug === "e8000"
-                ? "Use Region & assist speed to select Europe (25 km/h) or United States (32 km/h). This changes the market region; an independent speed slider is not available. Bluetooth saves of region, wheel circumference, or lamp require a new master session; reads can use normal routing."
+                ? "Use Region & assist speed to select Europe (25 km/h) or United States (32 km/h). This changes the market region; an independent speed slider is not available. Region and wheel circumference can be saved wirelessly; lamp settings require a USB connection."
                 : "This firmware supports wheel circumference, mounting angle, and lamp settings. Region-based assist-speed selection requires D4.1.0 or later."}</Alert.Description>
             </Alert.Content>
           </Alert>
