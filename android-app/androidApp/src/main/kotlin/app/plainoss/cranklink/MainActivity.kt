@@ -113,7 +113,6 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     var screen by rememberSaveable { mutableStateOf(Home) }
     var showScan by remember { mutableStateOf(false) }
     var selectedBike by remember { mutableStateOf<NearbyBike?>(null) }
-    var experimentalE8000Normal by remember { mutableStateOf(false) }
     var review by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     var disconnect by remember { mutableStateOf(false) }
@@ -261,11 +260,6 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Power on the bike and activate Bluetooth connection mode on the display. Close other bike apps.")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = experimentalE8000Normal, onCheckedChange = { experimentalE8000Normal = it })
-                    Text("Experimental E8000 region & wheel writes in normal routing")
-                }
-                if (experimentalE8000Normal) Text("Unvalidated on hardware. E8000/E8080 only; region and wheel circumference writes only. No automatic fallback. Reconnect to change routing.", color = Muted, fontSize = 12.sp)
                 if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (nearby.isEmpty()) Text(if (scanning) "Looking for E-TUBE gateways…" else "No gateways found. Activate connection mode and scan again.", color = Muted)
                 nearby.forEach { bike ->
@@ -290,7 +284,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
         PasskeyDialog(bike.name, onDismiss = { selectedBike = null }) { pin ->
             selectedBike = null
             screen = Home
-            vm.connect(bike, pin, experimentalE8000Normal)
+            vm.connect(bike, pin)
         }
     }
     // Undoing the last change from the review leaves nothing to save.

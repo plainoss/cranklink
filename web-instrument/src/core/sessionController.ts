@@ -107,7 +107,6 @@ export class SessionController {
         fault: "none",
       },
       bluetoothBike: "auto",
-      experimentalNormalWrites: false,
       bluetoothSystem: null,
       bluetoothSystemSource: null,
       bluetoothMasterSeries: null,
@@ -144,13 +143,6 @@ export class SessionController {
       throw new Error("Disconnect before choosing a different bike type.");
     }
     this.update({ bluetoothBike: bike });
-  }
-
-  public setExperimentalNormalWrites(enabled: boolean): void {
-    if (!["disconnected", "error"].includes(this.state.phase)) {
-      throw new Error("Disconnect before changing experimental normal-routing writes.");
-    }
-    this.update({ experimentalNormalWrites: enabled });
   }
 
   public subscribe(listener: (state: InstrumentState) => void): () => void {

@@ -145,7 +145,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _scanning.value = false
     }
 
-    fun connect(bike: NearbyBike, pin: String, experimentalE8000Normal: Boolean = false) {
+    fun connect(bike: NearbyBike, pin: String) {
         if (!canConnect()) return
         stopScan()
         _demo.value = false
@@ -154,7 +154,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             transportLost(transport, message)
         }
         gatt = transport
-        run { controller.connect(experimentalE8000Normal) }
+        run { controller.connect() }
     }
 
     fun startDemo() {

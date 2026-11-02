@@ -94,7 +94,7 @@ cranklink --port usb -s <SERIAL> settings set destination 1 --backup e8000-regio
 cranklink --port usb settings restore e8000-region-before.json --backup e8000-region-current.json
 ```
 
-Automatic CLI routing selects master for region, wheel and lamp writes. The web and Android apps offer an explicit, off-by-default **Experimental E8000 region & wheel writes** option before connection. It tests region and wheel saves/restores through a normal BLE session, with firmware-dependent authentication and the ordinary serial, backup and readback checks. The selected route stays fixed; no failed master connection is retried on another route. The web option is under **Bluetooth options**; Android offers a checkbox in the Bluetooth scan dialog. Disconnect before changing it and read the settings again. Lamp and lighting-time writes gain no exception. Physical normal-routing region/wheel writes and persistence remain unvalidated. See [Bluetooth routing](bluetooth.md#connection-mode).
+Automatic CLI routing selects master for region, wheel and lamp writes. On bikes with SC-E8000 displays, the web and Android apps automatically select normal Bluetooth routing, allowing region and wheel circumference saves/restores with verified readback and backups. Settings requiring bus master routing (such as lamp output) or bikes requiring master separation (such as DU-EP800 on SC-E7000/EW-EN100 displays) provide clear guidance to connect using a USB PCE cable. See [Bluetooth routing](bluetooth.md#connection-mode).
 
 ## E6000-family drive units
 

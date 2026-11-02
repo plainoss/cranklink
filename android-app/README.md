@@ -101,8 +101,6 @@ With an Android emulator or test device running, execute the device smoke tests 
 
 These exercise the Compose demo staging/review/save flow without Bluetooth permission, check watt inputs and percentage display through review and saved readback, and load the packaged JNI library to check that firmware and component requests are rejected. They do not connect to a real BLE gateway or validate bike writes.
 
-### Experimental E8000 normal routing
+### E8000 and Gateway Routing Boundaries
 
-The Bluetooth scan dialog offers an **off by default** “Experimental E8000 region & wheel writes in normal routing” checkbox. Select it before connecting to test region (`destination`) and real wheel circumference (`tire-circumference`) writes on DU-E8000/DU-E8080 using the `e8000` settings profile. Hardware writes through this path remain unvalidated; this is an explicit experiment, not a firmware-version guarantee.
-
-The chosen route stays fixed for that connection. Other writes, including lamp and lighting reserve, are rejected in the experimental normal session. Disconnect before choosing a different route. The app never retries a failed master connection in normal mode automatically. Motor identity, serial, authentication, backup, verified readback and restore checks still apply; restore is limited to the same two fields. Normal routing does not establish master-mode support or prove successful settings persistence on a physical bike.
+On DU-E8000/DU-E8080 bikes with SC-E8000 displays, Cranklink automatically selects normal Bluetooth routing to avoid legacy bus master arbitration issues. Region (`destination`) and wheel circumference (`tire-circumference`) writes run directly through this route with verified readback and backups. Settings requiring bus master routing (such as lamp output or lighting reserve) or bikes requiring master separation (such as DU-EP800 on SC-E7000/EW-EN100 displays) provide clear guidance to connect using a USB PCE cable.

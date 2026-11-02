@@ -40,23 +40,30 @@ The [Android app](android-app/README.md) provides a native Kotlin interface with
 
 Requires Android 8.0 or later. Releases are published on Google Play as `app.plainoss.cranklink` (see [Android releases](docs/android-releases.md)). You can also build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. System Back confirms disconnect and waits for active writes. The Android BLE path has automated protocol and session tests and has been tested on a physical bike.
 
-## Supported motors
+## Hardware & Firmware Compatibility Matrix
 
-| Drive unit | Settings | Firmware recovery | Hardware-tested |
-| --- | --- | --- | --- |
-| EP800-CRG | Profiles, speed, wheel, lamp | Yes | Yes |
-| EP800 | Profiles, speed, wheel, lamp | Yes² | No |
-| EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Profiles, speed, wheel, lamp | Opt-in¹ | No |
-| E5100 | Common settings, speed | Opt-in¹ | No |
-| E8000, E8080 | Wheel, mounting angle, lamp; EU/US region from D4.1.0 | Opt-in¹ | No |
-| E7000, E6100, E6000, E6001 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
-| E6002, E6012 | Wheel, mounting angle, lamp; EU/US/Korea region from D3.3.0 | Opt-in¹ | No |
+| Drive Unit | Firmware | Display / Gateway | Transport | Assist Profiles (Tuning) | Region & Wheel Size | Status & Guidance |
+| :--- | :--- | :--- | :--- | :---: | :---: | :--- |
+| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | **SC-EM800** | **Wireless (BLE)** | ✅ Tested on Bike | ✅ Tested on Bike | Confirmed on physical hardware. Full wireless tuning supported. |
+| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | Any / None | **Wired (USB)** | ✅ Tested on Bike | ✅ Tested on Bike | Confirmed on physical hardware. Full wired tuning & bootloader recovery. |
+| **DU-EP800** | 4.1.10 – 4.2.0 | **SC-E7000 / EW-EN100** | **Wireless (BLE)** | ✅ Tested on Bike | 🔌 Requires USB | Assist profiles work wirelessly. Region & wheel size require a USB cable due to display hardware limits. |
+| **DU-E8000** | 4.1.0 – 4.6.0 | **SC-E8000** | **Wireless (BLE)** | — | 🧪 In Testing (Preview) | Reading confirmed on bike. Direct wireless saving is in preview testing (PR #58). |
+| **DU-E8000** | 4.1.0 – 4.6.0 | Any / None | **Wired (USB)** | — | ✅ Tested on Bike | Full wired support; no security code needed on D4.6. |
+| **DU-E8000** | ≥ 4.7.0 – 4.10.0 | **SC-E8000** | **Wireless / USB** | — | 🧪 In Testing (Preview) | Handshake protocol verified. Wireless bike testing in progress. |
+| **DU-EP600 / EP801**| 4.4.1 – 4.6.0 | **SC-EM800 / SC-EN600**| **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Modern generation motors. Protocol verified; community bike testing in progress. |
+| **DU-E6002 / E6012**| ≥ 3.3.0 | Any (E6010 / E6100) | **Wireless / USB** | — | 🧪 In Testing (Preview) | Region (EU/US/Korea) available on firmware 3.3.0 and newer. |
+| **DU-E6100 / E7000**| 4.0.0 – 4.8.0 | **SC-E6100 / SC-E7000**| **Wireless / USB** | — | 🧪 In Testing (Preview)* | Wheel size and mounting angle adjustment supported (*fixed factory region). |
+| **DU-E6000 / E6001**| All (3.2 – 3.9) | Any (SC-E6000) | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Wheel size (2000–2400 mm) and mounting angle adjustment supported (*fixed factory region). |
+
+**Status Key**:
+- **✅ Tested on Bike**: Confirmed and validated working on physical hardware.
+- **🧪 In Testing (Preview)**: Implemented and protocol-checked in software; physical bike confirmation in progress.
+- **🔌 Requires USB**: The display hardware cannot safely change this setting wirelessly; plug in using an SM-PCE02 USB adapter.
+- **—**: Setting is not applicable or not yet implemented on this motor family.
 
 All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
 
-E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. Automatic Bluetooth detection uses normal routing for reads, with the bike identified as STEPS. CLI automatic routing selects master for region, wheel and lamp writes; USB is also supported. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
-
-To test the normal-routing hypothesis, explicitly enable **Experimental E8000 region & wheel writes** in the web app's **Bluetooth options** before connecting, or select the corresponding checkbox in Android's Bluetooth scan dialog. This option is off by default and keeps normal routing for that connection. Region and wheel writes retain firmware-dependent authentication, serial checks, backups, verified readback and restore. Physical normal-routing writes and persistence remain unvalidated; the option does not establish that master mode works on the bike.
+DU-E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. On bikes with SC-E8000 displays, Cranklink automatically selects normal Bluetooth routing to avoid legacy bus master arbitration issues, allowing region and wheel circumference writes with verified readback and backups. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
 
 The CLI's automatic route selection is a conservative policy. An explicit `--ble-master=normal` uses normal routing with the usual session and authentication checks; hardware support for those writes still needs validation.
 
