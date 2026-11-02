@@ -47,13 +47,14 @@ Requires Android 8.0 or later. Releases are published on Google Play as `app.pla
 | **DU-EP800-CRG** | 4.1.10 – 4.2.0 | **SC-EM800** | **Wireless (BLE)** | ✅ Tested on Bike | ✅ Tested on Bike | — | Confirmed on physical hardware. Full wireless tuning supported. |
 | **DU-EP800-CRG** | 4.1.10 – 4.2.0 | Any / None | **Wired (USB)** | ✅ Tested on Bike | ✅ Tested on Bike | Yes | Confirmed on physical hardware. Full wired tuning & bootloader recovery. |
 | **DU-EP800** | 4.1.10 – 4.2.0 | Any | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Yes² | Supported wired & wireless; shares EP800-CRG identity (`23/00`). |
-| **DU-EP600 / EP600-CRG / EP801 / EP801-CRG / EP500** | 4.4.1 – 4.6.0 | **SC-EM800 / SC-EN600** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | ¹ | Modern generation motors. Protocol verified; community bike testing in progress. |
-| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | **SC-E8000** | **Wireless (BLE)** | — | 🧪 In Testing (Preview) | — | Reading confirmed on bike. Direct wireless saving is in preview testing with automatic normal routing. |
-| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | Any / None | **Wired (USB)** | — | 🧪 In Testing (Preview) | — | Full wired support; no security code needed on D4.6. |
-| **DU-E8000 / E8080** | ≥ 4.7.0 – 4.10.0 | **SC-E8000** | **Wireless / USB** | — | 🧪 In Testing (Preview) | — | Handshake protocol verified. Wireless bike testing in progress. |
-| **DU-E6002 / E6012** | ≥ 3.3.0 | Any (E6010 / E6100) | **Wireless / USB** | — | 🧪 In Testing (Preview) | — | Region (EU/US/Korea) available on firmware 3.3.0 and newer. |
-| **DU-E6100 / E6110 / E6180 / E7000 / E5100** | 4.0.0 – 4.8.0 | **SC-E6100 / SC-E7000** | **Wireless / USB** | — | 🧪 In Testing (Preview)* | — | Wheel size and mounting angle adjustment supported (*fixed factory region). |
-| **DU-E6000 / E6001 / E6010 / E6050** | All (3.2 – 3.9) | Any (SC-E6000) | **Wireless / USB** | — | 🧪 In Testing (Preview)* | — | Wheel size (2000–2400 mm) and mounting angle adjustment supported (*fixed factory region). |
+| **DU-EP600 / EP600-CRG / EP801 / EP801-CRG / EP500** | 4.4.1 – 4.6.0 | **SC-EM800 / SC-EN600** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Modern generation motors. Protocol verified; community bike testing in progress. |
+| **DU-E5100** | All | Any | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region, speed limit (nominal 25 km/h EU / 32 km/h US), and maintenance settings supported. |
+| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | **SC-E8000** | **Wireless (BLE)** | — | 🧪 In Testing (Preview) | Opt-in¹ | Reading confirmed on bike. Direct wireless saving is in preview testing with automatic normal routing. |
+| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | Any / None | **Wired (USB)** | — | 🧪 In Testing (Preview) | Opt-in¹ | Full wired support; no security code needed on D4.6. |
+| **DU-E8000 / E8080** | ≥ 4.7.0 – 4.10.0 | **SC-E8000** | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Handshake protocol verified. Wireless bike testing in progress. |
+| **DU-E6002 / E6012** | ≥ 3.3.0 | Any (E6010 / E6100) | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region (EU/US/Korea) available on firmware 3.3.0 and newer. |
+| **DU-E6100 / E6110 / E6180 / E7000** | 4.0.0 – 4.8.0 | **SC-E6100 / SC-E7000** | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Opt-in¹ | Wheel size and mounting angle adjustment supported (*fixed factory region). |
+| **DU-E6000 / E6001 / E6010 / E6050** | All (3.2 – 3.9) | Any (SC-E6000) | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Opt-in¹ | Wheel size (2000–2400 mm) and mounting angle adjustment supported (*fixed factory region). |
 | **DU-E5000 / E5080** | All | Any | **Wireless / USB** | — | — | — | Identification only; no settings supported. |
 
 **Status Key**:
