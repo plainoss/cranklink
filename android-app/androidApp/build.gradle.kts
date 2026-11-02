@@ -43,6 +43,11 @@ android {
         }
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("upload")
+            // R8 drops the unused parts of Compose and material-icons-extended, which
+            // otherwise make up most of the installed size.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     buildFeatures { compose = true }
