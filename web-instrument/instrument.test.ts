@@ -885,6 +885,33 @@ describe("Speed and destination staging", () => {
     assert.equal(controller.getState().failure?.error, "write rejected");
     assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 31 });
   });
+
+  it("automatically sequences downscaling when changing destination to EU", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = connected("ep800-crg", 1, 32);
+    let operations: any[] = [];
+    const files = new Map<string, Uint8Array>();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
+      files: {
+        list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {},
+        import: async (p, bytes) => { files.set(p, bytes); },
+      },
+      run: async () => {
+        operations = JSON.parse(new TextDecoder().decode([...files.values()].at(-1)));
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ completed: operations.length, results: operations.map((op) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        return { code: 0 };
+      },
+    });
+    // Selecting destination 0 automatically clamps speed from 32 down to 25
+    controller.stageParameter("destination", 0);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 0, "speed-limit": 25 });
+    await controller.commitStagedBatch();
+    assert.deepEqual(operations.map(({ name, value }) => [name, value]), [["destination", "0"], ["speed-limit", "25"]]);
+    assert.equal(controller.getState().liveValues.destination.value, 0);
+    assert.equal(controller.getState().liveValues["speed-limit"].value, 25);
+  });
 });
 
 describe("Wire-Level GATT Simulator Register Completeness", () => {
