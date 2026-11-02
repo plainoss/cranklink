@@ -1252,7 +1252,7 @@ fn plan_numeric(
             factory[4]
         );
     }
-    if s.name == "start-mode" {
+    if s.name == "start-mode" && !matches!(model, SettingsModel::Component(_)) {
         let drivetrain = session.command(slot, 0x0b, 0x84, &[0], 0x86)?;
         ensure!(drivetrain.len() >= 2, "short drivetrain reply");
         ensure!(
@@ -1494,6 +1494,10 @@ pub fn dry_run_for_model(
         let current = read_for_model(session, slot, name, model)?;
         validate_current_value(model, &s, &current.value)?;
         if s.name == "bluetooth-passkey" {
+            ensure!(
+                value != "000000" && value != "999999",
+                "bluetooth passkey cannot be 000000 or 999999"
+            );
             report["changed"] = json!(current.value != value);
             report["planned_parameters"] = json!(hex::encode(value.as_bytes()));
         }
@@ -2056,10 +2060,6 @@ pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
                 value.len() == 6 && value.chars().all(|c| c.is_ascii_digit()),
                 "bluetooth passkey must be exactly 6 numeric digits"
             );
-            ensure!(
-                value != "000000" && value != "999999",
-                "bluetooth passkey cannot be 000000 or 999999"
-            );
         } else {
             ensure!(
                 value.is_ascii()
@@ -2167,6 +2167,12 @@ fn set_passkey(
     expected_serial: Option<&str>,
     model: SettingsModel,
 ) -> Result<ChangeReceipt> {
+    if expected_serial.is_none() {
+        ensure!(
+            value != "000000" && value != "999999",
+            "bluetooth passkey cannot be 000000 or 999999"
+        );
+    }
     let original = read_raw(session, slot, s)?;
     validate_model_reply(s, &original)?;
     let before = s.decode(&original)?;

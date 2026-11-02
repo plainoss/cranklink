@@ -123,6 +123,7 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
                 val m = mins % 60
                 "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
             }
+            "start-mode" -> if (choice == 0) "Off" else "Gear $choice"
             else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
                 mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
             } else null
@@ -212,4 +213,8 @@ private val standardPresentations = mapOf(
         "Cycle computer clock time in minutes from midnight (0–1439).", "min"),
     "bluetooth-passkey" to SettingPresentation("Bluetooth passkey",
         "Six-digit numeric PIN for Bluetooth pairing and authentication."),
+    "start-mode" to SettingPresentation("Start gear",
+        "Gear selected automatically when stopping. Off leaves the current gear selected.", "gear"),
+    "auto-gear-cadence" to SettingPresentation("Auto-shift cadence",
+        "Target pedaling cadence for automatic gear changes.", "rpm"),
 )

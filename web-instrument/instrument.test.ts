@@ -90,6 +90,12 @@ describe("Domain Schema Enrichment & Ordering", () => {
     );
     assert.equal(formatValue({ name: "display-time" } as any, 1045), "17:25");
     assert.equal(formatValue({ name: "display-time" } as any, 5), "00:05");
+    assert.equal(formatValue({ name: "start-mode" } as any, 0), "Off");
+    assert.equal(formatValue({ name: "start-mode" } as any, 4), "Gear 4");
+    assert.equal(
+      formatValue({ name: "auto-gear-cadence", displayUnit: "rpm" } as any, 70),
+      "70 rpm",
+    );
   });
 
   it("offers modern torque levels only for OEM bounds with a vendor table", async () => {

@@ -47,5 +47,8 @@ class UserMessagesTest {
         assertEquals("ANT+ only", formatSettingValue("wireless-mode", "1"))
         assertEquals("17:25", formatSettingValue("display-time", "1045"))
         assertEquals("00:05", formatSettingValue("display-time", "5"))
+        assertEquals("Off", formatSettingValue("start-mode", "0"))
+        assertEquals("Gear 3", formatSettingValue("start-mode", "3"))
+        assertEquals("70 rpm", formatSettingValue("auto-gear-cadence", "70"))
     }
 }
