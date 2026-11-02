@@ -46,10 +46,11 @@ strict DCAS serial-padding checks.
 | Components | Fields |
 | --- | --- |
 | Classic wired ST/SW Di2 controls (6770, 6870, 9070, R785) | `switch-a-function`, `switch-b-function`; auxiliary C/S channels are read-only |
-| Modern dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
+| Modern 11- and 12-speed dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071, R9270, R8170, RX825, R9250, R8150, R9271, R8171) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
+| 105 Di2 12-speed dual-control levers (R7170-L, R7170-R) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13; auxiliary controls omitted to match physical hardware) |
 | STEPS handlebar switches (SW-E7000, SW-E8000, SW-EM800, SW-EN600, SW-E6000, SW-E6010) | `switch-mode` (0 shifting, 2 assist mode swap); `switch-a-function`, `switch-b-function`; auxiliary `switch-s-function` or `switch-c-function` where fitted |
-| Classic rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150 and RX805/RX815/RX817 | `multi-shift-speed`; current and maximum derailleur adjustment are read-only |
-| Classic front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150 and RX815 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
+| 10-, 11- and 12-speed rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150, RX805/RX815/RX817, R9250, R8150, R7150, RX825/RX827/RX717/RX828 | `multi-shift-speed`; `wireless-mode` and `bluetooth-passkey` on 12-speed models; current and maximum derailleur adjustment are read-only |
+| 10-, 11- and 12-speed front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150, RX815, R9250, R8150, R7150, RX825 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
 | SM-BMR1, SM-BMR2, BM-DN100, BT-DN110, BT-DN300 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
 | BT-DN110, BT-DN300, BT-E8010/E8014/E8016/E8020/E8035/E8036, BT-EN805/EN806, and BT-E6000/E6001/E6010 batteries | `battery-soc` (0…100%), `battery-soh` (0…100%), `battery-remaining-capacity` (mAh), `battery-full-capacity` (mAh), `battery-charge-cycles` (cycles), `battery-protection-events` (events; all read-only telemetry) |
 | MU-S705, MU-UR500, MU-UR510, MU-UR520, and FH-U6060 hub motor units | `start-mode` (0 off, 1…N start gear), `auto-gear-cadence` (50…76 rpm); `hub-adjustment` (−4…4, live maximum must be 4) on MU models; `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
