@@ -97,22 +97,16 @@ impl SettingsModel {
             "e6002-pre33" => Self::E6002Pre33,
             "e6002" => Self::E6002,
             _ => {
-                if let Some(entry) = crate::unit_models::UNIT_MODELS
-                    .iter()
+                let entry = crate::unit_models::UNIT_MODELS.iter()
                     .find(|entry| crate::unit_models::name_matches(name, entry.name))
-                {
-                    // Drive units require their live product attributes; do not let
-                    // a catalog name bypass the motor-specific schema selection.
-                    ensure!(
-                        !entry.name.starts_with("DU-"),
-                        "use a motor family alias for drive-unit schemas"
-                    );
-                    Self::Component(entry.name)
-                } else if let Some(canon) = components_other::canonical_model_name(name) {
-                    Self::Component(canon)
-                } else {
-                    bail!("unknown settings model {name:?}; use a motor family alias or catalogued component name");
-                }
+                    .with_context(|| format!("unknown settings model {name:?}; use a motor family alias or catalogued component name"))?;
+                // Drive units require their live product attributes; do not let
+                // a catalog name bypass the motor-specific schema selection.
+                ensure!(
+                    !entry.name.starts_with("DU-"),
+                    "use a motor family alias for drive-unit schemas"
+                );
+                Self::Component(entry.name)
             }
         };
         Ok(model)
@@ -465,12 +459,11 @@ impl SettingSpec {
         }
         if self.name == "switch-mode" {
             let b0 = b.first().copied().unwrap_or(0);
-            let upper = (b0 & 0xf0) >> 4;
-            let lower = b0 & 0x0f;
-            let mode = if upper == 6 || upper == 7 || lower == 6 || lower == 7 {
-                2
-            } else {
-                0
+            let assist = |code: u8| code == 6 || code == 7;
+            let mode = match (assist(b0 >> 4), assist(b0 & 0x0f)) {
+                (true, true) => 2,
+                (false, false) => 0,
+                _ => 1,
             };
             return Ok(json!(mode));
         }
@@ -1074,11 +1067,6 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
             .filter(|entry| !entry.name.starts_with("DU-"))
             .map(|entry| SettingsModel::Component(entry.name)),
     )
-    .chain(
-        components_other::BATTERY_MODELS
-            .iter()
-            .map(|&name| SettingsModel::Component(name)),
-    )
     .any(|model| {
         schema_for_model(model)
             .iter()
@@ -1274,7 +1262,7 @@ fn plan_numeric(
             factory[4]
         );
     }
-    if s.name == "start-mode" && !matches!(model, SettingsModel::Component(_)) {
+    if s.name == "start-mode" {
         let drivetrain = session.command(slot, 0x0b, 0x84, &[0], 0x86)?;
         ensure!(drivetrain.len() >= 2, "short drivetrain reply");
         ensure!(
@@ -1339,7 +1327,22 @@ pub fn set_for_model_bound(
     expected_serial: Option<&str>,
 ) -> Result<ChangeReceipt> {
     let s = spec_for_model(name, model)?;
-    validate_input(&s, value)?;
+    validate_new_value(&s, value, session.bluetooth_link())?;
+    write_value(session, slot, s, value, backup_path, model, expected_serial)
+}
+
+/// Writes a value already checked by [`validate_new_value`] (operator input)
+/// or by [`ParsedRestore::validate_for_model`] (a captured original).
+fn write_value(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    s: SettingSpec,
+    value: &str,
+    backup_path: &Path,
+    model: SettingsModel,
+    expected_serial: Option<&str>,
+) -> Result<ChangeReceipt> {
+    let name = s.name.as_str();
     if s.value_type == "date" {
         return set_date(
             session,
@@ -1361,7 +1364,6 @@ pub fn set_for_model_bound(
                 backup_path,
                 expected_serial,
                 model,
-                false,
             );
         }
         return set_name(
@@ -1425,7 +1427,7 @@ pub fn set_for_model_bound(
             crate::platform::sleep(std::time::Duration::from_millis(100));
         };
         ensure!(
-            s.decode(&got)? == after,
+            readback_matches(&s, &s.decode(&got)?, &after),
             "setting readback mismatch; original preserved in {}",
             backup_path.display()
         );
@@ -1471,6 +1473,16 @@ pub fn set_for_model_bound(
     })
 }
 
+/// The display clock keeps running, so its readback may already be one minute
+/// past the written time.
+fn readback_matches(s: &SettingSpec, got: &Value, after: &Value) -> bool {
+    if got == after {
+        return true;
+    }
+    s.name == "display-time"
+        && matches!((got.as_i64(), after.as_i64()), (Some(got), Some(after)) if got == (after + 1) % 1440)
+}
+
 /// Read the serial a backup records, right before its SET. With `expected`,
 /// refuse a unit that took over the slot since the session verified it.
 fn checked_serial(
@@ -1503,7 +1515,7 @@ pub fn dry_run_for_model(
     model: SettingsModel,
 ) -> Result<Value> {
     let s = spec_for_model(name, model)?;
-    validate_input(&s, value)?;
+    validate_new_value(&s, value, session.bluetooth_link())?;
     let mut report = json!({
         "dry_run": true,
         "valid": true,
@@ -1517,12 +1529,7 @@ pub fn dry_run_for_model(
         let current = read_for_model(session, slot, name, model)?;
         validate_current_value(model, &s, &current.value)?;
         if s.name == "bluetooth-passkey" {
-            ensure!(
-                value != "000000" && value != "999999",
-                "bluetooth passkey cannot be 000000 or 999999"
-            );
             report["changed"] = json!(current.value != value);
-            report["planned_parameters"] = json!(hex::encode(value.as_bytes()));
         }
         report["current_value"] = current.value;
     } else {
@@ -1774,9 +1781,17 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
         return Ok(payload);
     }
     if s.name == "switch-mode" {
-        payload[0] = match n {
-            2 => 0x67,
-            _ => 0x23,
+        // A swapped pair puts the "down" code (3 or 7) on button A; keep that
+        // orientation when switching between shifting and assist.
+        let swapped = matches!(original[0] >> 4, 3 | 7);
+        payload[0] = match (n, swapped) {
+            (0, false) => 0x23,
+            (0, true) => 0x32,
+            (2, false) => 0x67,
+            (2, true) => 0x76,
+            _ => bail!(
+                "switch-mode {n} is not writable; set switch-a-function and switch-b-function"
+            ),
         };
         return Ok(payload);
     }
@@ -1954,6 +1969,11 @@ pub fn restore_parsed_for_model(
         model,
     )?);
     let setting = parsed.validate_for_model(model, &serial)?;
+    validate_link_safe(&setting, &parsed.planned_value(), session.bluetooth_link())?;
+    ensure!(
+        setting.name != "display-time",
+        "a display clock backup is not restored; set the current time instead"
+    );
     if setting.group == 0x48 && setting.set == 0x50 {
         return restore_date(
             session,
@@ -1985,14 +2005,13 @@ pub fn restore_parsed_for_model(
             new_backup_path,
             Some(&serial),
             model,
-            true,
         );
     }
     let value = parsed.planned_value();
-    set_for_model_bound(
+    write_value(
         session,
         slot,
-        &parsed.setting,
+        setting,
         &value,
         new_backup_path,
         model,
@@ -2203,6 +2222,43 @@ pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Policy for a value the operator chose. [`validate_input`] accepts every
+/// value a backup may hold; this also refuses values that are representable
+/// but should not be newly written.
+pub(crate) fn validate_new_value(s: &SettingSpec, value: &str, bluetooth_link: bool) -> Result<()> {
+    validate_input(s, value)?;
+    match s.name.as_str() {
+        "bluetooth-passkey" => ensure!(
+            value != "000000" && value != "999999",
+            "bluetooth passkey cannot be 000000 or 999999"
+        ),
+        // Compare wire values: "0.0" or "01" spell the same mode as "0".
+        "wireless-mode" => ensure!(
+            s.raw_value(value)? != 0,
+            "wireless-mode 0 turns the radio off; choose 1, 2 or 3"
+        ),
+        "switch-mode" => ensure!(
+            s.raw_value(value)? != 1,
+            "switch-mode 1 (mixed) is read-only; set switch-a-function and switch-b-function"
+        ),
+        _ => {}
+    }
+    validate_link_safe(s, value, bluetooth_link)
+}
+
+/// Refuses writes that would cut the Bluetooth link carrying this session,
+/// leaving USB as the only way to undo them.
+pub(crate) fn validate_link_safe(s: &SettingSpec, value: &str, bluetooth_link: bool) -> Result<()> {
+    if bluetooth_link && s.name == "wireless-mode" {
+        let mode = s.raw_value(value)?;
+        ensure!(
+            !matches!(mode, 0 | 1),
+            "wireless-mode {mode} turns Bluetooth off and would end this session; change it over USB"
+        );
+    }
+    Ok(())
+}
+
 /// A component write and its dry run must only accept changes whose captured
 /// original value can later pass the same schema during restore.
 pub(crate) fn validate_current_value(
@@ -2293,14 +2349,7 @@ fn set_passkey(
     backup_path: &Path,
     expected_serial: Option<&str>,
     model: SettingsModel,
-    is_restore: bool,
 ) -> Result<ChangeReceipt> {
-    if !is_restore {
-        ensure!(
-            value != "000000" && value != "999999",
-            "bluetooth passkey cannot be 000000 or 999999"
-        );
-    }
     let original = read_raw(session, slot, s)?;
     validate_model_reply(s, &original)?;
     let before = s.decode(&original)?;
@@ -2322,7 +2371,6 @@ fn set_passkey(
             "setting": s.name,
             "before": before,
             "original_parameters": hex::encode(&original),
-            "planned_parameters": hex::encode(value.as_bytes()),
             "group": s.group,
             "command": s.set,
             "query": s.query

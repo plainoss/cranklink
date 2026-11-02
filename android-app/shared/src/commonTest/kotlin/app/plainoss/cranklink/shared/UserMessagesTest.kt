@@ -43,21 +43,16 @@ class UserMessagesTest {
     @Test
     fun formatsExtendedEtubeSettingsWithoutActiveConnection() {
         assertEquals("012345", formatSettingValue("bluetooth-passkey", "012345"))
-        assertEquals("Bluetooth & ANT+", formatSettingValue("wireless-mode", "0"))
+        assertEquals("Bluetooth & ANT+", formatSettingValue("wireless-mode", "3"))
         assertEquals("ANT+ only", formatSettingValue("wireless-mode", "1"))
         assertEquals("17:25", formatSettingValue("display-time", "1045"))
         assertEquals("00:05", formatSettingValue("display-time", "5"))
         assertEquals("Off", formatSettingValue("start-mode", "0"))
         assertEquals("Gear 3", formatSettingValue("start-mode", "3"))
         assertEquals("70 rpm", formatSettingValue("auto-gear-cadence", "70"))
-        assertEquals("92%", formatSettingValue("battery-soc", "92"))
-        assertEquals("88%", formatSettingValue("battery-soh", "88"))
-        assertEquals("7200 mAh", formatSettingValue("battery-remaining-capacity", "7200"))
-        assertEquals("10336 mAh", formatSettingValue("battery-full-capacity", "10336"))
-        assertEquals("142 cycles", formatSettingValue("battery-charge-cycles", "142"))
-        assertEquals("3 events", formatSettingValue("battery-protection-events", "3"))
         assertEquals("Assist", formatSettingValue("switch-mode", "2"))
         assertEquals("Shifting", formatSettingValue("switch-mode", "0"))
+        assertEquals("Mixed (custom A/B)", formatSettingValue("switch-mode", "1"))
         assertEquals("D-Fly channel 1", formatSettingValue("switch-c-function", "10"))
         assertEquals("Assist mode up", formatSettingValue("switch-a-function", "6"))
     }

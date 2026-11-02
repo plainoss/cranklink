@@ -193,6 +193,11 @@ pub fn component_serial_bytes(parameters: &[u8]) -> Result<[u8; 6]> {
 }
 /// Logical settings commands; transports own their framing and session setup.
 pub trait UnitCommands {
+    /// True when the session runs over a Bluetooth gateway, so settings that
+    /// switch Bluetooth off would cut the session itself.
+    fn bluetooth_link(&self) -> bool {
+        false
+    }
     /// Slot-stock query goes to the gateway in BLE slave mode.
     fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
         self.command(0, 2, 0x14, &[slot], 0x16)

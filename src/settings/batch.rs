@@ -204,6 +204,28 @@ fn execution_order(
     Ok(order)
 }
 
+/// The journal keeps the previous passkey (through each backup) but never the
+/// new one the operator chose.
+fn redacted_operations(operations: &[Operation]) -> Value {
+    operations
+        .iter()
+        .map(|op| match op {
+            Operation::Set { name, .. } if name == "bluetooth-passkey" => {
+                json!({"op":"set","name":name,"value":"[redacted]"})
+            }
+            op => json!(op),
+        })
+        .collect()
+}
+
+fn redacted_receipt(value: &Value) -> Value {
+    let mut value = value.clone();
+    if value["setting"] == "bluetooth-passkey" {
+        value["after"] = json!("[redacted]");
+    }
+    value
+}
+
 fn record(file: &mut crate::storage::File, mut value: Value) -> Result<()> {
     value["time_ms"] = json!(crate::platform::now_ms());
     serde_json::to_writer(&mut *file, &value)?;
@@ -243,6 +265,7 @@ pub fn run_bound(
     // Model-dependent combinations (e.g. speed after region) use live reads at
     // each step, so later operations see changes made earlier in this session.
     let serial = checked_serial(session, slot, expected_serial, model)?;
+    let bluetooth_link = session.bluetooth_link();
     let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
         let valid = (|| -> Result<Option<ParsedRestore>> {
@@ -253,7 +276,7 @@ pub fn run_bound(
                 }
                 Operation::Read { name: None } => Ok(None),
                 Operation::Set { name, value } => {
-                    validate_input(&spec_for_model(name, model)?, value)?;
+                    validate_new_value(&spec_for_model(name, model)?, value, bluetooth_link)?;
                     Ok(None)
                 }
                 Operation::Restore { file, parsed } => {
@@ -261,7 +284,8 @@ pub fn run_bound(
                         Some(p) => p.clone(),
                         None => parse_restore_file(file)?,
                     };
-                    parsed.validate_for_model(model, &serial)?;
+                    let spec = parsed.validate_for_model(model, &serial)?;
+                    validate_link_safe(&spec, &parsed.planned_value(), bluetooth_link)?;
                     Ok(Some(parsed))
                 }
             }
@@ -283,7 +307,7 @@ pub fn run_bound(
         .context("batch journal must be a new file (choose a new backup prefix)")?;
     record(
         &mut journal,
-        json!({"stage":"started","serial":serial,"slot":slot,"model":model.name(),"operations":operations,
+        json!({"stage":"started","serial":serial,"slot":slot,"model":model.name(),"operations":redacted_operations(operations),
             "order":order.iter().map(|index| index + 1).collect::<Vec<_>>()}),
     )?;
     crate::storage::sync_parent(&journal_path).context("persist batch journal")?;
@@ -326,6 +350,12 @@ pub fn run_bound(
                     let parsed = resolved_restores[index]
                         .as_ref()
                         .expect("restore preflight verified");
+                    // A running clock has no meaningful earlier value; restoring
+                    // the rest of a save must not fail on it.
+                    if parsed.setting == "display-time" {
+                        return Ok(json!({"setting":"display-time","changed":false,
+                            "skipped":"a display clock backup is not restored; set the current time instead"}));
+                    }
                     Ok(serde_json::to_value(restore_parsed_for_model(
                         session, slot, parsed, &backup, model,
                     )?)?)
@@ -336,7 +366,7 @@ pub fn run_bound(
             Ok(value) => {
                 record(
                     &mut journal,
-                    json!({"stage":"completed","operation":index + 1,"result":value}),
+                    json!({"stage":"completed","operation":index + 1,"result":redacted_receipt(&value)}),
                 )
                 .with_context(|| {
                     format!(

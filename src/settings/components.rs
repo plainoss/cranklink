@@ -1,8 +1,6 @@
-//! Verified component service settings. Identity catalog entries alone never
-//! opt a product into one of these wire layouts.
-//!
-//! Sources: vendor SwitchFunctionalUnit and MUUnitDataLink implementations
-//! (ST_CND, EXTM_RA_MULTI_CONF2, EXTM_FR_SYNC_MGN_PTN and TM_ADJ_LV).
+//! Verified component service settings: switch assignments, derailleur
+//! adjustment, multi-shift speed and synchronized-shift interval. Identity
+//! catalog entries alone never opt a product into one of these wire layouts.
 //! Modern wireless switch routing and extended function codes are deliberately
 //! separate from the classic wired switch dictionary below.
 
@@ -27,18 +25,21 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         }
         "ST-R9150-L" | "ST-R9150-R" | "ST-R9170-L" | "ST-R9170-R" | "ST-R8050-L" | "ST-R8050-R"
         | "ST-R8070-L" | "ST-R8070-R" | "ST-RX815-L" | "ST-RX815-R" | "ST-R9171-L"
-        | "ST-R9171-R" | "ST-R8071-L" | "ST-R8071-R" | "ST-R9270-L" | "ST-R9270-R"
-        | "ST-R8170-L" | "ST-R8170-R" | "ST-RX825-L" | "ST-RX825-R" | "ST-R9250-L"
-        | "ST-R9250-R" | "ST-R8150-L" | "ST-R8150-R" | "ST-R9271-L" | "ST-R9271-R"
-        | "ST-R8171-L" | "ST-R8171-R" => extended_switch_schema(true),
-        "ST-R7170-L" | "ST-R7170-R" => extended_switch_schema(false),
-        "SW-E7000-L" | "SW-E8000-L" => steps_switch_schema(true, None),
-        "SW-E7000-R" => steps_switch_schema(false, None),
-        "SW-EM800-L" | "SW-EN600-L" | "SW-E6010-L" => {
-            steps_switch_schema(true, Some("switch-s-function"))
-        }
-        "SW-EN600-R" | "SW-E6010-R" => steps_switch_schema(false, Some("switch-s-function")),
-        "SW-E6000" => steps_switch_schema(true, Some("switch-c-function")),
+        | "ST-R9171-R" | "ST-R8071-L" | "ST-R8071-R" => extended_switch_schema(),
+        // Wired 12-speed levers use six-bit codes with a third byte of high
+        // bits, and wireless 12-speed levers are configured through another
+        // unit; neither fits this four-bit layout. EN600/EM800 STEPS switches
+        // share the six-bit layout.
+        "SW-E7000-L" | "SW-E6000" | "SW-E6010-L" => steps_switch_schema(
+            STEPS_SHIFT_AND_ASSIST,
+            match name {
+                "SW-E6000" => Some("switch-c-function"),
+                "SW-E6010-L" => Some("switch-s-function"),
+                _ => None,
+            },
+        ),
+        "SW-E7000-R" => steps_switch_schema(STEPS_SHIFT, None),
+        "SW-E8000-L" => steps_switch_schema(STEPS_ASSIST, None),
         _ => Vec::new(),
     };
     // S705's ordinary Di2/single-system S4 assignment pattern contains rear
@@ -70,8 +71,8 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
                 1,
             )
             .choices(&[0, 1, 2, 3, 4, 5, 6]);
-            // MUUnitDataLink.SetLumpShiftPattern (RVA 0x490cc) allocates four
-            // bytes, assigns only byte 0, and leaves the reserved tail zero.
+            // A four-byte SET whose byte 0 is the speed; the reserved tail
+            // stays zero.
             speed.preserve = Some(1);
             specs.push(speed);
         }
@@ -92,7 +93,7 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
                     1,
                 )
                 .choices(&[0, 1, 2]);
-                // MUUnitDataLink.SetShiftInverval (RVA 0x4982c) sends one byte.
+                // The interval SET carries a single byte.
                 interval.preserve = Some(1);
                 specs.push(interval);
             }
@@ -132,10 +133,10 @@ fn switch_schema(four_byte_layout: bool) -> Vec<SettingSpec> {
         )
         .choices(&[0, 1, 2, 3]);
         spec.bit_mask = Some(mask);
-        // Vendor SwitchFunctionalUnit reads only AB/CS from the GET prefix and
-        // zeroes SET bytes 2/3. Every model admitted above inherits STSWUnit's
-        // isReferableKeyEventType=false; modern six-bit function layouts need a
-        // separate schema, rather than treating classic GET padding as events.
+        // Only the AB/CS bytes of the GET prefix are meaningful and SET bytes
+        // 2/3 stay zero. None of the models admitted above report key events;
+        // modern six-bit function layouts need a separate schema, rather than
+        // treating classic GET padding as events.
         spec.preserve = Some(if four_byte_layout { 2 } else { 1 });
         // C/S include satellite and auxiliary buttons with model-specific
         // assignment restrictions; report their current codes without guessing
@@ -152,59 +153,40 @@ fn switch_schema(four_byte_layout: bool) -> Vec<SettingSpec> {
     specs
 }
 
-fn extended_switch_schema(has_auxiliary: bool) -> Vec<SettingSpec> {
+fn extended_switch_schema() -> Vec<SettingSpec> {
     let query = vec![0; 4];
     let template = query.clone();
     let mut specs = Vec::new();
-    let channels: &[_] = if has_auxiliary {
-        &[
-            (
-                "switch-a-function",
-                0,
-                0xf0,
-                &[0, 1, 2, 3, 10, 11, 12, 13][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-            ),
-            (
-                "switch-b-function",
-                0,
-                0x0f,
-                &[0, 1, 2, 3, 10, 11, 12, 13][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-            ),
-            (
-                "switch-c-function",
-                1,
-                0xf0,
-                &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
-            ),
-            (
-                "switch-s-function",
-                1,
-                0x0f,
-                &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
-            ),
-        ]
-    } else {
-        &[
-            (
-                "switch-a-function",
-                0,
-                0xf0,
-                &[0, 1, 2, 3, 10, 11, 12, 13][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-            ),
-            (
-                "switch-b-function",
-                0,
-                0x0f,
-                &[0, 1, 2, 3, 10, 11, 12, 13][..],
-                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-            ),
-        ]
-    };
+    let channels: &[_] = &[
+        (
+            "switch-a-function",
+            0,
+            0xf0,
+            &[0, 1, 2, 3, 10, 11, 12, 13][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+        ),
+        (
+            "switch-b-function",
+            0,
+            0x0f,
+            &[0, 1, 2, 3, 10, 11, 12, 13][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+        ),
+        (
+            "switch-c-function",
+            1,
+            0xf0,
+            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+        ),
+        (
+            "switch-s-function",
+            1,
+            0x0f,
+            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+        ),
+    ];
     for (name, offset, mask, choices, desc) in channels {
         let mut spec = SettingSpec::new(
             name,
@@ -225,19 +207,26 @@ fn extended_switch_schema(has_auxiliary: bool) -> Vec<SettingSpec> {
     specs
 }
 
+/// STEPS A/B choices per switch pattern. D-Fly codes need a D-Fly drive
+/// unit connection this schema cannot confirm, so none are offered.
+const STEPS_SHIFT_AND_ASSIST: &[i64] = &[0, 1, 2, 3, 6, 7];
+const STEPS_SHIFT: &[i64] = &[0, 1, 2, 3];
+const STEPS_ASSIST: &[i64] = &[6, 7];
+
 fn steps_switch_schema(
-    has_switch_mode: bool,
+    primary_choices: &[i64],
     third_button: Option<&'static str>,
 ) -> Vec<SettingSpec> {
     let query = vec![0; 4];
     let template = query.clone();
     let mut specs = Vec::new();
 
-    if has_switch_mode {
+    // Swapping between shifting and assist only makes sense where both exist.
+    if primary_choices == STEPS_SHIFT_AND_ASSIST {
         let mut mode = SettingSpec::new(
             "switch-mode",
-            "0 shifting, 2 assist",
-            (0, 2, 2),
+            "0 shifting, 1 mixed (read-only), 2 assist; writing replaces the A/B functions",
+            (0, 2, 1),
             0x04,
             0x10,
             &query,
@@ -245,20 +234,23 @@ fn steps_switch_schema(
             0,
             1,
         )
-        .choices(&[0, 2]);
+        .choices(&[0, 1, 2]);
         mode.preserve = Some(2);
         specs.push(mode);
     }
 
-    let primary_choices: &[i64] = &[0, 1, 2, 3, 6, 7, 10, 11, 12, 13, 15];
     for (name, offset, mask) in [
         ("switch-a-function", 0, 0xf0),
         ("switch-b-function", 0, 0x0f),
     ] {
         let mut spec = SettingSpec::new(
             name,
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 6 assist up, 7 assist down, 10..13 D-Fly, 15 disabled",
-            (0, 15, 1),
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 6 assist up, 7 assist down",
+            (
+                primary_choices[0],
+                primary_choices[primary_choices.len() - 1],
+                1,
+            ),
             0x04,
             0x10,
             &query,
@@ -273,24 +265,23 @@ fn steps_switch_schema(
     }
 
     if let Some(third) = third_button {
-        let (offset, mask) = if third == "switch-c-function" {
-            (1, 0xf0)
+        let mask = if third == "switch-c-function" {
+            0xf0
         } else {
-            (1, 0x0f)
+            0x0f
         };
-        let third_choices: &[i64] = &[0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 15];
         let mut spec = SettingSpec::new(
             third,
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 6 assist up, 7 assist down, 10..13 D-Fly, 15 disabled",
-            (0, 15, 1),
+            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 6 assist up, 7 assist down",
+            (0, 7, 1),
             0x04,
             0x10,
             &query,
             &template,
-            offset,
+            1,
             1,
         )
-        .choices(third_choices);
+        .choices(&[0, 1, 2, 3, 4, 5, 6, 7]);
         spec.bit_mask = Some(mask);
         spec.preserve = Some(2);
         specs.push(spec);
@@ -315,7 +306,7 @@ fn adjustment_schema(group: u8) -> Vec<SettingSpec> {
                 offset,
                 1,
             );
-            // TM_ADJ_LV_GET reports current and maximum as signed bytes. Its
+            // The GET reports current and maximum as signed bytes. Its
             // SET path includes target/mode handling and is not a plain setting.
             spec.signed = true;
             spec.read_only = true;
@@ -422,7 +413,20 @@ mod tests {
 
     #[test]
     fn catalog_recognition_does_not_invent_component_settings() {
-        for name in ["ST-UNKNOWN", "ST-6700", "SM-PCE1", "RD-X8050"] {
+        for name in [
+            "ST-UNKNOWN",
+            "SM-PCE1",
+            "RD-X8050",
+            // Catalogued levers and switches whose layout differs from these schemas.
+            "ST-R9250-L",
+            "ST-R8150-R",
+            "ST-R9270-L",
+            "ST-R7170-L",
+            "ST-RX825-R",
+            "SW-EN600-L",
+            "SW-EM800-L",
+            "SW-E6010-R",
+        ] {
             assert!(schema(name).is_empty(), "{name}");
         }
         for model in crate::unit_models::UNIT_MODELS {
@@ -461,7 +465,16 @@ mod tests {
         let a = &e7000[1];
         let b = &e7000[2];
         assert_eq!(mode.name, "switch-mode");
-        assert_eq!(mode.choices, vec![0, 2]);
+        assert_eq!(mode.choices, vec![0, 1, 2]);
+        assert_eq!(mode.decode(&[0x63, 0, 0, 0]).unwrap(), json!(1));
+        assert_eq!(mode.decode(&[0x27, 0, 0, 0]).unwrap(), json!(1));
+        assert_eq!(mode.decode(&[0x76, 0, 0, 0]).unwrap(), json!(2));
+        assert_eq!(
+            super::super::updated_payload(mode, &[0x76, 0, 0, 0], 0, false).unwrap(),
+            [0x32, 0, 0, 0]
+        );
+        assert!(super::super::updated_payload(mode, &[0x63, 0, 0, 0], 1, false).is_err());
+        assert!(super::super::validate_new_value(mode, "1.0", false).is_err());
 
         let assist_payload = [0x67, 0x00, 0x00, 0x00];
         assert_eq!(mode.decode(&assist_payload).unwrap(), json!(2));
@@ -473,17 +486,50 @@ mod tests {
         assert_eq!(shifting_payload, [0x23, 0x00, 0x00, 0x00]);
         assert_eq!(mode.decode(&shifting_payload).unwrap(), json!(0));
 
-        let em800 = schema("SW-EM800-L");
-        assert_eq!(em800.len(), 4);
-        let s = &em800[3];
+        let e6010 = schema("SW-E6010-L");
+        assert_eq!(e6010.len(), 4);
+        let s = &e6010[3];
         assert_eq!(s.name, "switch-s-function");
         assert_eq!(s.bit_mask, Some(0x0f));
         let third_payload = [0x67, 0x04, 0x00, 0x00];
         assert_eq!(s.decode(&third_payload).unwrap(), json!(4));
         assert_eq!(
-            super::super::updated_payload(s, &third_payload, 15, false).unwrap(),
-            [0x67, 0x0f, 0x00, 0x00]
+            super::super::updated_payload(s, &third_payload, 7, false).unwrap(),
+            [0x67, 0x07, 0x00, 0x00]
         );
+        assert!(super::super::validate_input(s, "15").is_err());
+
+        // SW-E6000's third button is C, the upper half of byte 1.
+        let c = schema("SW-E6000").pop().unwrap();
+        assert_eq!(c.name, "switch-c-function");
+        assert_eq!(
+            super::super::updated_payload(&c, &[0x23, 0x04, 0, 0], 6, false).unwrap(),
+            [0x23, 0x64, 0, 0]
+        );
+    }
+
+    #[test]
+    fn steps_switch_choices_follow_each_switch_pattern() {
+        let names = |model| {
+            schema(model)
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names("SW-E8000-L"),
+            ["switch-a-function", "switch-b-function"]
+        );
+        assert_eq!(schema("SW-E8000-L")[0].choices, [6, 7]);
+        assert_eq!(
+            names("SW-E7000-R"),
+            ["switch-a-function", "switch-b-function"]
+        );
+        assert_eq!(schema("SW-E7000-R")[0].choices, [0, 1, 2, 3]);
+        let a = &schema("SW-E7000-L")[1];
+        assert_eq!(a.choices, [0, 1, 2, 3, 6, 7]);
+        assert!(super::super::validate_input(a, "10").is_err());
+        assert!(super::super::validate_input(a, "15").is_err());
     }
 
     #[test]
@@ -496,18 +542,5 @@ mod tests {
         let fd = schema("FD-R9250");
         assert_eq!(fd.len(), 3);
         assert!(fd.iter().any(|s| s.name == "synchro-shift-interval"));
-
-        let st9270 = schema("ST-R9270-L");
-        assert_eq!(st9270.len(), 4);
-        assert!(st9270
-            .iter()
-            .any(|s| s.name == "switch-c-function" && !s.read_only));
-
-        let st7170 = schema("ST-R7170-L");
-        assert_eq!(st7170.len(), 2);
-        assert!(st7170.iter().any(|s| s.name == "switch-a-function"));
-        assert!(st7170.iter().any(|s| s.name == "switch-b-function"));
-        assert!(!st7170.iter().any(|s| s.name == "switch-c-function"));
-        assert!(!st7170.iter().any(|s| s.name == "switch-s-function"));
     }
 }

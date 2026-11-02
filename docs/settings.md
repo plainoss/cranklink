@@ -46,26 +46,29 @@ strict DCAS serial-padding checks.
 | Components | Fields |
 | --- | --- |
 | Classic wired ST/SW Di2 controls (6770, 6870, 9070, R785) | `switch-a-function`, `switch-b-function`; auxiliary C/S channels are read-only |
-| Modern 11- and 12-speed dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071, R9270, R8170, RX825, R9250, R8150, R9271, R8171) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
-| 105 Di2 12-speed dual-control levers (R7170-L, R7170-R) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13; auxiliary controls omitted to match physical hardware) |
-| STEPS handlebar switches (SW-E7000, SW-E8000, SW-EM800, SW-EN600, SW-E6000, SW-E6010) | `switch-mode` (0 shifting, 2 assist mode swap); `switch-a-function`, `switch-b-function`; auxiliary `switch-s-function` or `switch-c-function` where fitted |
-| 10-, 11- and 12-speed rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150, RX805/RX815/RX817, R9250, R8150, R7150, RX825/RX827/RX717/RX828 | `multi-shift-speed`; `wireless-mode` and `bluetooth-passkey` on 12-speed models; current and maximum derailleur adjustment are read-only |
-| 10-, 11- and 12-speed front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150, RX815, R9250, R8150, R7150, RX825 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
+| 11-speed dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5, D-Fly and 15 disabled) |
+| STEPS handlebar switches SW-E7000-L, SW-E6000, SW-E6010-L | `switch-mode`; `switch-a-function`, `switch-b-function` (0..3 shifting, 6/7 assist); `switch-c-function` on SW-E6000 and `switch-s-function` on SW-E6010-L (0..7) |
+| SW-E7000-R | `switch-a-function`, `switch-b-function` (0..3 shifting only) |
+| SW-E8000-L | `switch-a-function`, `switch-b-function` (6/7 assist only) |
+| 10-, 11- and 12-speed rear derailleurs: 6770, 6870, 9070, M8050/M9050, R8050/R9150, RX805/RX815/RX817, R9250, R8150, R7150, RX825, RX827-SGS, RX717-SGS, RX828-SGS | `multi-shift-speed`; `wireless-mode` and `bluetooth-passkey` on the 12-speed models; current and maximum derailleur adjustment are read-only |
+| 10-, 11- and 12-speed front derailleurs: 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150, RX815, R9250, R8150, R7150, RX825 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
 | SM-BMR1, SM-BMR2, BM-DN100, BT-DN110, BT-DN300 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
-| BT-DN110, BT-DN300, BT-E8010/E8014/E8016/E8020/E8035/E8036, BT-EN805/EN806, and BT-E6000/E6001/E6010 batteries | `battery-soc` (0…100%), `battery-soh` (0…100%), `battery-remaining-capacity` (mAh), `battery-full-capacity` (mAh), `battery-charge-cycles` (cycles), `battery-protection-events` (events; all read-only telemetry) |
-| MU-S705, MU-UR500, MU-UR510, MU-UR520, and FH-U6060 hub motor units | `start-mode` (0 off, 1…N start gear), `auto-gear-cadence` (50…76 rpm); `hub-adjustment` (−4…4, live maximum must be 4) on MU models; `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
-| SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, `display-brightness`, and `display-time` |
-| EW-WU101, EW-WU111, EW-EN100 wireless gateways & displays | `wireless-mode` (0 BLE & ANT+, 1 ANT+ only), `bluetooth-passkey` (6-digit numeric PIN) |
+| MU-S705, MU-UR500, MU-UR510, MU-UR520 internal hubs | `hub-adjustment` (−4…4, live maximum must be 4); `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
+| SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, `display-brightness`, and `display-time`; `bluetooth-passkey` on SC-E8000/E6100/E7000/EM800/EN600/EN610 |
+| EW-WU101, EW-WU111, EW-EN100 wireless units | `bluetooth-passkey` (6-digit numeric PIN) |
 
-The schema is authoritative for exact model variants. Modern wireless levers and other components without a verified layout remain without named settings. Firmware may reject an individual service; a full read reports that field under `unavailable`. These layouts are covered by protocol tests, not hardware validation.
+The schema is authoritative for exact model variants. Components without a verified layout have no named settings: wired 12-speed levers (R9250, R8150) and the SW-EN600/SW-EM800 switches use six-bit function codes, and wireless 12-speed levers (R9270, R8170, R7170, RX825, R9271, R8171) are configured through another unit. Start gear and AutoShift cadence are drive-unit settings, not hub ones. Firmware may reject an individual service; a full read reports that field under `unavailable`. These layouts are covered by protocol tests, not hardware validation.
 
-Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear down; SW-S705 accepts only 2/3. Writes preserve the sibling nibble and meaningful auxiliary channels, while reserved SET bytes stay zero instead of copying GET padding. Modern event-function extensions remain outside these classic schemas. Component edits also reject current values outside their writable schema so every accepted change has a restorable backup. Value meanings:
+Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear down; SW-S705 accepts only 2/3. Writes preserve the sibling nibble and meaningful auxiliary channels, while reserved SET bytes stay zero instead of copying GET padding. Component edits also reject current values outside their writable schema so every accepted change has a restorable backup. Value meanings:
 
 | Setting | Values |
 | --- | --- |
-| `switch-mode` | 0 shifting, 2 assist mode swap |
-| `switch-a-function`, `switch-b-function` | 0 front up, 1 front down, 2 rear up, 3 rear down (SW-S705: 2 or 3 only; modern levers: 10..13 D-Fly; STEPS: 6 assist up, 7 assist down) |
-| `switch-c-function`, `switch-s-function` | 0..3 shifting, 4 display screen/left, 5 display mode/right, 6/7 assist, 10..13 D-Fly, 15 disabled |
+| `switch-mode` | 0 shifting, 2 assist, 1 mixed (read-only: buttons A and B disagree). Writing 0 or 2 replaces both `switch-a-function` and `switch-b-function`, keeping a swapped A/B order. Make sure another switch still changes assist mode before setting a STEPS switch to shifting. |
+| `switch-a-function`, `switch-b-function` | 0 front up, 1 front down, 2 rear up, 3 rear down (SW-S705: 2 or 3 only; 11-speed levers: 10..13 D-Fly; STEPS: 6 assist up, 7 assist down where the switch offers them) |
+| `switch-c-function`, `switch-s-function` | 0..3 shifting, 4 display screen/left, 5 display mode/right; 11-speed levers add 10..13 D-Fly and 15 disabled, STEPS switches add 6/7 assist |
+| `wireless-mode` | 1 ANT+ only, 2 Bluetooth only, 3 Bluetooth and ANT+; 0 (radio off) is shown but never offered. ANT+ only cannot be set or restored over Bluetooth, since it would end the session |
+| `bluetooth-passkey` | Six digits; 000000 and 999999 are refused as new values. A change's backup keeps the previous passkey, never the new one |
+| `display-time` | Minutes from midnight. The write is confirmed even if the clock ticks over a minute; clock backups are never restored |
 | `multi-shift-speed` (rear) | 0 off, 1 very slow, 2 slow, 3 normal, 4 fast, 5 very fast, 6 super fast |
 | `synchro-shift-interval` (front) | 0 normal, 1 slow, 2 very slow |
 | `display-language` | 0 English, 1 French, 2 German, 3 Dutch, 4 Italian, 5 Spanish |

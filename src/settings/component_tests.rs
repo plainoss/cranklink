@@ -406,7 +406,8 @@ fn steps_switch_mode_and_assist_button_swap_journal_backup() {
     let receipt = set_for_model(&mut switch, 7, "switch-mode", "0", &backup, model).unwrap();
     assert_eq!(receipt.before, json!(2));
     assert_eq!(receipt.after, json!(0));
-    assert_eq!(switch.state, [0x23, 0x04, 0, 0]);
+    // The swapped orientation carries over to the shifting codes.
+    assert_eq!(switch.state, [0x32, 0x04, 0, 0]);
     assert_eq!(switch.writes, 1);
 
     // Restoring must restore the exact custom assignment 0x76, not generic 0x67.
@@ -417,4 +418,39 @@ fn steps_switch_mode_and_assist_button_swap_journal_backup() {
     assert_eq!(restore_receipt.after, json!(2));
     assert_eq!(switch.state, [0x76, 0x04, 0, 0]);
     assert_eq!(switch.writes, 2);
+}
+
+#[test]
+fn steps_switch_mode_mixed_assignment_reads_as_its_own_state() {
+    let files = Files::new();
+    let backup = files.backup("sw-e7000-mixed-before.json");
+    let restored_backup = files.backup("sw-e7000-mixed-restore.json");
+    let mut switch = Switch::new(backup.clone());
+    switch.model = "SW-E7000-L";
+    switch.setting = "switch-mode";
+    // A assist up, B rear shift down.
+    switch.state = vec![0x63, 0x04, 0, 0];
+    let model = SettingsModel::Component("SW-E7000-L");
+    assert!(set_for_model(&mut switch, 7, "switch-mode", "1", &backup, model).is_err());
+    assert_eq!(switch.writes, 0);
+    let receipt = set_for_model(&mut switch, 7, "switch-mode", "2", &backup, model).unwrap();
+    assert_eq!(receipt.before, json!(1));
+    assert!(receipt.changed);
+    assert_eq!(switch.state, [0x67, 0x04, 0, 0]);
+
+    switch.backup = restored_backup.clone();
+    restore_for_model(&mut switch, 7, &backup, &restored_backup, model).unwrap();
+    assert_eq!(switch.state, [0x63, 0x04, 0, 0]);
+}
+
+#[test]
+fn switch_mode_exists_only_on_left_and_single_steps_switches() {
+    for model in ["SW-E7000-R", "SW-EN600-R", "SW-E6010-R"] {
+        let names: Vec<_> = super::schema_for_model(SettingsModel::Component(model))
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert!(!names.iter().any(|name| name == "switch-mode"), "{model}");
+        assert!(super::spec_for_model("switch-mode", SettingsModel::Component(model)).is_err());
+    }
 }
