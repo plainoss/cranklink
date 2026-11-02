@@ -54,6 +54,12 @@ class SessionController(private val backend: AppBackend) {
         }
     }
 
+    private fun requiresMasterRouting(modelSlug: String, settingName: String): Boolean {
+        val isE8000 = modelSlug in setOf("e8000", "e8000-pre41")
+        return settingName in setOf("lamp", "lighting-time") ||
+            (!isE8000 && settingName in setOf("destination", "tire-circumference"))
+    }
+
     fun stage(name: String, value: String) {
         val current = state.value
         if (current.phase != AppPhase.Ready || current.identity == null) {
@@ -61,11 +67,8 @@ class SessionController(private val backend: AppBackend) {
             return
         }
         try {
-            val isE8000 = current.identity.modelSlug in setOf("e8000", "e8000-pre41")
-            val requiresMaster = name in setOf("lamp", "lighting-time") ||
-                (!isE8000 && name in setOf("destination", "tire-circumference"))
-            if (!current.identity.masterRouting && requiresMaster) {
-                require(false) { "$name requires a USB connection on this bike." }
+            require(current.identity.masterRouting || !requiresMasterRouting(current.identity.modelSlug, name)) {
+                "$name requires a USB connection on this bike."
             }
             require(TuningRules.allowedName(name)) { "This setting is not available in the STEPS app." }
             val setting = current.settings.singleOrNull { it.name == name }
@@ -300,10 +303,11 @@ class SessionController(private val backend: AppBackend) {
             && identity.modelSeries == expected.modelSeries) { "The response belongs to a different drive unit." }
         val settings = TuningRules.parseSchema(result["schema"] as? JsonArray ?: error("Missing motor settings schema."),
             identity.modelSlug, result["constraints"] as? JsonObject).map { setting ->
-            val isE8000 = identity.modelSlug in setOf("e8000", "e8000-pre41")
-            val requiresMaster = setting.name in setOf("lamp", "lighting-time") ||
-                (!isE8000 && setting.name in setOf("destination", "tire-circumference"))
-            if (!identity.masterRouting && requiresMaster) setting.copy(writable = false) else setting
+            if (!identity.masterRouting && requiresMasterRouting(identity.modelSlug, setting.name)) {
+                setting.copy(writable = false)
+            } else {
+                setting
+            }
         }
         require(settings.isNotEmpty()) { "The connected drive unit has no supported tuning settings." }
         val snapshot = result["snapshot"] as? JsonObject ?: error("Missing motor settings snapshot.")
