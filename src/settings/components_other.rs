@@ -777,6 +777,23 @@ mod tests {
         )
         .is_err());
 
+        let rejected_backup = std::env::temp_dir().join(format!(
+            "cranklink-passkey-reject-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        assert!(super::super::set_for_model_bound(
+            &mut gw,
+            2,
+            "bluetooth-passkey",
+            "000000",
+            &rejected_backup,
+            SettingsModel::Component("EW-EN100"),
+            Some("010203040506"),
+        )
+        .is_err());
+        assert!(!rejected_backup.exists());
+
         struct MockHub {
             start_mode: Vec<u8>,
             cadence: Vec<u8>,

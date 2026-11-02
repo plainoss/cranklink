@@ -1339,6 +1339,7 @@ pub fn set_for_model_bound(
                 backup_path,
                 expected_serial,
                 model,
+                false,
             );
         }
         return set_name(
@@ -1935,6 +1936,18 @@ pub fn restore_parsed_for_model(
             model,
         );
     }
+    if setting.name == "bluetooth-passkey" {
+        return set_passkey(
+            session,
+            slot,
+            &setting,
+            &parsed.planned_value(),
+            new_backup_path,
+            Some(&serial),
+            model,
+            true,
+        );
+    }
     let value = parsed.planned_value();
     set_for_model_bound(
         session,
@@ -2166,8 +2179,9 @@ fn set_passkey(
     backup_path: &Path,
     expected_serial: Option<&str>,
     model: SettingsModel,
+    is_restore: bool,
 ) -> Result<ChangeReceipt> {
-    if expected_serial.is_none() {
+    if !is_restore {
         ensure!(
             value != "000000" && value != "999999",
             "bluetooth passkey cannot be 000000 or 999999"
