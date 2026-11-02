@@ -124,6 +124,58 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         brightness.preserve = Some(1);
         specs.push(brightness);
     }
+    if matches!(
+        name,
+        "SC-E8000" | "SC-E6100" | "SC-E7000" | "SC-EM800" | "SC-EN600" | "SC-EN610"
+    ) {
+        let mut time = SettingSpec::new(
+            "display-time",
+            "minutes from midnight (0..1439)",
+            (0, 1439, 1),
+            0x05,
+            0x40,
+            &[0],
+            &[0; 2],
+            0,
+            2,
+        );
+        time.preserve = Some(2);
+        specs.push(time);
+    }
+    if matches!(
+        name,
+        "EW-WU101"
+            | "EW-WU111"
+            | "EW-EN100"
+            | "SC-E8000"
+            | "SC-E6100"
+            | "SC-E7000"
+            | "SC-EM800"
+            | "SC-EN600"
+            | "SC-EN610"
+    ) {
+        specs.push(byte_setting(
+            "wireless-mode",
+            "0 BLE and ANT+, 1 ANT+ only",
+            0x40,
+            0x50,
+            &[0, 1],
+        ));
+        let mut passkey = SettingSpec::new(
+            "bluetooth-passkey",
+            "6-digit numeric PIN",
+            (0, 0, 1),
+            0x40,
+            0x08,
+            &[0],
+            &[0; 6],
+            0,
+            6,
+        );
+        passkey.value_type = "string".into();
+        passkey.preserve = Some(6);
+        specs.push(passkey);
+    }
     specs
 }
 
@@ -197,6 +249,29 @@ pub(super) fn validate_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
             ensure!(
                 raw[..2].iter().all(|n| [2, 3, 255].contains(n)),
                 "unsupported multi-shift limit tuple"
+            );
+        }
+        "display-time" => {
+            ensure!(raw.len() >= 2, "short display-time reply");
+            let minutes = u16::from_le_bytes([raw[0], raw[1]]);
+            ensure!(
+                minutes < 1440,
+                "display time is outside the 24-hour range: {minutes}"
+            );
+        }
+        "wireless-mode" => {
+            ensure!(!raw.is_empty(), "short wireless-mode reply");
+            ensure!(
+                matches!(raw[0], 0 | 1),
+                "unsupported wireless mode: {}",
+                raw[0]
+            );
+        }
+        "bluetooth-passkey" => {
+            ensure!(raw.len() >= 6, "short bluetooth-passkey reply");
+            ensure!(
+                raw[..6].iter().all(|b| b.is_ascii_digit()),
+                "passkey reply contains non-numeric bytes"
             );
         }
         _ => {}
@@ -297,16 +372,101 @@ mod tests {
     }
 
     #[test]
+    fn wireless_mode_and_passkey_support_gateways_and_wireless_displays() {
+        for gateway in ["EW-WU101", "EW-WU111", "EW-EN100"] {
+            let wm = named(gateway, "wireless-mode");
+            assert_eq!((wm.group, wm.get, wm.set), (0x40, 0x54, 0x50));
+            assert_eq!(wm.choices, [0, 1]);
+            assert_eq!(
+                super::super::updated_payload(&wm, &[0], 1, false).unwrap(),
+                [1]
+            );
+            assert!(validate_reply(&wm, &[0]).is_ok());
+            assert!(validate_reply(&wm, &[1]).is_ok());
+            assert!(validate_reply(&wm, &[2]).is_err());
+            assert!(validate_reply(&wm, &[]).is_err());
+
+            let passkey = named(gateway, "bluetooth-passkey");
+            assert_eq!(
+                (passkey.group, passkey.get, passkey.set),
+                (0x40, 0x0c, 0x08)
+            );
+            assert_eq!(passkey.value_type, "string");
+            assert_eq!(passkey.decode(b"123456").unwrap(), json!("123456"));
+            assert!(super::super::validate_input(&passkey, "123456").is_ok());
+            assert!(super::super::validate_input(&passkey, "876543").is_ok());
+            assert!(super::super::validate_input(&passkey, "000000").is_err());
+            assert!(super::super::validate_input(&passkey, "999999").is_err());
+            assert!(super::super::validate_input(&passkey, "12345").is_err());
+            assert!(super::super::validate_input(&passkey, "1234567").is_err());
+            assert!(super::super::validate_input(&passkey, "12345a").is_err());
+            assert!(validate_reply(&passkey, b"123456").is_ok());
+            assert!(validate_reply(&passkey, b"000000").is_ok());
+            assert!(validate_reply(&passkey, b"999999").is_ok());
+            assert!(validate_reply(&passkey, b"12345").is_err());
+            assert!(validate_reply(&passkey, b"12345a").is_err());
+        }
+
+        for display in [
+            "SC-E8000", "SC-E6100", "SC-E7000", "SC-EM800", "SC-EN600", "SC-EN610",
+        ] {
+            assert!(schema(display).iter().any(|s| s.name == "wireless-mode"));
+            assert!(schema(display)
+                .iter()
+                .any(|s| s.name == "bluetooth-passkey"));
+        }
+
+        for wired in ["SC-EN500", "SC-M9050", "MU-S705", "SM-BMR1"] {
+            assert!(schema(wired)
+                .iter()
+                .all(|s| s.name != "wireless-mode" && s.name != "bluetooth-passkey"));
+        }
+    }
+
+    #[test]
+    fn display_time_is_unsigned_little_endian_minutes_from_midnight() {
+        for model in [
+            "SC-E8000", "SC-E6100", "SC-E7000", "SC-EM800", "SC-EN600", "SC-EN610",
+        ] {
+            let time = named(model, "display-time");
+            assert_eq!((time.group, time.get, time.set), (0x05, 0x44, 0x40));
+            assert_eq!(time.query, [0]);
+            assert_eq!(time.decode(&[0x15, 0x04]).unwrap(), json!(1045));
+            assert_eq!(time.decode(&[0x00, 0x00]).unwrap(), json!(0));
+            assert_eq!(time.decode(&[0x9f, 0x05]).unwrap(), json!(1439));
+            assert_eq!(
+                super::super::updated_payload(&time, &[0, 0], 1045, false).unwrap(),
+                [0x15, 0x04]
+            );
+            assert!(super::super::validate_input(&time, "0").is_ok());
+            assert!(super::super::validate_input(&time, "1045").is_ok());
+            assert!(super::super::validate_input(&time, "1439").is_ok());
+            assert!(super::super::validate_input(&time, "1440").is_err());
+            assert!(super::super::validate_input(&time, "-1").is_err());
+            assert!(super::super::validate_input(&time, "abc").is_err());
+            assert!(validate_reply(&time, &[0x15, 0x04]).is_ok());
+            assert!(validate_reply(&time, &[0x9f, 0x05]).is_ok());
+            assert!(validate_reply(&time, &[0xa0, 0x05]).is_err());
+            assert!(validate_reply(&time, &[0]).is_err());
+        }
+
+        for model in ["EW-WU111", "SC-EN500", "SC-M9050", "MU-S705"] {
+            assert!(schema(model).iter().all(|s| s.name != "display-time"));
+        }
+    }
+
+    #[test]
     fn component_writes_journal_then_read_back_exact_shared_tuples() {
         use crate::device::UnitCommands;
         use crate::settings::{set_for_model, SettingsModel};
 
         struct Component {
+            group: u8,
             get: u8,
             set: u8,
-            current: [u8; 2],
+            current: Vec<u8>,
             backup: std::path::PathBuf,
-            expected: [u8; 4],
+            expected: Vec<u8>,
             writes: usize,
         }
         impl UnitCommands for Component {
@@ -321,16 +481,16 @@ mod tests {
                 assert_eq!(slot, 7);
                 match (group, command) {
                     (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
-                    (0x0b, command) if command == self.get => {
+                    (grp, command) if grp == self.group && command == self.get => {
                         assert_eq!(params, [0]);
                         assert_eq!(reply, command + 2);
-                        Ok(self.current.to_vec())
+                        Ok(self.current.clone())
                     }
-                    (0x0b, command) if command == self.set => {
+                    (grp, command) if grp == self.group && command == self.set => {
                         assert!(self.backup.exists());
-                        assert_eq!(params, self.expected);
+                        assert_eq!(params, self.expected.as_slice());
                         assert_eq!(reply, command + 2);
-                        self.current.copy_from_slice(&params[..2]);
+                        self.current = params.to_vec();
                         self.writes += 1;
                         Ok(Vec::new())
                     }
@@ -339,36 +499,72 @@ mod tests {
             }
         }
 
-        for (index, model, name, value, get, set, current, expected) in [
+        for (index, model, name, value, group, get, set, current, expected) in [
             (
                 0,
                 "SM-BMR2",
                 "multi-shift-limit.up",
                 "2",
+                0x0b,
                 0x64,
                 0x60,
-                [255, 3],
-                [2, 3, 0, 0],
+                vec![255, 3],
+                vec![2, 3, 0, 0],
             ),
             (
                 1,
                 "MU-S705",
                 "hub-adjustment",
                 "-3",
+                0x0b,
                 0x14,
                 0x10,
-                [0, 4],
-                [253, 4, 0, 0],
+                vec![0, 4],
+                vec![253, 4, 0, 0],
             ),
             (
                 2,
                 "MU-UR500",
                 "hub-gear-count",
                 "5",
+                0x0b,
                 0x1c,
                 0x18,
-                [1, 8],
-                [1, 5, 0, 0],
+                vec![1, 8],
+                vec![1, 5, 0, 0],
+            ),
+            (
+                3,
+                "EW-WU111",
+                "wireless-mode",
+                "1",
+                0x40,
+                0x54,
+                0x50,
+                vec![0],
+                vec![1],
+            ),
+            (
+                4,
+                "SC-E8000",
+                "display-time",
+                "1045",
+                0x05,
+                0x44,
+                0x40,
+                vec![0, 0],
+                vec![0x15, 0x04],
+            ),
+            (
+                5,
+                "EW-EN100",
+                "bluetooth-passkey",
+                "876543",
+                0x40,
+                0x0c,
+                0x08,
+                b"123456".to_vec(),
+                b"876543".to_vec(),
             ),
         ] {
             let backup = std::env::temp_dir().join(format!(
@@ -377,11 +573,12 @@ mod tests {
                 crate::platform::now_ms()
             ));
             let mut component = Component {
+                group,
                 get,
                 set,
-                current,
+                current: current.clone(),
                 backup: backup.clone(),
-                expected,
+                expected: expected.clone(),
                 writes: 0,
             };
             let receipt = set_for_model(
@@ -397,9 +594,57 @@ mod tests {
             assert_eq!(component.writes, 1);
             let journal: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
-            assert_eq!(journal["original_parameters"], hex::encode(current));
-            assert_eq!(journal["planned_parameters"], hex::encode(expected));
+            assert_eq!(journal["original_parameters"], hex::encode(&current));
+            assert_eq!(journal["planned_parameters"], hex::encode(&expected));
             std::fs::remove_file(backup).unwrap();
         }
+    }
+
+    #[test]
+    fn dry_run_passkey_and_display_time() {
+        use crate::device::UnitCommands;
+        use crate::settings::{dry_run_for_model, SettingsModel};
+
+        struct MockGateway {
+            passkey: Vec<u8>,
+        }
+        impl UnitCommands for MockGateway {
+            fn command(
+                &mut self,
+                slot: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                reply: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!(slot, 2);
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (0x40, 0x0c) => {
+                        assert_eq!(params, [0]);
+                        assert_eq!(reply, 0x0e);
+                        Ok(self.passkey.clone())
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+
+        let mut gw = MockGateway {
+            passkey: b"123456".to_vec(),
+        };
+        let report = dry_run_for_model(
+            &mut gw,
+            2,
+            "bluetooth-passkey",
+            "876543",
+            SettingsModel::Component("EW-EN100"),
+        )
+        .unwrap();
+        assert_eq!(report["valid"], true);
+        assert_eq!(report["changed"], true);
+        assert_eq!(report["current_value"], "123456");
+        assert_eq!(report["planned_value"], "876543");
+        assert_eq!(report["planned_parameters"], hex::encode("876543"));
     }
 }

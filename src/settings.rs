@@ -428,13 +428,24 @@ impl SettingSpec {
                 p[2]
             )));
         }
-        if self.width == 0 {
-            // Names are zero-filled, and unwritten (erased) bytes read FF.
-            let end = p
-                .iter()
-                .rposition(|&b| b != 0 && b != 0xff)
-                .map_or(0, |i| i + 1);
-            return Ok(json!(String::from_utf8(p[..end].to_vec())?));
+        if self.value_type == "string" {
+            ensure!(
+                p.len() >= self.offset + self.width,
+                "short reply for {}: {}",
+                self.name,
+                hex::encode(p)
+            );
+            let b = if self.width == 0 {
+                // Names are zero-filled, and unwritten (erased) bytes read FF.
+                let end = p
+                    .iter()
+                    .rposition(|&b| b != 0 && b != 0xff)
+                    .map_or(0, |i| i + 1);
+                &p[..end]
+            } else {
+                &p[self.offset..self.offset + self.width]
+            };
+            return Ok(json!(String::from_utf8(b.to_vec())?));
         }
         ensure!(
             p.len() >= self.offset + self.width,
@@ -1318,7 +1329,18 @@ pub fn set_for_model_bound(
             model,
         );
     }
-    if s.width == 0 {
+    if s.value_type == "string" {
+        if s.name == "bluetooth-passkey" {
+            return set_passkey(
+                session,
+                slot,
+                &s,
+                value,
+                backup_path,
+                expected_serial,
+                model,
+            );
+        }
         return set_name(
             session,
             slot,
@@ -1467,10 +1489,14 @@ pub fn dry_run_for_model(
         "oem": s.oem,
         "unit": s.unit,
     });
-    if s.value_type == "date" || s.width == 0 {
-        // Date and name writes have no live checks beyond the current read.
+    if s.value_type == "date" || s.value_type == "string" {
+        // Date and string writes have no live checks beyond the current read.
         let current = read_for_model(session, slot, name, model)?;
         validate_current_value(model, &s, &current.value)?;
+        if s.name == "bluetooth-passkey" {
+            report["changed"] = json!(current.value != value);
+            report["planned_parameters"] = json!(hex::encode(value.as_bytes()));
+        }
         report["current_value"] = current.value;
     } else {
         let plan = plan_numeric(session, slot, &s, value, model)?;
@@ -1608,7 +1634,7 @@ fn validate_model_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
     if spec.name == "destination" {
         ensure!(raw.len() >= 2, "invalid destination reply length");
     }
-    if spec.preserve == Some(6) {
+    if spec.preserve == Some(6) && spec.group == 0x16 && spec.set == 0xf8 {
         ensure!(
             raw.len() >= 7 && raw[..2] == spec.query[..2],
             "invalid modern basic-mode profile selector/length; fine-tune profiles are unsupported"
@@ -1678,6 +1704,9 @@ fn meaningful_len(s: &SettingSpec) -> usize {
         (0x0b, 0x90) => 6,
         (0x0b, 0x60) | (0x48, 0x48) => 4,
         (0x48, 0x50) => 3,
+        (0x40, 0x08) => 6,
+        (0x40, 0x50) => 1,
+        (0x05, 0x40) => 2,
         _ => 2,
     }
 }
@@ -2021,11 +2050,24 @@ pub(crate) fn validate_input(s: &SettingSpec, value: &str) -> Result<()> {
     ensure!(!s.read_only, "setting {} is read-only", s.name);
     if s.value_type == "date" {
         parse_date(value)?;
-    } else if s.width == 0 {
-        ensure!(
-            value.is_ascii() && value.len() <= 10 && value.bytes().all(|b| (32..=126).contains(&b)),
-            "profile name requires at most 10 printable ASCII characters"
-        );
+    } else if s.value_type == "string" {
+        if s.name == "bluetooth-passkey" {
+            ensure!(
+                value.len() == 6 && value.chars().all(|c| c.is_ascii_digit()),
+                "bluetooth passkey must be exactly 6 numeric digits"
+            );
+            ensure!(
+                value != "000000" && value != "999999",
+                "bluetooth passkey cannot be 000000 or 999999"
+            );
+        } else {
+            ensure!(
+                value.is_ascii()
+                    && value.len() <= 10
+                    && value.bytes().all(|b| (32..=126).contains(&b)),
+                "profile name requires at most 10 printable ASCII characters"
+            );
+        }
     } else if value == "unset" {
         ensure!(s.nullable, "this setting does not support unset");
     } else {
@@ -2105,6 +2147,66 @@ fn set_name(
         ensure!(
             s.decode(&read_raw(session, slot, s)?)? == after,
             "profile name readback mismatch"
+        );
+    }
+    Ok(ChangeReceipt {
+        setting: s.name.clone(),
+        before,
+        after,
+        backup: backup_path.display().to_string(),
+        changed,
+    })
+}
+
+fn set_passkey(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    s: &SettingSpec,
+    value: &str,
+    backup_path: &Path,
+    expected_serial: Option<&str>,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
+    let original = read_raw(session, slot, s)?;
+    validate_model_reply(s, &original)?;
+    let before = s.decode(&original)?;
+    validate_current_value(model, s, &before)?;
+    let after = json!(value);
+    let serial = checked_serial(session, slot, expected_serial, model)?;
+    let mut backup = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(backup_path)
+        .context("create settings backup (choose a new filename)")?;
+    serde_json::to_writer_pretty(
+        &mut backup,
+        &json!({
+            "format": "cranklink-setting-backup-v1",
+            "serial": serial,
+            "slot": slot,
+            "settings_model": model.slug(),
+            "setting": s.name,
+            "before": before,
+            "original_parameters": hex::encode(&original),
+            "planned_parameters": hex::encode(value.as_bytes()),
+            "group": s.group,
+            "command": s.set,
+            "query": s.query
+        }),
+    )?;
+    backup.write_all(b"\n")?;
+    backup.sync_all()?;
+    crate::storage::sync_parent(backup_path).context("persist settings backup directory")?;
+    let changed = before != after;
+    if changed {
+        session
+            .command(slot, s.group, s.set, value.as_bytes(), s.set + 2)
+            .context("passkey write failed, outcome uncertain; backup retained")?;
+        let got = read_raw(session, slot, s)?;
+        validate_model_reply(s, &got)?;
+        ensure!(
+            s.decode(&got)? == after,
+            "bluetooth passkey readback mismatch"
         );
     }
     Ok(ChangeReceipt {

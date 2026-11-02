@@ -132,6 +132,9 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   "display-language": { label: "Display language", description: "Language used by the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "English", 1: "French", 2: "German", 3: "Dutch", 4: "Italian", 5: "Spanish" } },
   "display-backlight": { label: "Display backlight", description: "Backlight behavior on the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Off", 1: "On", 2: "Manual" } },
   "display-brightness": { label: "Display brightness", description: "Cycle-computer screen brightness.", section: "geometry", displayUnit: "%" },
+  "display-time": { label: "Display time", description: "Cycle-computer clock time in minutes from midnight (0–1439).", section: "geometry", displayUnit: "min" },
+  "wireless-mode": { label: "Wireless mode", description: "Active wireless communication standards on this unit.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" } },
+  "bluetooth-passkey": { label: "Bluetooth passkey", description: "Six-digit numeric PIN for Bluetooth pairing and authentication.", section: "geometry", displayUnit: "" },
   "tire-circumference": {
     label: "Tire Circumference",
     description: "Distance the loaded tire travels in one full wheel turn. The motor uses this measurement for speed and distance readings.",

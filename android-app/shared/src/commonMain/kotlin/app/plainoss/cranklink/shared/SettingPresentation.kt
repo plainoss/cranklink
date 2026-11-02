@@ -101,7 +101,7 @@ fun TuningSetting.inputText(backendText: String): String {
 /** Format canonical snapshot/backup values without requiring an active connection. */
 fun formatSettingValue(name: String, canonical: String, model: String? = null): String {
     if (canonical == "unset") return "Not set"
-    if (name.endsWith(".name") || name == "maintenance-date") return canonical
+    if (name.endsWith(".name") || name == "maintenance-date" || name == "bluetooth-passkey") return canonical
     val number = canonical.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return canonical
     if (number == number.toInt().toDouble()) {
         val choice = number.toInt()
@@ -116,6 +116,13 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
             }
             "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
             "destination" -> marketLabel(model, choice)
+            "wireless-mode" -> mapOf(0 to "Bluetooth & ANT+", 1 to "ANT+ only")[choice]
+            "display-time" -> {
+                val mins = number.toInt()
+                val h = mins / 60
+                val m = mins % 60
+                "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
+            }
             else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
                 mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
             } else null
@@ -199,4 +206,10 @@ private val standardPresentations = mapOf(
         "Lower bound for assist-profile peak torque. Profile torque values must stay at or above this limit.", "Nm"),
     "torque-maximum" to SettingPresentation("Maximum profile torque",
         "Upper bound for assist-profile peak torque. Profile torque values must stay at or below this limit.", "Nm"),
+    "wireless-mode" to SettingPresentation("Wireless mode",
+        "Selects active wireless communication channels (Bluetooth Low Energy and ANT+)."),
+    "display-time" to SettingPresentation("Display time",
+        "Cycle computer clock time in minutes from midnight (0–1439).", "min"),
+    "bluetooth-passkey" to SettingPresentation("Bluetooth passkey",
+        "Six-digit numeric PIN for Bluetooth pairing and authentication."),
 )

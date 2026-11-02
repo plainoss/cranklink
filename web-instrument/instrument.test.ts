@@ -65,6 +65,31 @@ describe("Domain Schema Enrichment & Ordering", () => {
       assert.equal(speedSpec.userMin, model === "ep800-crg" ? 15 : 14);
       assert.equal(formatValue(speedSpec, 25), "25 km/h");
     }
+
+    assert.equal(formatValue({ name: "bluetooth-passkey", value_type: "string" } as any, "012345"), "012345");
+    assert.equal(formatValue({ name: "bluetooth-passkey" } as any, "012345"), "012345");
+    assert.equal(
+      formatValue(
+        {
+          name: "wireless-mode",
+          choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" },
+        } as any,
+        0,
+      ),
+      "Bluetooth & ANT+",
+    );
+    assert.equal(
+      formatValue(
+        {
+          name: "wireless-mode",
+          choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" },
+        } as any,
+        1,
+      ),
+      "ANT+ only",
+    );
+    assert.equal(formatValue({ name: "display-time" } as any, 1045), "17:25");
+    assert.equal(formatValue({ name: "display-time" } as any, 5), "00:05");
   });
 
   it("offers modern torque levels only for OEM bounds with a vendor table", async () => {

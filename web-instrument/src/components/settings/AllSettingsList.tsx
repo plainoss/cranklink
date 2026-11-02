@@ -118,25 +118,48 @@ function GenericEditor({ spec, descriptionId }: { spec: EnrichedSetting; descrip
   if (spec.value_type === "number") {
     const range = settingDisplayRange(spec);
     const unit = settingDisplayUnit(spec);
+    const isDisplayTime = spec.name === "display-time";
+    const syncCurrentTime = () => {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      setting.stage(currentMinutes);
+    };
     return (
-      <NumberField
-        aria-label={unit ? `${setting.label} (${unit})` : setting.label}
-        aria-describedby={descriptionId}
-        value={Number.isFinite(setting.displayNumeric) ? setting.displayNumeric : NaN}
-        minValue={range.min}
-        maxValue={range.max}
-        step={range.step}
-        formatOptions={{ useGrouping: false, maximumFractionDigits: 10 }}
-        onChange={(next) => Number.isFinite(next) && setting.stageDisplay(next)}
-        isDisabled={setting.isDisabled}
-        data-testid={`setting-input-${spec.name}`}
-        fullWidth
-      >
-        <NumberField.Group>
-          <NumberField.Input className="font-mono" />
-          {unit && <span className="pr-3 text-xs text-muted" aria-hidden="true">{unit}</span>}
-        </NumberField.Group>
-      </NumberField>
+      <div className="flex flex-col gap-1.5 w-full">
+        <NumberField
+          aria-label={unit ? `${setting.label} (${unit})` : setting.label}
+          aria-describedby={descriptionId}
+          value={Number.isFinite(setting.displayNumeric) ? setting.displayNumeric : NaN}
+          minValue={range.min}
+          maxValue={range.max}
+          step={range.step}
+          formatOptions={{ useGrouping: false, maximumFractionDigits: 10 }}
+          onChange={(next) => Number.isFinite(next) && setting.stageDisplay(next)}
+          isDisabled={setting.isDisabled}
+          data-testid={`setting-input-${spec.name}`}
+          fullWidth
+        >
+          <NumberField.Group>
+            <NumberField.Input className="font-mono" />
+            {unit && <span className="pr-3 text-xs text-muted" aria-hidden="true">{unit}</span>}
+          </NumberField.Group>
+        </NumberField>
+        {isDisplayTime && (
+          <Button
+            size="sm"
+            variant="tertiary"
+            onPress={syncCurrentTime}
+            isDisabled={setting.isDisabled}
+            data-testid="sync-display-time-btn"
+            className="self-end text-xs"
+          >
+            Sync Local Time ({(() => {
+              const now = new Date();
+              return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+            })()})
+          </Button>
+        )}
+      </div>
     );
   }
 
@@ -147,7 +170,13 @@ function GenericEditor({ spec, descriptionId }: { spec: EnrichedSetting; descrip
   };
   return (
     <TextField aria-label={setting.label} aria-describedby={descriptionId} value={draft} onChange={setDraft} onBlur={commit} isDisabled={setting.isDisabled} fullWidth>
-      <Input className="font-mono" data-testid={`setting-input-${spec.name}`} onKeyDown={(event) => event.key === "Enter" && !event.nativeEvent.isComposing && commit()} />
+      <Input
+        className="font-mono"
+        maxLength={spec.name === "bluetooth-passkey" ? 6 : undefined}
+        placeholder={spec.name === "bluetooth-passkey" ? "6-digit PIN" : undefined}
+        data-testid={`setting-input-${spec.name}`}
+        onKeyDown={(event) => event.key === "Enter" && !event.nativeEvent.isComposing && commit()}
+      />
     </TextField>
   );
 }
