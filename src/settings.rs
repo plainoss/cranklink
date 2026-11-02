@@ -1892,10 +1892,6 @@ impl ParsedRestore {
             spec.decode(&self.original_parameters)? == self.before,
             "backup value does not match captured original parameters"
         );
-        ensure!(
-            spec.name != "display-time",
-            "a display clock backup is not restored; set the current time instead"
-        );
         if !(spec.group == 0x48 && spec.set == 0x50) {
             validate_input(&spec, &self.planned_value())?;
         }
@@ -1974,6 +1970,10 @@ pub fn restore_parsed_for_model(
     )?);
     let setting = parsed.validate_for_model(model, &serial)?;
     validate_link_safe(&setting, &parsed.planned_value(), session.bluetooth_link())?;
+    ensure!(
+        setting.name != "display-time",
+        "a display clock backup is not restored; set the current time instead"
+    );
     if setting.group == 0x48 && setting.set == 0x50 {
         return restore_date(
             session,

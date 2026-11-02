@@ -8,12 +8,21 @@ export const BUILD_REVISION = typeof __CRANKLINK_BUILD__ === "string" ? __CRANKL
  * output can include the bike's `bluetooth-passkey` value (as six digits or as
  * their ASCII hex). Never export either.
  */
-export function redactDiagnosticText(text: string): string {
+export function redactDiagnosticText(text: string, passkeyContext = false): string {
   const flagsRedacted = redactPasskeyFlags(text);
-  if (!/passkey/i.test(flagsRedacted)) return flagsRedacted;
+  if (!passkeyContext && !/passkey/i.test(flagsRedacted)) return flagsRedacted;
   return flagsRedacted
     .replace(/(?<![0-9A-Fa-f])(?:3[0-9]){6}(?![0-9A-Fa-f])/g, "[redacted]")
     .replace(/(?<!\d)\d{6}(?!\d)/g, "[redacted]");
+}
+
+/** Output that follows a passkey command (e.g. a single read) is redacted too. */
+function redactedLogLines(logs: InstrumentState["logs"]): string[] {
+  let passkeyContext = false;
+  return logs.map((log) => {
+    if (log.stream === "cmd") passkeyContext = /passkey/i.test(log.text);
+    return `[${log.timestamp}] ${log.stream}: ${redactDiagnosticText(log.text, passkeyContext)}`;
+  });
 }
 
 function redactPasskeyFlags(text: string): string {
@@ -43,6 +52,6 @@ export function formatDiagnosticReport(
     "",
     ...(state.failure ? [`Failure (${state.failure.kind}):`, redactDiagnosticText(state.failure.error), ""] : []),
     `Session log (UTC; latest ${state.logs.length} entries):`,
-    ...state.logs.map((log) => `[${log.timestamp}] ${log.stream}: ${redactDiagnosticText(log.text)}`),
+    ...redactedLogLines(state.logs),
   ].join("\n"));
 }

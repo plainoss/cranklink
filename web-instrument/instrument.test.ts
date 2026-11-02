@@ -1643,3 +1643,13 @@ describe("Setting descriptions", () => {
     }
   });
 });
+
+describe("offered choices", () => it("never offer values the core refuses as new values", async () => {
+  const { offeredChoices } = await import("./src/domain/settingFormat.ts");
+  assert.deepEqual(offeredChoices("wireless-mode", [0, 1, 2, 3], 3, false), [1, 2, 3]);
+  assert.deepEqual(offeredChoices("wireless-mode", [0, 1, 2, 3], 3, true), [2, 3]);
+  assert.deepEqual(offeredChoices("wireless-mode", [0, 1, 2, 3], 1, true), [1, 2, 3]);
+  assert.deepEqual(offeredChoices("switch-mode", [0, 1, 2], 2, false), [0, 2]);
+  assert.deepEqual(offeredChoices("switch-mode", [0, 1, 2], 1, false), [0, 1, 2]);
+  assert.deepEqual(offeredChoices("display-beep", [0, 1], 0, true), [0, 1]);
+}));

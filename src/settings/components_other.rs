@@ -840,6 +840,20 @@ mod tests {
         assert!(format!("{err:#}").contains("no batch writes sent"));
         assert_eq!(gw.writes, 0);
 
+        // A batch passkey change journals neither the new PIN nor its receipt.
+        let prefix = temp("passkey-journal");
+        let ops = [Operation::Set {
+            name: "bluetooth-passkey".into(),
+            value: "482913".into(),
+        }];
+        crate::settings::batch::run(&mut gw, 2, &ops, &prefix, model).unwrap();
+        assert_eq!(gw.passkey, b"482913");
+        let journal_path = format!("{}.journal.jsonl", prefix.display());
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        assert!(!journal.contains("482913"), "{journal}");
+        std::fs::remove_file(journal_path).unwrap();
+        gw.passkey = b"000000".to_vec();
+
         // A unit still on the 000000 default can change away from it.
         let backup = temp("passkey-from-default.json");
         set_for_model(&mut gw, 2, "bluetooth-passkey", "482913", &backup, model).unwrap();
@@ -861,6 +875,15 @@ mod tests {
         let restored = temp("clock-restore.json");
         let err = restore_for_model(&mut display, 2, &backup, &restored, model).unwrap_err();
         assert!(format!("{err:#}").contains("current time"));
+        assert_eq!(display.writes, 1);
+        // Inside a batch the clock backup is skipped, so the rest of a save restores.
+        let prefix = temp("clock-batch");
+        let ops = [crate::settings::batch::Operation::Restore {
+            file: backup.clone(),
+            parsed: None,
+        }];
+        let result = crate::settings::batch::run(&mut display, 2, &ops, &prefix, model).unwrap();
+        assert!(result.to_string().contains("skipped"), "{result}");
         assert_eq!(display.writes, 1);
         std::fs::remove_file(backup).unwrap();
     }

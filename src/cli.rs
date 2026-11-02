@@ -827,7 +827,7 @@ pub fn execute(args: Vec<String>) -> Result<()> {
                     check_motor_serial(&motor_serial, expect_serial.as_deref())?;
 
                     let model = resolve_settings_model(&mut s, &id)?;
-                    validate_settings_preflight(&command, model, &motor_serial)?;
+                    validate_settings_preflight(&command, model, &motor_serial, false)?;
                     ensure!(
                         !(no_auth && write_requires_unit_auth(&command, model, unit_auth)),
                         "setting requires drive-unit authentication, but --no-auth was specified"
@@ -2056,7 +2056,7 @@ fn execute_ble(cli: Cli, is_json: bool) -> Result<()> {
                     cli.expect_serial.as_deref(),
                 )?;
                 let model = resolve_settings_model(&mut session, &id)?;
-                validate_settings_preflight(&command, model, &serial)?;
+                validate_settings_preflight(&command, model, &serial, true)?;
                 ensure!(
                     !(cli.no_auth && write_requires_unit_auth(&command, model, cli.unit_auth)),
                     "setting requires drive-unit authentication, but --no-auth was specified"
@@ -2905,10 +2905,12 @@ fn require_write_serial(command: &Command, expect_serial: Option<&str>) -> Resul
     Ok(())
 }
 
+/// `bluetooth_link`: the session runs over a Bluetooth gateway.
 fn validate_settings_preflight(
     command: &SettingsCommand,
     model: crate::settings::SettingsModel,
     expected_serial: &str,
+    bluetooth_link: bool,
 ) -> Result<()> {
     let specs = crate::settings::schema_for_model(model);
     match command {
@@ -2922,7 +2924,7 @@ fn validate_settings_preflight(
                         model.name()
                     )
                 })?;
-            crate::settings::validate_input(spec, value)?;
+            crate::settings::validate_new_value(spec, value, bluetooth_link)?;
         }
         SettingsCommand::Restore { file, parsed, .. } => {
             let parsed_owned;
@@ -2933,7 +2935,12 @@ fn validate_settings_preflight(
                     &parsed_owned
                 }
             };
-            parsed_ref.validate_for_model(model, expected_serial)?;
+            let spec = parsed_ref.validate_for_model(model, expected_serial)?;
+            crate::settings::validate_link_safe(
+                &spec,
+                &parsed_ref.planned_value(),
+                bluetooth_link,
+            )?;
         }
         SettingsCommand::Batch { operations, .. } => {
             for op in operations {
@@ -2948,7 +2955,7 @@ fn validate_settings_preflight(
                                     model.name()
                                 )
                             })?;
-                        crate::settings::validate_input(spec, value)?;
+                        crate::settings::validate_new_value(spec, value, bluetooth_link)?;
                     }
                     crate::settings::batch::Operation::Restore { file, parsed } => {
                         let parsed_owned;
@@ -2960,7 +2967,12 @@ fn validate_settings_preflight(
                                 &parsed_owned
                             }
                         };
-                        parsed_ref.validate_for_model(model, expected_serial)?;
+                        let spec = parsed_ref.validate_for_model(model, expected_serial)?;
+                        crate::settings::validate_link_safe(
+                            &spec,
+                            &parsed_ref.planned_value(),
+                            bluetooth_link,
+                        )?;
                     }
                     _ => {}
                 }
@@ -6027,12 +6039,14 @@ mod cli_tests {
             &restore_cmd,
             crate::settings::SettingsModel::Ep800Crg,
             "010203040506",
+            false,
         )
         .unwrap();
         assert!(validate_settings_preflight(
             &restore_cmd,
             crate::settings::SettingsModel::Ep800Crg,
-            "ffffff000000"
+            "ffffff000000",
+            false
         )
         .unwrap_err()
         .to_string()

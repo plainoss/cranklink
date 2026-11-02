@@ -8,7 +8,7 @@ import { RotateCcw } from "lucide-react";
 import { OptionSelect } from "../ui/OptionSelect.tsx";
 import type { EnrichedSetting, InstrumentState } from "../../types.ts";
 import { matchesQuery, useSearchQuery, useSetting } from "./SettingRow.tsx";
-import { settingDisplayRange, settingDisplayUnit } from "../../domain/settingFormat.ts";
+import { offeredChoices, settingDisplayRange, settingDisplayUnit } from "../../domain/settingFormat.ts";
 
 interface AllSettingsListProps {
   state: InstrumentState;
@@ -40,7 +40,7 @@ export function AllSettingsList({ state, names, title, description, "data-testid
       <Card.Content>
         <ul className="flex flex-col divide-y divide-separator">
           {visible.map((name) => (
-            <SettingListItem key={name} name={name} />
+            <SettingListItem key={name} name={name} bluetooth={state.transport === "ble"} />
           ))}
         </ul>
       </Card.Content>
@@ -55,7 +55,7 @@ export function allSettingNames(state: InstrumentState): string[] {
   return [...names];
 }
 
-function SettingListItem({ name }: { name: string }) {
+function SettingListItem({ name, bluetooth }: { name: string; bluetooth: boolean }) {
   const setting = useSetting(name);
   const descriptionId = useId();
   return (
@@ -89,18 +89,19 @@ function SettingListItem({ name }: { name: string }) {
       </div>
       {setting.isReadOnly ? (
         <Chip variant="soft" size="sm" data-testid={`readonly-${name}`} className="justify-self-start sm:justify-self-end">Read only</Chip>
-      ) : !setting.unavailable && setting.spec ? <GenericEditor spec={setting.spec} descriptionId={setting.spec.description ? descriptionId : undefined} /> : null}
+      ) : !setting.unavailable && setting.spec ? <GenericEditor spec={setting.spec} bluetooth={bluetooth} descriptionId={setting.spec.description ? descriptionId : undefined} /> : null}
     </li>
   );
 }
 
-function GenericEditor({ spec, descriptionId }: { spec: EnrichedSetting; descriptionId?: string }) {
+function GenericEditor({ spec, bluetooth, descriptionId }: { spec: EnrichedSetting; bluetooth: boolean; descriptionId?: string }) {
   const setting = useSetting(spec.name);
   const current = setting.value === null || setting.value === undefined ? "" : String(setting.value);
   const [draft, setDraft] = useState(current);
   useEffect(() => setDraft(current), [current]);
 
-  const choices = spec.choices.length ? spec.choices : Object.keys(spec.choiceLabels ?? {}).map(Number);
+  const allChoices = spec.choices.length ? spec.choices : Object.keys(spec.choiceLabels ?? {}).map(Number);
+  const choices = offeredChoices(spec.name, allChoices, current === "" ? null : Number(current), bluetooth);
   if (choices.length) {
     return (
       <OptionSelect

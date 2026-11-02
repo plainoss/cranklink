@@ -306,7 +306,7 @@ fn adjustment_schema(group: u8) -> Vec<SettingSpec> {
                 offset,
                 1,
             );
-            // TM_ADJ_LV_GET reports current and maximum as signed bytes. Its
+            // The GET reports current and maximum as signed bytes. Its
             // SET path includes target/mode handling and is not a plain setting.
             spec.signed = true;
             spec.read_only = true;

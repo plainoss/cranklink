@@ -163,3 +163,15 @@ export function unwritableNotice(values: string[]): string {
 export function listText(items: string[]): string {
   return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
+
+/**
+ * Choices a value can hold but the core refuses as a new value: radio off,
+ * a mixed switch assignment, and radio modes that end a Bluetooth session.
+ * The current value stays listed so the select can still show it.
+ */
+export function offeredChoices(name: string, choices: number[], current: number | null, bluetooth: boolean): number[] {
+  const refused = new Set<number>(
+    name === "wireless-mode" ? (bluetooth ? [0, 1] : [0]) : name === "switch-mode" ? [1] : [],
+  );
+  return choices.filter((choice) => !refused.has(choice) || choice === current);
+}

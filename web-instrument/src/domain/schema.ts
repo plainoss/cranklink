@@ -154,7 +154,7 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   "display-backlight": { label: "Display backlight", description: "Backlight behavior on the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Off", 1: "On", 2: "Manual" } },
   "display-brightness": { label: "Display brightness", description: "Cycle-computer screen brightness.", section: "geometry", displayUnit: "%" },
   "display-time": { label: "Display time", description: "Cycle-computer clock time in minutes from midnight (0–1439). It is written when you save, so save promptly after using the current time.", section: "geometry", displayUnit: "min" },
-  "wireless-mode": { label: "Wireless mode", description: "Active radios on this derailleur. ANT+ only turns Bluetooth off, so it can only be set over USB; radio off is never offered.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Radio off", 1: "ANT+ only", 2: "Bluetooth only", 3: "Bluetooth & ANT+" } },
+  "wireless-mode": { label: "Wireless mode", description: "Active radios on this derailleur. ANT+ only turns Bluetooth off, so it is only offered over USB; radio off is never offered.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Radio off", 1: "ANT+ only", 2: "Bluetooth only", 3: "Bluetooth & ANT+" } },
   "bluetooth-passkey": { label: "Bluetooth passkey", description: "Six-digit numeric PIN for Bluetooth pairing and authentication.", section: "geometry", displayUnit: "" },
   "tire-circumference": {
     label: "Tire Circumference",
