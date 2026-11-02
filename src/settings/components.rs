@@ -28,9 +28,10 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         "ST-R9150-L" | "ST-R9150-R" | "ST-R9170-L" | "ST-R9170-R" | "ST-R8050-L" | "ST-R8050-R"
         | "ST-R8070-L" | "ST-R8070-R" | "ST-RX815-L" | "ST-RX815-R" | "ST-R9171-L"
         | "ST-R9171-R" | "ST-R8071-L" | "ST-R8071-R" | "ST-R9270-L" | "ST-R9270-R"
-        | "ST-R8170-L" | "ST-R8170-R" | "ST-R7170-L" | "ST-R7170-R" | "ST-RX825-L"
-        | "ST-RX825-R" | "ST-R9250-L" | "ST-R9250-R" | "ST-R8150-L" | "ST-R8150-R"
-        | "ST-R9271-L" | "ST-R9271-R" | "ST-R8171-L" | "ST-R8171-R" => extended_switch_schema(),
+        | "ST-R8170-L" | "ST-R8170-R" | "ST-RX825-L" | "ST-RX825-R" | "ST-R9250-L"
+        | "ST-R9250-R" | "ST-R8150-L" | "ST-R8150-R" | "ST-R9271-L" | "ST-R9271-R"
+        | "ST-R8171-L" | "ST-R8171-R" => extended_switch_schema(true),
+        "ST-R7170-L" | "ST-R7170-R" => extended_switch_schema(false),
         "SW-E7000-L" | "SW-E8000-L" => steps_switch_schema(true, None),
         "SW-E7000-R" => steps_switch_schema(false, None),
         "SW-EM800-L" | "SW-EN600-L" | "SW-E6010-L" => {
@@ -151,40 +152,60 @@ fn switch_schema(four_byte_layout: bool) -> Vec<SettingSpec> {
     specs
 }
 
-fn extended_switch_schema() -> Vec<SettingSpec> {
+fn extended_switch_schema(has_auxiliary: bool) -> Vec<SettingSpec> {
     let query = vec![0; 4];
     let template = query.clone();
     let mut specs = Vec::new();
-    for (name, offset, mask, choices, desc) in [
-        (
-            "switch-a-function",
-            0,
-            0xf0,
-            &[0, 1, 2, 3, 10, 11, 12, 13][..],
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-        ),
-        (
-            "switch-b-function",
-            0,
-            0x0f,
-            &[0, 1, 2, 3, 10, 11, 12, 13][..],
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
-        ),
-        (
-            "switch-c-function",
-            1,
-            0xf0,
-            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
-        ),
-        (
-            "switch-s-function",
-            1,
-            0x0f,
-            &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
-            "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
-        ),
-    ] {
+    let channels: &[_] = if has_auxiliary {
+        &[
+            (
+                "switch-a-function",
+                0,
+                0xf0,
+                &[0, 1, 2, 3, 10, 11, 12, 13][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+            ),
+            (
+                "switch-b-function",
+                0,
+                0x0f,
+                &[0, 1, 2, 3, 10, 11, 12, 13][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+            ),
+            (
+                "switch-c-function",
+                1,
+                0xf0,
+                &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+            ),
+            (
+                "switch-s-function",
+                1,
+                0x0f,
+                &[0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 15][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 4/5 display, 10..13 D-Fly, 15 disabled",
+            ),
+        ]
+    } else {
+        &[
+            (
+                "switch-a-function",
+                0,
+                0xf0,
+                &[0, 1, 2, 3, 10, 11, 12, 13][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+            ),
+            (
+                "switch-b-function",
+                0,
+                0x0f,
+                &[0, 1, 2, 3, 10, 11, 12, 13][..],
+                "0 front up, 1 front down, 2 rear up, 3 rear down, 10..13 D-Fly",
+            ),
+        ]
+    };
+    for (name, offset, mask, choices, desc) in channels {
         let mut spec = SettingSpec::new(
             name,
             desc,
@@ -193,11 +214,11 @@ fn extended_switch_schema() -> Vec<SettingSpec> {
             0x10,
             &query,
             &template,
-            offset,
+            *offset,
             1,
         )
         .choices(choices);
-        spec.bit_mask = Some(mask);
+        spec.bit_mask = Some(*mask);
         spec.preserve = Some(2);
         specs.push(spec);
     }
@@ -476,10 +497,17 @@ mod tests {
         assert_eq!(fd.len(), 3);
         assert!(fd.iter().any(|s| s.name == "synchro-shift-interval"));
 
-        let st = schema("ST-R9270-L");
-        assert_eq!(st.len(), 4);
-        assert!(st
+        let st9270 = schema("ST-R9270-L");
+        assert_eq!(st9270.len(), 4);
+        assert!(st9270
             .iter()
             .any(|s| s.name == "switch-c-function" && !s.read_only));
+
+        let st7170 = schema("ST-R7170-L");
+        assert_eq!(st7170.len(), 2);
+        assert!(st7170.iter().any(|s| s.name == "switch-a-function"));
+        assert!(st7170.iter().any(|s| s.name == "switch-b-function"));
+        assert!(!st7170.iter().any(|s| s.name == "switch-c-function"));
+        assert!(!st7170.iter().any(|s| s.name == "switch-s-function"));
     }
 }

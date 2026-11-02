@@ -46,7 +46,8 @@ strict DCAS serial-padding checks.
 | Components | Fields |
 | --- | --- |
 | Classic wired ST/SW Di2 controls (6770, 6870, 9070, R785) | `switch-a-function`, `switch-b-function`; auxiliary C/S channels are read-only |
-| Modern 11- and 12-speed dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071, R9270, R8170, R7170, RX825, R9250, R8150, R9271, R8171) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
+| Modern 11- and 12-speed dual-control levers (R9150/R9170, R8050/R8070, RX815, R9171, R8071, R9270, R8170, RX825, R9250, R8150, R9271, R8171) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13); `switch-c-function`, `switch-s-function` (with display controls 4/5 and D-Fly) |
+| 105 Di2 12-speed dual-control levers (R7170-L, R7170-R) | `switch-a-function`, `switch-b-function` (with D-Fly 10..13; auxiliary controls omitted to match physical hardware) |
 | STEPS handlebar switches (SW-E7000, SW-E8000, SW-EM800, SW-EN600, SW-E6000, SW-E6010) | `switch-mode` (0 shifting, 2 assist mode swap); `switch-a-function`, `switch-b-function`; auxiliary `switch-s-function` or `switch-c-function` where fitted |
 | 10-, 11- and 12-speed rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150, RX805/RX815/RX817, R9250, R8150, R7150, RX825/RX827/RX717/RX828 | `multi-shift-speed`; `wireless-mode` and `bluetooth-passkey` on 12-speed models; current and maximum derailleur adjustment are read-only |
 | 10-, 11- and 12-speed front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150, RX815, R9250, R8150, R7150, RX825 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
