@@ -50,7 +50,8 @@ strict DCAS serial-padding checks.
 | Classic front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150 and RX815 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
 | SM-BMR1, SM-BMR2, BM-DN100, BT-DN110 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
 | MU-S705, MU-UR500, MU-UR510, MU-UR520 hub actuators | `hub-adjustment` (−4…4, live maximum must be 4); `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
-| SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, and `display-brightness` |
+| SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, `display-brightness`, and `display-time` |
+| EW-WU101, EW-WU111, EW-EN100 wireless gateways & displays | `wireless-mode` (0 BLE & ANT+, 1 ANT+ only), `bluetooth-passkey` (6-digit numeric PIN) |
 
 The schema is authoritative for exact model variants. Modern wireless levers and other components without a verified layout remain without named settings. Firmware may reject an individual service; a full read reports that field under `unavailable`. These layouts are covered by protocol tests, not hardware validation.
 
@@ -66,6 +67,9 @@ Switch A/B values are wire channels: 0 front up, 1 front down, 2 rear up, 3 rear
 | `display-distance-unit` | 0 kilometres, 1 miles |
 | `display-backlight` | 0 off, 1 on, 2 manual |
 | `display-brightness` | 20, 40, 60, 80 or 100 percent |
+| `display-time` | 0..1439 (minutes from midnight, e.g. 1045 = 17:25) |
+| `wireless-mode` | 0 BLE and ANT+, 1 ANT+ only |
+| `bluetooth-passkey` | 6-digit numeric PIN (e.g. "123456", rejects 000000 and 999999) |
 
 ```sh
 cranklink settings schema --model ST-6870-L

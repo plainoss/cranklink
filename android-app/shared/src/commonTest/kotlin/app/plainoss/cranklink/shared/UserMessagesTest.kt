@@ -39,4 +39,13 @@ class UserMessagesTest {
             saveFailureOutcome("batch stopped at operation 1; 0 completed operations remain applied; inspect /x: no", listOf("A", "B")))
         assertNull(saveFailureOutcome("BLE response timeout", listOf("A")))
     }
+
+    @Test
+    fun formatsExtendedEtubeSettingsWithoutActiveConnection() {
+        assertEquals("012345", formatSettingValue("bluetooth-passkey", "012345"))
+        assertEquals("Bluetooth & ANT+", formatSettingValue("wireless-mode", "0"))
+        assertEquals("ANT+ only", formatSettingValue("wireless-mode", "1"))
+        assertEquals("17:25", formatSettingValue("display-time", "1045"))
+        assertEquals("00:05", formatSettingValue("display-time", "5"))
+    }
 }

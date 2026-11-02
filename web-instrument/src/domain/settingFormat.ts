@@ -60,7 +60,14 @@ export function settingLabel(schema: EnrichedSetting[], name: string): string {
 
 export function formatValue(spec: DisplaySpec | undefined, value: Value): string {
   if (value === null || value === undefined || value === "") return "—";
-  if (spec?.value_type === "string" || spec?.value_type === "date" || spec?.name.endsWith(".name") || spec?.name === "maintenance-date") return String(value);
+  if (
+    spec?.value_type === "string" ||
+    spec?.value_type === "date" ||
+    spec?.name.endsWith(".name") ||
+    spec?.name === "maintenance-date" ||
+    spec?.name === "bluetooth-passkey"
+  )
+    return String(value);
   const numeric = typeof value === "number" ? value : Number(value);
   const isNumeric = Number.isFinite(numeric) && String(value).trim() !== "";
 
@@ -72,6 +79,11 @@ export function formatValue(spec: DisplaySpec | undefined, value: Value): string
   const unit = settingDisplayUnit(spec);
   const physical = toDisplayValue(spec, numeric);
   if (spec?.name === "start-mode") return numeric === 0 ? "Off" : `Gear ${numeric}`;
+  if (spec?.name === "display-time") {
+    const hours = Math.floor(numeric / 60);
+    const mins = numeric % 60;
+    return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+  }
   if (unit === "level") return `Level ${physical}`;
   if (unit === "°") return `${physical}°`;
   if (unit === "teeth") return `${physical}T`;
