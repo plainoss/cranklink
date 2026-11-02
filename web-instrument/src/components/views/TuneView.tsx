@@ -51,6 +51,17 @@ export function TuneView({ state, controller, category, query }: TuneViewProps) 
   return (
     <SettingsProvider value={{ state, controller, query }}>
       <div className="w-full flex flex-col gap-6">
+        {["e8000", "e8000-pre41"].includes(state.identity?.modelSlug ?? "") && (category === "geometry" || category === "all" || searching) && (
+          <Alert status="default" data-testid="e8000-settings-support">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>Available E8000 / E8080 settings</Alert.Title>
+              <Alert.Description>{state.identity?.modelSlug === "e8000"
+                ? "Use Region & assist speed to select Europe (25 km/h) or United States (32 km/h). This changes the market region; an independent speed slider is not available. Region and wheel circumference can be saved wirelessly; lamp settings require a USB connection."
+                : "This firmware supports wheel circumference, mounting angle, and lamp settings. Region-based assist-speed selection requires D4.1.0 or later."}</Alert.Description>
+            </Alert.Content>
+          </Alert>
+        )}
         {component && allSettingNames(state).length === 0 ? (
           <Alert status="default" data-testid="component-settings-unavailable">
             <Alert.Indicator />

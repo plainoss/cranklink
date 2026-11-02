@@ -17,7 +17,7 @@ SHA = STOCK_SHA256
 RECORD_TABLE, RECORD_STATE, COMMIT = 0x10DFC, 0x20001220, 0x284CA
 # Values are synthetic fixtures, not recovered customer or device settings.
 HYDRATE = {0x23:(0x20002EA7,1), 0x20:(0x20002CDE,2), 0x0D:(0x20002D59,1),
-           0x29:(0x2000047C,2)}
+           0x29:(0x2000047C,2), 0x12:(0x20002E7F,1)}
 
 # Wear-leveling flash journal configuration for D4.2.0
 JOURNAL_BANKS = 3
@@ -50,7 +50,8 @@ class PersistentRecords:
                     'invalid stock EEPROM record metadata')
             self.metadata[index] = (address,length)
         self.records = {0x23:record_bytes(b'\x00'),0x20:record_bytes((2149).to_bytes(2,'little')),
-                        0x0D:record_bytes(b'\x00'),0x29:record_bytes((2500).to_bytes(2,'little'))}
+                        0x0D:record_bytes(b'\x00'),0x29:record_bytes((2500).to_bytes(2,'little')),
+                        0x12:record_bytes(b'\x00')}
         if self.path is not None and self.path.exists():
             require(self.path.stat().st_size <= 16384, 'persistent state exceeds limit')
             state = json.loads(self.path.read_text())
@@ -78,6 +79,7 @@ class PersistentRecords:
     def snapshot(self):
         return dict(profile=self.motor.profile["id"],modeled_commit=True,commits=self.commits,
                     lamp=self.motor.byte(0x20002EA7),
+                    destination=self.motor.byte(0x20002E7F),
                     tire_circumference=int.from_bytes(self.motor.u.mem_read(0x20002CDE,2),"little"),
                     auth_failures=self.motor.byte(0x20002D59),
                     persisted_record_ids=sorted(self.records),

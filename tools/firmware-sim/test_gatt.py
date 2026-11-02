@@ -13,6 +13,8 @@ from fw_sim.gatt import (GattEndpoint, AUTH_CONTROL, AUTH_NONCE, FEATURE,
                          PCE_COMMAND, PCE_RESPONSE, FREE_COMMAND, FREE_RESPONSE,
                          NONCE, USER_PROOF, APP_PROOF, read_request_line)
 from fw_sim.profiles import PROFILES
+from fw_sim.profiles import identify
+from fw_sim.gateway import Gateway
 
 
 def write(endpoint, characteristic, value):
@@ -140,6 +142,45 @@ class GattProtocolTests(unittest.TestCase):
         e.gateway.restore.assert_called_once()  # Initial device setup only.
         self.assertFalse(any(event['kind'] == 'coordinator-cleanup-after-client-disconnect'
                              for event in e.device.lifecycle))
+
+    def test_silent_mode_change_is_not_replayed_to_create_an_ack(self):
+        e = self.endpoint
+        authenticate(e)
+        g = e.gateway
+        g.profile['sched'] = 0x10010
+        g.notifications, g.output = [], []
+        g.u, g.call = Mock(), Mock()
+        write(e, PCE_COMMAND, b'\0\3\0')
+        self.assertEqual(g.call.call_args_list, [
+            unittest.mock.call(0x10000, unittest.mock.ANY, 2),
+            unittest.mock.call(0x10010)])
+        self.assertIsNone(e.request(dict(op='receive', timeout_ms=0))['notification'])
+
+
+class StockGatewayRoleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        manifest = os.environ.get('CRANKLINK_SIM_FIXTURES')
+        if not manifest:
+            raise unittest.SkipTest('set CRANKLINK_SIM_FIXTURES for stock gateway role tests')
+        path = Path(manifest).resolve()
+        fixtures = json.loads(path.read_text())
+        cls.gateways = [path.parent / fixtures[p['id']] for p in PROFILES
+                        if p['kind'] == 'gateway' and p['id'] in fixtures]
+        if not cls.gateways:
+            raise unittest.SkipTest('fixtures require a gateway')
+
+    def test_stock_master_to_slave_changes_role_without_an_ack(self):
+        for path in self.gateways:
+            image, profile = identify(path, 'gateway')
+            with self.subTest(gateway=profile['id']):
+                gateway = Gateway(image, profile)
+                before = len(gateway.notifications)
+                gateway.call(profile['pce3'], 0)
+                gateway.call(profile['sched'])
+                self.assertEqual(gateway.notifications[before:], [])
+                gateway.call(profile['pce4'])
+                self.assertEqual(gateway.notifications[-1], '2493')
 
 
 class StockGattTests(unittest.TestCase):

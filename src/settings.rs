@@ -22,6 +22,7 @@ pub enum SettingsModel {
     Ep801,
     Ep500,
     E5100,
+    E8000Pre41,
     E8000,
     E7000,
     E6100,
@@ -47,7 +48,7 @@ impl SettingsModel {
             Self::Ep801 => "DU-EP801/DU-EP801-CRG",
             Self::Ep500 => "DU-EP500",
             Self::E5100 => "DU-E5100",
-            Self::E8000 => "DU-E8000/DU-E8080",
+            Self::E8000Pre41 | Self::E8000 => "DU-E8000/DU-E8080",
             Self::E7000 => "DU-E7000",
             Self::E6100 => "DU-E6100 family",
             Self::E6000 => "DU-E6000",
@@ -64,6 +65,7 @@ impl SettingsModel {
             Self::Ep801 => "ep801",
             Self::Ep500 => "ep500",
             Self::E5100 => "e5100",
+            Self::E8000Pre41 => "e8000-pre41",
             Self::E8000 => "e8000",
             Self::E7000 => "e7000",
             Self::E6100 => "e6100",
@@ -86,6 +88,7 @@ impl SettingsModel {
             "ep801" => Self::Ep801,
             "ep500" => Self::Ep500,
             "e5100" => Self::E5100,
+            "e8000-pre41" => Self::E8000Pre41,
             "e8000" => Self::E8000,
             "e7000" => Self::E7000,
             "e6100" => Self::E6100,
@@ -123,6 +126,7 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
     if matches!(
         model,
         SettingsModel::E8000
+            | SettingsModel::E8000Pre41
             | SettingsModel::E7000
             | SettingsModel::E6100
             | SettingsModel::E6000
@@ -134,7 +138,8 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
             matches!(
                 s.name.as_str(),
                 "tire-circumference" | "mounting-angle" | "lamp"
-            ) || (model == SettingsModel::E6002 && s.name == "destination")
+            ) || (matches!(model, SettingsModel::E6002 | SettingsModel::E8000)
+                && s.name == "destination")
         });
         for spec in &mut specs {
             if spec.name == "lamp" {
@@ -161,6 +166,10 @@ pub fn schema_for_model(model: SettingsModel) -> Vec<SettingSpec> {
             }
             if model == SettingsModel::E6002 && spec.name == "destination" {
                 spec.choices = vec![0, 1, 4];
+            }
+            if model == SettingsModel::E8000 && spec.name == "destination" {
+                // Only the EU and US selections are admitted for this family.
+                spec.choices = vec![0, 1];
             }
         }
         return specs;
@@ -1449,6 +1458,9 @@ fn speed_range(modern: bool, destination: u8) -> Option<(i64, i64)> {
 }
 
 pub(crate) fn destination_speed_range(model: SettingsModel, destination: u8) -> Option<(i64, i64)> {
+    if matches!(model, SettingsModel::E8000 | SettingsModel::E8000Pre41) {
+        return None;
+    }
     speed_range(model.modern(), destination)
 }
 
@@ -1661,11 +1673,10 @@ fn validate_combination(s: &SettingSpec, p: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-/// Whether a setting requires BLE master routing (PC owner distinct from the cycle computer).
-/// This is distinct from `oem` regulation authentication: `destination` and `tire-circumference`
-/// require both drive-unit authentication and master routing, `lamp` and `lighting-time` require
-/// master routing without drive-unit authentication, and other `oem` settings require drive-unit
-/// authentication without master routing.
+/// Whether automatic BLE routing conservatively selects master routing for a setting.
+/// This setting-name policy is independent of firmware-specific drive-unit authentication.
+/// It is not a per-model determination that normal routing cannot write the setting.
+/// Explicit routing retains the ordinary identity, session and authentication checks.
 pub fn requires_ble_master_routing(setting_name: &str) -> bool {
     matches!(
         setting_name.to_ascii_lowercase().as_str(),
@@ -1941,13 +1952,20 @@ pub(crate) fn validate_current_value(
     spec: &SettingSpec,
     value: &Value,
 ) -> Result<()> {
-    if matches!(model, SettingsModel::Component(_)) {
+    if matches!(model, SettingsModel::Component(_))
+        || (model == SettingsModel::E8000 && spec.name == "destination")
+    {
         let input = match value {
             Value::Null => "unset".to_owned(),
             Value::String(value) => value.clone(),
             value => value.to_string(),
         };
-        validate_input(spec, &input).context("current component value is outside the writable schema; refusing a change whose backup cannot be restored")?;
+        let context = if model == SettingsModel::E8000 {
+            "current motor region is outside the writable schema; refusing a change whose backup cannot be restored"
+        } else {
+            "current component value is outside the writable schema; refusing a change whose backup cannot be restored"
+        };
+        validate_input(spec, &input).context(context)?;
     }
     Ok(())
 }
@@ -2181,7 +2199,7 @@ mod tests {
     #[test]
     fn older_schemas_expose_only_common_fields_with_their_own_ranges_and_layouts() {
         for model in [
-            SettingsModel::E8000,
+            SettingsModel::E8000Pre41,
             SettingsModel::E7000,
             SettingsModel::E6100,
             SettingsModel::E6000,
@@ -2224,6 +2242,86 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn e8000_region_backup_write_and_restore_do_not_use_an_independent_speed_command() {
+        struct Motor {
+            region: u8,
+            selector: u8,
+            backup: std::path::PathBuf,
+            writes: usize,
+        }
+        impl UnitCommands for Motor {
+            fn command(
+                &mut self,
+                slot: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                _: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!(slot, 13);
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (0x16, 0xac) => {
+                        assert_eq!(params, [1]);
+                        Ok(vec![self.selector, self.region, 0xff, 0xff])
+                    }
+                    (0x16, 0xa8) => {
+                        let backup: Value = serde_json::from_slice(&std::fs::read(&self.backup)?)?;
+                        assert_eq!(backup["before"], self.region);
+                        assert_eq!(backup["settings_model"], "e8000");
+                        assert_eq!(params, [1, 1 - self.region, 0xff, 0xff]);
+                        self.region = params[1];
+                        self.writes += 1;
+                        Ok(vec![])
+                    }
+                    _ => panic!("unexpected command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+        let model = SettingsModel::E8000;
+        let spec = spec_for_model("destination", model).unwrap();
+        assert_eq!(spec.choices, [0, 1]);
+        assert!(spec.oem);
+        assert!(spec_for_model("destination", SettingsModel::E8000Pre41).is_err());
+        assert!(spec_for_model("speed-limit", model).is_err());
+        assert_eq!(schema_for_model(model).len(), 4);
+        let prefix = format!(
+            "cranklink-e8000-region-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        );
+        let before = std::env::temp_dir().join(format!("{prefix}-before.json"));
+        let restored = std::env::temp_dir().join(format!("{prefix}-restore.json"));
+        let rejected = std::env::temp_dir().join(format!("{prefix}-rejected.json"));
+        let mut motor = Motor {
+            region: 0,
+            selector: 1,
+            backup: before.clone(),
+            writes: 0,
+        };
+        let receipt = set_for_model(&mut motor, 13, "destination", "1", &before, model).unwrap();
+        assert_eq!(receipt.after, json!(1));
+        motor.backup = restored.clone();
+        restore_for_model(&mut motor, 13, &before, &restored, model).unwrap();
+        assert_eq!(motor.region, 0);
+        assert_eq!(motor.writes, 2);
+        for invalid in ["2", "3", "4", "5", "255"] {
+            assert!(
+                set_for_model(&mut motor, 13, "destination", invalid, &rejected, model).is_err()
+            );
+        }
+        motor.selector = 0;
+        assert!(set_for_model(&mut motor, 13, "destination", "1", &rejected, model).is_err());
+        motor.selector = 1;
+        motor.region = 2;
+        assert!(set_for_model(&mut motor, 13, "destination", "1", &rejected, model).is_err());
+        assert!(!rejected.exists());
+        assert_eq!(motor.writes, 2);
+        std::fs::remove_file(before).unwrap();
+        std::fs::remove_file(restored).unwrap();
     }
     #[test]
     fn decoded_snapshot_comparison_requires_all_values_and_ignores_reply_padding() {
@@ -2861,6 +2959,7 @@ mod tests {
             "ep801",
             "ep500",
             "e5100",
+            "e8000-pre41",
             "e8000",
             "e7000",
             "e6100",

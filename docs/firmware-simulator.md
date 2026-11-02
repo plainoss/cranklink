@@ -245,9 +245,29 @@ Every image runs two probes: a stock interrupt return and a seven-instruction st
 
 The four E6002 images additionally execute their actual region GET reply builders for EU, US and Korea. Original instructions call the selector/cache getter and construct `06 00 16 AE 01 <region> 00 00` in the firmware's reply buffer. The selector and current region cache are explicitly seeded RAM fixtures; there are no substituted firmware calls or injected authorization results. These are isolated reply-builder checks. The separate storage command below adds file-backed SET and cold reload. Inventory keeps both capabilities separate from packet transport support.
 
-The core supports the observed repeated ADDW instruction with the encoded repeat count plus one, charging every execution against the instruction budget. Unsupported repeated operations trap. The persistent profile enables 20-bit byte program addresses for its far ROM call; ordinary probes retain their explicit address width. MULU's data product is executed, while unverified NZC flag effects are tracked: a consumer traps unless another instruction has first redefined those flags.
+The core supports the observed repeated ADD and ADDW instructions with the encoded repeat count plus one, charging every execution against the instruction budget. Unsupported repeated operations trap. The persistent profile enables 20-bit byte program addresses for its far ROM call; ordinary probes retain their explicit address width. MULU's data product is executed, while unverified NZC flag effects are tracked: a consumer traps unless another instruction has first redefined those flags.
 
 The MN101 tests also check odd-nibble instruction starts, signed/unsigned immediates, packed return addresses, calls, ROM vector calls, arithmetic/flag behavior and strict memory/budget traps using synthetic instructions. Byte ADDC/SUBC flags cover every operand/carry combination. To include stock probes in the test suite, set `CRANKLINK_MN101_FIXTURES` to a JSON object mapping CPU profile IDs (`e6000-3.2.3`, `e6001-3.4.7`, `e6002-3.3.0-board1`, `e6002-3.3.0-board2`, `e6002-3.4.0-board1`, `e6002-3.4.0-board2`) to local image paths. Relative paths resolve beside the manifest. Missing files, unknown IDs and mismatched image hashes fail; without this variable only the stock MN101 check skips.
+
+An isolated SC-E8000 4.0.7 probe now executes its MN101 PCE dispatcher,
+firmware-revision reply, master/slave mode changes, discovery countdown and empty
+bitmap builder. It requires the exact decoded image hash recorded in the display
+inventory. Run its stock checks with:
+
+```sh
+CRANKLINK_SC_E8000_IMAGE=/path/to/SCE8000.4.0.7.decoded.bin \
+  python3 -m unittest discover -s tools/firmware-sim -p 'test_legacy_gateway.py'
+```
+
+The probe reproduces `03 20` → `23 00`, `04` → `24 A0`, and `03 00`
+with **no immediate acknowledgement**, followed by `04` → `24 8D`.
+Discovery defers a requested bitmap until its 2,000-call stock countdown expires;
+the probe assigns no wall-clock duration to these calls. Initial caches, plain
+MMIO values and notification delivery are explicit synthetic boundaries. No bus
+announcements are injected. PC-link startup still traps on unmodeled peripheral
+behavior; this is not a GATT/motor topology profile and does not validate the
+reported bike's master connection. The interpreter additionally supports handy
+address writeback, preserving strict memory traps.
 
 The archived [motor inventory](../tools/firmware-sim/inventory-motors.json) and [display inventory](../tools/firmware-sim/inventory-displays.json) record the remaining local coverage gaps. They do not represent every published device/version. Broad support is the target; add a hash-pinned CPU/memory/ABI profile and execute the matrix before extending the support table. New processor families also need a suitable execution backend. SC-EN500/600/610, SC-E8000, SC-M9050, SC-MT800 and unprofiled variants are currently rejected.
 
@@ -317,13 +337,23 @@ Radio pairing, gateway PIN challenge delivery, notifications, motor logical-addr
 
 Closing a modeled GATT endpoint does not execute gateway radio-disconnect firmware or reset the powered device. Retained-device tests preserve PC-link RAM across that unmodeled boundary and can exercise explicit stops separately. This is a simulator limit, not evidence that a real normal/slave BLE session requires an explicit stop: physical validation found that GATT-only close restored both bikes while explicit stops did not. Master-routing stock tests remain separate. The complete EW-WU111/BT-DN110 slave topology remains unexecuted. See the [Di2 BLE investigation](di2-ble-investigation.md).
 
-The [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
+The historical [GATT results](../tools/firmware-sim/gatt-validation.json) cover 17 real CLI cases, including wrong PIN, dropped responses, stale/duplicate notifications and unsupported topology. Stock lifecycle tests cover six gateways × ten motors, twenty reads per pair (1,200 total), followed by stop/cleanup. A successful read alone misses PR #11's duplicate startup; the separate pinned-revision regression checks that contract.
+
+The [role-transition validation](../tools/firmware-sim/role-transition-validation.json) records 80 packet-routing pairs (720 scenarios), real-client inventory on 60 GATT pairs, and 42 authenticated region-flow checks across six gateway versions with exact EP800 D4.2.0. Region reads passed for the 48 client pairs with a region schema; the 12 E5000/E6100 region requests were correctly refused at the settings layer.
+
+Stock role checks reproduce a silent master-to-slave transition in SC-EM800
+4.0.0, 4.1.0, 4.3.0, 4.4.0, 4.5.0 and 4.6.0, plus SC-E6100 4.1.0
+and SC-E7000 4.1.0. PCE4 confirms slave mode after the single original PCE3
+request. The GATT peer no longer replays that request to obtain an acknowledgement
+on the client's behalf; a regression test forbids that hidden retry. SC-E6100
+and SC-E7000 have function-level packet profiles but no recovered GATT PCE
+dispatcher, so their direct role checks are separate from real-client GATT tests.
 
 ## Persistent writes and retained browser sessions
 
-The opt-in `browser_peer.py` coordinator retains one powered virtual bike across GATT reconnects. Its exact EP800 D4.2.0 storage fixture admits lamp SET/GET, wheel-circumference SET/GET and the motor's regulation-authentication commands. Motor challenge generation, proof verification/AES, authorization checks, setting validation, RAM updates, EEPROM record staging/checksums and reply construction execute stock firmware instructions. There is no authorization-success bypass. The synthetic gateway PIN remains a separate modeled credential.
+The opt-in `browser_peer.py` coordinator retains one powered virtual bike across GATT reconnects. Its exact EP800 D4.2.0 storage fixture admits lamp SET/GET, wheel-circumference SET/GET, OEM region SET/GET and the motor's regulation-authentication commands. Motor challenge generation, proof verification/AES, authorization checks, setting validation, RAM updates, EEPROM record staging/checksums and reply construction execute stock firmware instructions. There is no authorization-success bypass. The synthetic gateway PIN remains a separate modeled credential.
 
-The unavailable physical EEPROM commit/ready boundary is modeled with an atomic local JSON write. Boot hydration of selected RAM caches is modeled when new firmware machines reload that file. In addition, the storage fixture models D4.2.0 flash journal wear-leveling across three circular 6 KiB banks with active page indexing at `0x20002E2E`, selective compaction history retention (records `0x05`, `0x06`, and `0x0A` retain up to 7, 3, and 7 historical snapshots respectively, while other records retain only the active value), dual-lane fragment admission limits (15-entry primary and 5-entry secondary queues, per routine `0x32B34`), and authentic 16-byte challenge nonce generation (combining 6 component identity bytes with a 16-bit sequence counter, per routine `0x2F214`). See the [EP800 D4.2.0 Firmware Architecture Reference](firmware-d420-architecture.md) for full protocol and memory layout details. Seeds are synthetic: lamp `0`, wheel circumference `2149` mm and serial `000000000000`. The fixture is hash-fenced to this exact motor image; it does not enable writes for the full compatibility matrix or arbitrary settings. Interrupted commits, EEPROM electrical behavior/endurance and full hardware boot are unvalidated.
+The unavailable physical EEPROM commit/ready boundary is modeled with an atomic local JSON write. Boot hydration of selected RAM caches is modeled when new firmware machines reload that file. In addition, the storage fixture models D4.2.0 flash journal wear-leveling across three circular 6 KiB banks with active page indexing at `0x20002E2E`, selective compaction history retention (records `0x05`, `0x06`, and `0x0A` retain up to 7, 3, and 7 historical snapshots respectively, while other records retain only the active value), dual-lane fragment admission limits (15-entry primary and 5-entry secondary queues, per routine `0x32B34`), and authentic 16-byte challenge nonce generation (combining 6 component identity bytes with a 16-bit sequence counter, per routine `0x2F214`). See the [EP800 D4.2.0 Firmware Architecture Reference](firmware-d420-architecture.md) for full protocol and memory layout details. Seeds are synthetic: lamp `0`, wheel circumference `2149` mm, OEM region `0` and serial `000000000000`. The fixture is hash-fenced to this exact motor image; it does not enable writes for the full compatibility matrix or arbitrary settings. Interrupted commits, EEPROM electrical behavior/endurance and full hardware boot are unvalidated.
 
 The browser regression runner uses unchanged historical Rust/WASM, `worker.js`, `host.js`, `WebBleGatt` and `BrowserFiles` in Chromium. A test peripheral forwards GATT operations to stock gateway/motor execution. The same master-routed commands save lamp `1 → 2`, or protected wheel circumference `2150 → 2151`, before reading again and explicitly disconnecting. It verifies actual changed receipts, durable IndexedDB backups before each SET, commit counts, ownership release, retained routing, cleanup, a new motor instance and a firmware GET after disk reload. Both source versions run with fresh state under always-advertising and connection-mode-ending controls.
 
@@ -474,6 +504,22 @@ CRANKLINK_COMPONENT_FIXTURES=/tmp/component-fixtures.json \
   --fixtures /tmp/firmware-fixtures.json --binary target/debug/cranklink \
   --output /tmp/current-cli-persistent-writes.json
 ```
+
+For the authenticated region path, including backup-before-SET, readback,
+restore, final owner release and a new motor instance loaded from disk:
+
+```sh
+/tmp/cranklink-firmware-sim/bin/python tools/firmware-sim/verify_settings_writes.py \
+  --fixtures /tmp/firmware-fixtures.json --binary target/debug/cranklink \
+  --gateway-id sc-em800-4.0.0 --region-only --output /tmp/region-writes.json
+```
+
+`verify_settings_writes.py --gateway-id` selects one executable GATT gateway;
+omitting it selects SC-EM800 4.6.0. `--region-only` selects the seven-case region
+flow with exact EP800 D4.2.0 stock firmware. Physical EEPROM and boot hydration
+remain modeled; this does not establish region-write support for every motor.
+E5000 has no CLI settings schema, and the E6100 schema currently omits region,
+even though both firmware profiles can participate in packet-routing tests.
 
 MU `--gateway-id` is repeatable; omit it for all admitted gateways. `--case` permits focused independent read/guard checks; sequence-dependent write/restore plans must run together. Display `--target-id` filters executable target profiles. Display configurations use separate processes: per-instruction Python hooks in threaded emulators can contend for one interpreter and exceed unchanged client response deadlines. Reports keep simulator scheduling failures separate from firmware rejection or client bugs.
 

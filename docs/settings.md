@@ -82,6 +82,20 @@ Signed values can be supplied directly, for example `cranklink --port usb -c MU-
 
 Stock-firmware simulator checks cover exact MU-UR500 and cycle-computer images, including CLI reads, writes, backups and restores. Browser tests additionally drive the current UI and WASM through SC-EM800 4.6.0 and MU-UR500 3.3.1 save, power-cycle, readback and restore flows, and an unfinished hub adjustment. See [simulator coverage](firmware-simulator.md) for executable versions and modeled storage/actuator boundaries. Catalog recognition alone does not imply firmware execution coverage.
 
+## E8000 / E8080 drive units
+
+E8000/E8080 implements wheel circumference, mounting angle, and lamp settings. From D4.1.0, including D4.6.0, it also exposes `destination`: `0` Europe or `1` United States. The apps label this **Region & assist speed**, with nominal assist limits of 25 and 32 km/h. This changes the market specification; it does not write an independent speed parameter. [ST Unlocker's E8000 firmware guidance](https://www.stunlocker.com/index.html) likewise distinguishes region changes on firmware newer than D4.3.2 from independent speed adjustment on older firmware.
+
+Use offline schemas `--model e8000-pre41` and `--model e8000`. Live reads select the schema from the motor identity and D firmware. Japan, Taiwan, other region codes, and an arbitrary `speed-limit` setting are not enabled by this implementation. If the current region is outside the admitted EU/US choices, a change is refused before backup or SET so the original value remains restorable.
+
+```sh
+cranklink --port usb settings read destination
+cranklink --port usb -s <SERIAL> settings set destination 1 --backup e8000-region-before.json
+cranklink --port usb settings restore e8000-region-before.json --backup e8000-region-current.json
+```
+
+Automatic CLI routing selects master for region, wheel and lamp writes. On bikes with SC-E8000 displays, the web and Android apps automatically select normal Bluetooth routing, allowing region and wheel circumference saves/restores with verified readback and backups. Settings requiring bus master routing (such as lamp output) or bikes requiring master separation (such as DU-EP800 on SC-E7000/EW-EN100 displays) provide clear guidance to connect using a USB PCE cable. See [Bluetooth routing](bluetooth.md#connection-mode).
+
 ## E6000-family drive units
 
 E6000 and E6001/E6010/E6050 expose wheel circumference (2000–2400 mm), mounting angle (0–45°), and lamp off/on. E6002/E6012 additionally expose the [market region](#market-regions) (`destination`) from D3.3.0: `0` EU, `1` US, or `4` Korea. There is no independent assist-speed control. The browser chooses the schema from the live identity and D firmware, and changing region stages no speed-limit write.

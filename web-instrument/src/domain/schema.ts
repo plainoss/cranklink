@@ -56,7 +56,7 @@ export function destinationName(model: string | undefined, destination: number):
 
 // Keep these ranges aligned with the destination validation in src/settings.rs.
 export function destinationSpeedRange(model: string | undefined, destination: number): { min: number; max: number } | undefined {
-  if (model === "e6000" || model === "e6001" || model === "e6002-pre33" || model === "e6002") return undefined;
+  if (["e6000", "e6001", "e6002-pre33", "e6002", "e8000", "e8000-pre41"].includes(model ?? "")) return undefined;
   const modern = isModernModel(model);
   if (destination === 1) return { min: 19, max: 32 };
   if (destination === 0 || destination === 3 || (!modern && destination === 4)) {
@@ -463,15 +463,21 @@ function enrichSetting(
   }
 
   if (spec.name === "destination") {
-    if (modelSlug === "e6002") description = "Motor market selection. Choose the region that applies where the bike is ridden.";
-    // E6002 exposes verified markets without a separate speed-limit setting.
-    // Other motors use the range enforced by the core, as the CLI prints it.
-    choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
-      if (modelSlug === "e6002") return E6002_DESTINATION_LABELS[choice] ? [[choice, E6002_DESTINATION_LABELS[choice]]] : [];
-      const range = destinationSpeedRange(modelSlug, choice);
-      const name = destinationName(modelSlug, choice) ?? `Region ${choice}`;
-      return range ? [[choice, `${name} · ${range.min}–${range.max} km/h`]] : [];
-    }));
+    if (modelSlug === "e8000") {
+      description = "Region-based assist-speed selection: Europe uses a nominal 25 km/h limit and the United States 32 km/h. This motor has no implemented independent speed control. Choose the region that applies where the bike is ridden.";
+      choiceLabels = { 0: "Europe · 25 km/h", 1: "United States · 32 km/h" };
+      label = "Region & assist speed";
+    } else {
+      if (modelSlug === "e6002") description = "Motor market selection. Choose the region that applies where the bike is ridden.";
+      // E6002 exposes verified markets without a separate speed-limit setting.
+      // Other motors use the range enforced by the core, as the CLI prints it.
+      choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
+        if (modelSlug === "e6002") return E6002_DESTINATION_LABELS[choice] ? [[choice, E6002_DESTINATION_LABELS[choice]]] : [];
+        const range = destinationSpeedRange(modelSlug, choice);
+        const name = destinationName(modelSlug, choice) ?? `Region ${choice}`;
+        return range ? [[choice, `${name} · ${range.min}–${range.max} km/h`]] : [];
+      }));
+    }
   }
 
   if (!choiceLabels && (spec.unit === "bool" || (spec.min_raw === 0 && spec.max_raw === 1 && spec.step_raw === 1 && spec.value_type === "number" && !spec.name.includes("display")))) {

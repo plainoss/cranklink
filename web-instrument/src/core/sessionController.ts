@@ -785,7 +785,8 @@ export class SessionController {
   ): string {
     const cleanSerial = identity.serial.replace(/[-:\s]/g, "");
     const component = identity.isMotor ? "" : `--component ${shellQuote(identity.model)} `;
-    const target = `${this.state.transport === "ble" && this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
+    const normalRouting = transport === "ble" && this.bluetoothSessionFlags() === "--ble-master=normal ";
+    const target = `${normalRouting ? "--ble-master=normal " : ""}--slot ${identity.slot} ${component}--expect-serial ${cleanSerial} `;
     if (identity.isMotor && isModernModel(identity.modelSlug) && (transport === "ble" || transport === "sim" || requiresUnitAuth)) {
       return `${target}--ble-unit-auth `;
     }
@@ -798,7 +799,11 @@ export class SessionController {
     if (this.state.transport === "sim") return "--ble-master=master ";
     if (this.state.transport !== "ble") return "";
     if (!this.state.bluetoothSystem) throw new Error("Choose the Bluetooth bike system before discovering components.");
-    return this.state.bluetoothSystem === "di2" ? "--ble-master=normal " : "--ble-master=master ";
+    // E8000/E8080 reads work through the existing logical master at slot zero.
+    // Keep that route for the whole retained connection instead of forcing the
+    // gateway into the newer motor workflow (or labelling this bike as Di2).
+    return this.state.bluetoothSystem === "di2" || this.state.bluetoothMasterSeries === 0x12
+      ? "--ble-master=normal " : "--ble-master=master ";
   }
 
   public async disconnect(): Promise<void> {
@@ -942,6 +947,7 @@ export class SessionController {
       const spec = this.state.schema.find((setting) => setting.name === name);
       if (!spec || spec.read_only || this.state.unavailableValues[name]) this.refuse("save", `Setting ${name} is unavailable or read-only on this component.`);
     }
+    this.requireWriteRouting("save", entries.map(([name]) => name));
 
     // Destination is written before speed-limit so ceiling checks use the updated destination.
     const sortedEntries = [...entries].sort(([a], [b]) => {
@@ -1100,6 +1106,7 @@ export class SessionController {
       }
       settings.set(filename, backup.setting);
     }
+    this.requireWriteRouting("restore", [...settings.values()]);
     filenames = planOrder(filenames, settings);
     this.startOperation({
       phase: "committing",
@@ -1198,6 +1205,20 @@ export class SessionController {
 
     snapshots.sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
     this.update({ snapshots });
+  }
+
+  /** Normal routing remains fixed for the lifetime of the retained connection. */
+  private requireWriteRouting(kind: "save" | "restore", names: unknown[]): void {
+    if (this.state.transport !== "ble" || !this.state.identity?.isMotor
+        || this.bluetoothSessionFlags() !== "--ble-master=normal ") return;
+    const isE8000 = ["e8000", "e8000-pre41"].includes(this.state.identity!.modelSlug);
+    const masterSetting = names.find((name) => typeof name === "string"
+      && ["destination", "tire-circumference", "lamp", "lighting-time"].includes(name)
+      && !(isE8000 && ["destination", "tire-circumference"].includes(name)));
+    if (masterSetting) {
+      this.refuse(kind,
+        `${settingLabel(this.state.schema, String(masterSetting))} requires a USB connection on this bike. Please connect using a USB PCE cable to modify ${settingLabel(this.state.schema, String(masterSetting))}.`);
+    }
   }
 
   /**

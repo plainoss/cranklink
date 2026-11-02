@@ -33,15 +33,17 @@ internal object TuningRules {
     fun parseIdentity(raw: JsonObject): MotorIdentity {
         val series = raw.int("model_series")
         val family = motorModels[series] ?: error("This component is not a supported STEPS drive unit.")
-        val slug = if (series == 0x15) {
+        val slug = if (series == 0x15 || series == 0x12) {
             val components = raw.stringOrNull("dcas_version")?.takeIf {
                 Regex("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+").matches(it)
             }?.split('.')
             val version = components?.map { it.toIntOrNull() }
             require(version?.size == 4 && version.all { it != null && it in 0..65535 }) {
-                "Cannot select E6002 settings without a valid drive-unit firmware version."
+                "Cannot select ${if (series == 0x12) "E8000" else "E6002"} settings without a valid drive-unit firmware version."
             }
-            if (version[0]!! > 3 || (version[0] == 3 && version[1]!! >= 3)) "e6002" else "e6002-pre33"
+            if (series == 0x12) {
+                if (version[0]!! > 4 || (version[0] == 4 && version[1]!! >= 1)) "e8000" else "e8000-pre41"
+            } else if (version[0]!! > 3 || (version[0] == 3 && version[1]!! >= 3)) "e6002" else "e6002-pre33"
         } else family
         require(raw.int("model_unit") == 0) { "Only STEPS drive units are supported." }
         require(raw.string("settings_model") == slug) { "The settings list does not match the connected motor." }
@@ -91,8 +93,8 @@ internal object TuningRules {
     }
 
     private fun allowedForModel(name: String, model: String): Boolean = when (model) {
-        "e6000", "e6001", "e6002-pre33", "e8000", "e6100", "e7000" -> name in setOf("lamp", "tire-circumference", "mounting-angle")
-        "e6002" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "destination")
+        "e6000", "e6001", "e6002-pre33", "e8000-pre41", "e6100", "e7000" -> name in setOf("lamp", "tire-circumference", "mounting-angle")
+        "e6002", "e8000" -> name in setOf("lamp", "tire-circumference", "mounting-angle", "destination")
         "e5100" -> name in setOf("lamp", "lighting-time", "walk-assist", "tire-circumference", "mounting-angle",
             "destination", "speed-limit", "display-speed-adjustment") || name.startsWith("maintenance-")
         "ep600", "ep801", "ep500" -> name !in setOf("light-output", "torque-minimum", "torque-maximum") &&
@@ -139,7 +141,7 @@ internal object TuningRules {
             "Change the complete maintenance date or its individual fields in one save, not both."
         }
         val effective = values + changes
-        if (identity.modelSlug !in e600xModels && ("speed-limit" in changes || "destination" in changes)) {
+        if (identity.modelSlug !in regionOnlyModels && ("speed-limit" in changes || "destination" in changes)) {
             val speed = effective["speed-limit"]?.toDoubleOrNull()
             val destination = effective["destination"]?.toIntOrNull()
             if (speed != null) {
@@ -166,7 +168,7 @@ internal object TuningRules {
         }
     }
 
-    fun speedRange(model: String, destination: Int?): ClosedFloatingPointRange<Double>? = if (model in e600xModels) null else when (destination) {
+    fun speedRange(model: String, destination: Int?): ClosedFloatingPointRange<Double>? = if (model in regionOnlyModels) null else when (destination) {
         0, 3 -> 15.0..25.0
         1 -> 19.0..32.0
         2 -> if (isModern(model)) 14.0..24.0 else null
@@ -183,7 +185,7 @@ internal object TuningRules {
         }
 
     internal fun isModern(model: String) = model in setOf("ep600", "ep801", "ep500")
-    private val e600xModels = setOf("e6000", "e6001", "e6002-pre33", "e6002")
+    private val regionOnlyModels = setOf("e6000", "e6001", "e6002-pre33", "e6002", "e8000", "e8000-pre41")
     private fun verifiedTorqueLevels(minimum: Double?, maximum: Double?): List<Int> = when {
         minimum == 20.0 && maximum == 85.0 -> listOf(20, 27, 34, 42, 49, 56, 63, 70, 78, 85)
         minimum == 20.0 && maximum == 50.0 -> listOf(20, 24, 27, 30, 33, 36, 40, 43, 46, 50)

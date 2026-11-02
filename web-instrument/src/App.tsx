@@ -101,7 +101,7 @@ export function App({ controller }: AppProps) {
   // The route decides the view; the session decides whether a view is reachable.
   useEffect(() => {
     if (!connected) {
-      if (routePath !== "/connect") void navigate({ to: "/connect" });
+      if (routePath !== "/connect" && routePath !== "/diagnostics") void navigate({ to: "/connect" });
     } else if ((routePath === "/connect" || routePath === "/") && (state.identity || state.phase === "ready")) {
       void navigate({ to: "/tune/$category", params: { category: isMotor ? "geometry" : "all" } });
     } else if (!isMotor && routePath.startsWith("/tune/") && routePath !== "/tune/all") {
@@ -222,9 +222,19 @@ export function App({ controller }: AppProps) {
   if (!connected) {
     return (
       <>
-        {state.bluetoothDisconnectNotice
+        {destination.goal === "diagnostics" ? (
+          <main className="min-h-dvh bg-background text-foreground px-4 py-6 sm:px-6" data-testid="offline-diagnostics">
+            <div className="mx-auto flex max-w-3xl flex-col gap-5">
+              <header className="flex flex-wrap items-center justify-between gap-3">
+                <h1 className="text-xl font-bold">Diagnostics &amp; Logs</h1>
+                <Button variant="tertiary" onPress={() => void navigate({ to: "/connect" })}>Back to connection</Button>
+              </header>
+              <DiagnosticsView state={state} controller={controller} />
+            </div>
+          </main>
+        ) : state.bluetoothDisconnectNotice
           ? <DisconnectedView onContinue={() => controller.dismissBluetoothDisconnectNotice()} />
-          : <ConnectView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} />}
+          : <ConnectView state={state} controller={controller} onOpenWarning={() => setWarningOpen(true)} onOpenDiagnostics={() => go({ goal: "diagnostics" })} />}
         {approvalBanner}
         <OperationModal state={state} />
         <PasskeyDialog state={state} controller={controller} />

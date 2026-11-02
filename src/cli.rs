@@ -2641,7 +2641,10 @@ fn finish_operation<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("cleanup also failed: {cleanup:#}")))
+            // Keep the operation failure first so cleanup cannot hide why a
+            // connection or command failed. The separator is also used by the
+            // browser to show both causes without raw stack traces.
+            Err(cleanup.context(format!("{error:#}\nCleanup also failed")))
         }
     }
 }
@@ -2768,7 +2771,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                     route: "master",
                     policy: resolved_policy,
                     reason: format!(
-                        "setting '{}' write requires PC-link owner zero (master routing)",
+                        "automatic routing selects master for setting '{}' writes",
                         name
                     ),
                 },
@@ -2780,7 +2783,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                         route: "master",
                         policy: resolved_policy,
                         reason: format!(
-                            "setting '{}' restore requires PC-link owner zero (master routing)",
+                            "automatic routing selects master for setting '{}' restores",
                             parsed.setting
                         ),
                     }
@@ -2804,7 +2807,7 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                             route: "master",
                             policy: resolved_policy,
                             reason: format!(
-                                "batch includes '{}' write requiring PC-link owner zero (master routing)",
+                                "automatic routing selects master for a batch including '{}' writes",
                                 setting
                             ),
                         }
@@ -2812,7 +2815,8 @@ fn plan_ble_routing(policy: Option<BleRoutingPolicy>, command: &Command) -> BleR
                         BleRoutingDecision {
                             route: "normal",
                             policy: resolved_policy,
-                            reason: "batch operations do not require master routing".to_string(),
+                            reason: "automatic routing selects normal for these batch operations"
+                                .to_string(),
                         }
                     }
                 }
@@ -3403,6 +3407,13 @@ fn print_probe_card(
 // Label a destination by the speed range the core enforces for it; the vendor
 // region names are unverified.
 fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<String> {
+    if model == crate::settings::SettingsModel::E8000 {
+        return match val {
+            0 => Some("Europe; nominal assist limit 25 km/h".into()),
+            1 => Some("United States; nominal assist limit 32 km/h".into()),
+            _ => None,
+        };
+    }
     let (minimum, maximum) =
         crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
     Some(format!("{}-{} km/h", minimum / 100, maximum / 100))
@@ -3828,6 +3839,19 @@ fn journal_failure(jnl: &mut Journal, stage: &str, error: anyhow::Error) -> anyh
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn failed_operation_stays_first_when_cleanup_also_fails() {
+        let result = super::finish_operation::<()>(
+            Err(anyhow::anyhow!(
+                "BLE gateway did not confirm normal/master source zero"
+            )),
+            Err(anyhow::anyhow!("BLE response timeout")
+                .context("BLE PC-link cleanup not confirmed")),
+        );
+        let message = format!("{:#}", result.unwrap_err());
+        assert_eq!(message, "BLE gateway did not confirm normal/master source zero\nCleanup also failed: BLE PC-link cleanup not confirmed: BLE response timeout");
+    }
+
     #[test]
     fn e6000_snapshot_keeps_live_identity_when_schema_is_shared() {
         use crate::device::{Identity, UnitCommands};

@@ -51,13 +51,15 @@ export function detectMotorIdentity(parsed: { model_series?: number; model_unit?
     throw new Error("Settings are not supported for this drive-unit identity.");
   }
   let modelSlug = model.slug;
-  if (parsed.model_series === 0x15) {
+  if (parsed.model_series === 0x15 || parsed.model_series === 0x12) {
     const version = typeof parsed.dcas_version === "string" && /^\d+\.\d+\.\d+\.\d+$/.test(parsed.dcas_version)
       ? parsed.dcas_version.split(".").map(Number) : null;
     if (!version || !version.every(Number.isSafeInteger)) {
-      throw new Error("Cannot select E6002 settings without a valid drive-unit firmware version.");
+      throw new Error(`Cannot select ${parsed.model_series === 0x12 ? "E8000" : "E6002"} settings without a valid drive-unit firmware version.`);
     }
-    modelSlug = version[0] > 3 || (version[0] === 3 && version[1] >= 3) ? "e6002" : "e6002-pre33";
+    modelSlug = parsed.model_series === 0x12
+      ? version[0] > 4 || (version[0] === 4 && version[1] >= 1) ? "e8000" : "e8000-pre41"
+      : version[0] > 3 || (version[0] === 3 && version[1] >= 3) ? "e6002" : "e6002-pre33";
   }
   if (parsed.settings_model !== undefined && parsed.settings_model !== modelSlug) {
     throw new Error("Drive-unit identity and settings schema do not match.");

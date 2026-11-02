@@ -28,7 +28,8 @@
       "decoded_bytes": 98110,
       "source_filename": "SCE8000.4.0.7.dat.decoded.bin",
       "status": "unprofiled",
-      "blocker": "SC-EM800 normalized Thumb function signatures do not identify the required gateway command/link/RX functions uniquely; architecture, image layout and peripheral behavior require recovery before execution"
+      "blocker": "MN101 isolated PCE mode/discovery CPU probes are available; PC-link peripheral behavior, bus transport and motor ownership are not modeled, so topology execution remains rejected",
+      "cpu_probe": "sc-e8000-4.0.7: PCE revision, master/slave mode, discovery countdown and empty bitmap; synthetic caches/MMIO/notification delivery"
     },
     {
       "model": "SC-EM800",

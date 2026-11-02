@@ -26,6 +26,8 @@ The core compiled to WebAssembly; all protocol work runs in the browser. Require
 
 When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
 
+If connecting fails, choose **View details & logs** on the connection screen. Diagnostics remains available without a connection. **Copy diagnostic report** includes the full failure and cleanup details, command history, routing choice, browser and deployed build revision; if clipboard access fails, select and copy the report text. Logs remain in the current tab until reload.
+
 After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
 
 Firmware images are not bundled.
@@ -38,18 +40,36 @@ The [Android app](android-app/README.md) provides a native Kotlin interface with
 
 Requires Android 8.0 or later. Releases are published on Google Play as `app.plainoss.cranklink` (see [Android releases](docs/android-releases.md)). You can also build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. System Back confirms disconnect and waits for active writes. The Android BLE path has automated protocol and session tests and has been tested on a physical bike.
 
-## Supported motors
+## Hardware & Firmware Compatibility Matrix
 
-| Drive unit | Settings | Firmware recovery | Hardware-tested |
-| --- | --- | --- | --- |
-| EP800-CRG | Profiles, speed, wheel, lamp | Yes | Yes |
-| EP800 | Profiles, speed, wheel, lamp | Yes² | No |
-| EP600, EP600-CRG, EP801, EP801-CRG, EP500 | Profiles, speed, wheel, lamp | Opt-in¹ | No |
-| E5100 | Common settings, speed | Opt-in¹ | No |
-| E8000, E7000, E6100, E6000, E6001 families | Wheel, mounting angle, lamp | Opt-in¹ | No |
-| E6002, E6012 | Wheel, mounting angle, lamp; EU/US/Korea region from D3.3.0 | Opt-in¹ | No |
+| Drive Unit | Firmware | Display / Gateway | Transport | Assist Profiles (Tuning) | Region & Wheel Size | Firmware Recovery | Status & Guidance |
+| :--- | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
+| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | **SC-EM800** | **Wireless (BLE)** | ✅ Tested on Bike | ✅ Tested on Bike | — | Confirmed on physical hardware. Full wireless tuning supported. |
+| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | Any / None | **Wired (USB)** | ✅ Tested on Bike | ✅ Tested on Bike | Yes | Confirmed on physical hardware. Full wired tuning & bootloader recovery. |
+| **DU-EP800** | 4.1.10 – 4.2.0 | Any | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Yes² | Supported wired & wireless; shares EP800-CRG identity (`23/00`). |
+| **DU-EP600 / EP600-CRG / EP801 / EP801-CRG / EP500** | 4.4.1 – 4.6.0 | **SC-EM800 / SC-EN600** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Modern generation motors. Protocol verified; community bike testing in progress. |
+| **DU-E5100** | All | Any | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region, speed limit (adjustable within 15–25 / 19–32 km/h), and maintenance settings supported. |
+| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | **SC-E8000** | **Wireless (BLE)** | — | 🧪 In Testing (Preview) | Opt-in¹ | Reading confirmed on bike. Direct wireless saving is in preview testing with automatic normal routing. |
+| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | Any / None | **Wired (USB)** | — | 🧪 In Testing (Preview) | Opt-in¹ | Full wired support; no security code needed on D4.6. |
+| **DU-E8000 / E8080** | ≥ 4.7.0 – 4.10.0 | **SC-E8000** | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Handshake protocol verified. Wireless bike testing in progress. |
+| **DU-E6002 / E6012** | ≥ 3.3.0 | Any (E6010 / E6100) | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region (EU/US/Korea) available on firmware 3.3.0 and newer. |
+| **DU-E6100 / E6110 / E6180 / E7000** | 4.0.0 – 4.8.0 | **SC-E6100 / SC-E7000** | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Opt-in¹ | Wheel size and mounting angle adjustment supported (*fixed factory region). |
+| **DU-E6000 / E6001 / E6010 / E6050** | All (3.2 – 3.9) | Any (SC-E6000) | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Opt-in¹ | Wheel size (2000–2400 mm) and mounting angle adjustment supported (*fixed factory region). |
+| **DU-E5000 / E5080** | All | Any | **Wireless / USB** | — | — | — | Identification only; no settings supported. |
+
+**Status Key**:
+- **✅ Tested on Bike**: Confirmed and validated working on physical hardware.
+- **🧪 In Testing (Preview)**: Implemented and protocol-checked in software; physical bike confirmation in progress.
+- **—**: Setting is not applicable or not supported on this motor family.
 
 All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
+
+DU-E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). This writes the market region, without an independent speed-limit write. On bikes with SC-E8000 displays, Cranklink automatically selects normal Bluetooth routing to avoid legacy bus master arbitration issues, allowing region and wheel circumference writes with verified readback and backups. See [E8000 settings](docs/settings.md#e8000--e8080-drive-units).
+
+The CLI's automatic route selection is a conservative policy. An explicit `--ble-master=normal` uses normal routing with the usual session and authentication checks; hardware support for those writes still needs validation.
+
+Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. Stock SC-E8000, SC-EM800, SC-E6100 and SC-E7000 firmware probes reproduce this behavior. The fix applies to every gateway through the shared connection code; full master connection on the reported E8000 bike remains unresolved, including a native test that established normal service before requesting master routing. See [hardware observations](docs/bluetooth.md#sc-e8000-406-native-hardware-observation).
+
 
 The web app and CLI support classic Di2 lever/switch assignments, front/rear derailleur settings, power-unit multi-shift limits, MU-S705/MU-UR500/UR510/UR520 hub settings, and selected cycle-computer settings. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
 
@@ -81,6 +101,9 @@ cargo build --release --locked --bin cranklink
 ```
 
 Bluetooth support is a default feature; add `--no-default-features` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
+
+Native connections stop scanning as soon as the requested peripheral appears;
+explicit `ble scan` commands retain their full scan duration. See [Bluetooth](docs/bluetooth.md).
 
 The prebuilt binaries are all built on Linux, and CI runs only the Linux one. The macOS binaries are not notarized: if macOS blocks the extracted binary, run `xattr -d com.apple.quarantine ./cranklink`.
 

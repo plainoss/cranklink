@@ -27,12 +27,12 @@ class SessionController(private val backend: AppBackend) {
 
     private data class AutoRegion(val before: String?, val staged: String?)
 
-    suspend fun connect() = operation.withLock {
+    suspend fun connect(master: Boolean = true) = operation.withLock {
         if (state.value.phase != AppPhase.Disconnected) return@withLock
         mutableState.value = state.value.copy(phase = AppPhase.Connecting, error = null, restartBike = false,
             status = "Connecting to your bike and reading its settings…")
         try {
-            val result = execute(buildJsonObject { put("op", "connect"); put("master", true) })
+            val result = execute(buildJsonObject { put("op", "connect"); put("master", master) })
             applySnapshot(result, expected = null, status = "Connected. Review changes before saving them to the bike.")
         } catch (error: Throwable) {
             failUncertain(error, "Connection failed. If the bike does not return to riding mode, turn it off and on again before reconnecting.")
@@ -54,6 +54,12 @@ class SessionController(private val backend: AppBackend) {
         }
     }
 
+    private fun requiresMasterRouting(modelSlug: String, settingName: String): Boolean {
+        val isE8000 = modelSlug in setOf("e8000", "e8000-pre41")
+        return settingName in setOf("lamp", "lighting-time") ||
+            (!isE8000 && settingName in setOf("destination", "tire-circumference"))
+    }
+
     fun stage(name: String, value: String) {
         val current = state.value
         if (current.phase != AppPhase.Ready || current.identity == null) {
@@ -61,6 +67,9 @@ class SessionController(private val backend: AppBackend) {
             return
         }
         try {
+            require(current.identity.masterRouting || !requiresMasterRouting(current.identity.modelSlug, name)) {
+                "$name requires a USB connection on this bike."
+            }
             require(TuningRules.allowedName(name)) { "This setting is not available in the STEPS app." }
             val setting = current.settings.singleOrNull { it.name == name }
                 ?: error("This setting is not supported by the connected motor.")
@@ -168,6 +177,7 @@ class SessionController(private val backend: AppBackend) {
         try {
             val result = execute(buildJsonObject {
                 put("op", "commit")
+                put("master", identity.masterRouting)
                 put("serial", identity.serial)
                 put("changes", changes)
             })
@@ -210,6 +220,7 @@ class SessionController(private val backend: AppBackend) {
         try {
             val result = execute(buildJsonObject {
                 put("op", "restore")
+                put("master", identity.masterRouting)
                 put("serial", identity.serial)
                 put("file", file)
             })
@@ -291,7 +302,13 @@ class SessionController(private val backend: AppBackend) {
         if (expected != null) require(identity.serial == expected.serial && identity.modelSlug == expected.modelSlug
             && identity.modelSeries == expected.modelSeries) { "The response belongs to a different drive unit." }
         val settings = TuningRules.parseSchema(result["schema"] as? JsonArray ?: error("Missing motor settings schema."),
-            identity.modelSlug, result["constraints"] as? JsonObject)
+            identity.modelSlug, result["constraints"] as? JsonObject).map { setting ->
+            if (!identity.masterRouting && requiresMasterRouting(identity.modelSlug, setting.name)) {
+                setting.copy(writable = false)
+            } else {
+                setting
+            }
+        }
         require(settings.isNotEmpty()) { "The connected drive unit has no supported tuning settings." }
         val snapshot = result["snapshot"] as? JsonObject ?: error("Missing motor settings snapshot.")
         require(snapshot.int("slot") == identity.slot) { "The snapshot belongs to another motor slot." }

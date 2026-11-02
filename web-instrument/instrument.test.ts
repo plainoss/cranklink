@@ -707,7 +707,7 @@ describe("BLE initial settings connection", () => {
     (globalThis as any).window = globalThis;
     for (const [series, slug, model, count] of [
       [0x38, "e5100", "DU-E5100", 14],
-      [0x12, "e8000", "DU-E8080", 3],
+      [0x12, "e8000", "DU-E8080", 4],
       [0x21, "e7000", "DU-E7000", 3],
       [0x20, "e6100", "DU-E6110", 3],
       [0x20, "e6100", "DU-E6180", 3],
@@ -719,7 +719,7 @@ describe("BLE initial settings connection", () => {
     controller.setBluetoothBike("steps"); // Explicit routing keeps these schema-focused fixtures independent of detection.
       const commands: string[] = [];
       controller.attachTerminal(terminalFor({
-        identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes" },
+        identity: { slot: 13, model_series: series, model_unit: 0, model_name: model, settings_model: slug, serial: "010203040506", cargo: "binary attributes", dcas_version: "4.6.0.0" },
         values: {}, unavailable: {},
       }, commands));
       const identity = await controller.connectAndSync("ble");
@@ -743,14 +743,14 @@ describe("BLE initial settings connection", () => {
 describe("Actual motor identity classification", () => {
   it("uses safe family labels without guessing a shared-series variant", () => {
     for (const [series, slug, name] of [[0x08, "e6000", "E6000 family"], [0x12, "e8000", "E8000 family"], [0x20, "e6100", "E6100 family"]] as const) {
-      assert.deepEqual(detectMotorIdentity({ model_series: series }), { modelSlug: slug, model: name, isCargo: false });
+      assert.deepEqual(detectMotorIdentity({ model_series: series, dcas_version: "4.6.0.0" }), { modelSlug: slug, model: name, isCargo: false });
     }
   });
 
   it("rejects unknown series, non-motor units, and inconsistent backend schema metadata", () => {
     assert.throws(() => detectMotorIdentity({ model_series: 0xff }), /not supported/);
     assert.throws(() => detectMotorIdentity({ model_series: 0x12, model_unit: 1 }), /not supported/);
-    assert.throws(() => detectMotorIdentity({ model_series: 0x12, settings_model: "ep801" }), /do not match/);
+    assert.throws(() => detectMotorIdentity({ model_series: 0x12, settings_model: "ep801", dcas_version: "4.6.0.0" }), /do not match/);
   });
 
   it("keeps cargo variants in the friendly model label", () => {
@@ -884,6 +884,33 @@ describe("Speed and destination staging", () => {
     assert.equal(controller.getState().phase, "ready");
     assert.equal(controller.getState().failure?.error, "write rejected");
     assert.deepEqual(controller.getState().stagedValues, { "speed-limit": 31 });
+  });
+
+  it("generates a batch plan containing destination and clamped speed when downscaling to EU", async () => {
+    (globalThis as any).window = globalThis;
+    const controller = connected("ep800-crg", 1, 32);
+    let operations: any[] = [];
+    const files = new Map<string, Uint8Array>();
+    controller.attachTerminal({
+      setPasskeyPrompt: () => {},
+      status: () => ({ ready: true, busy: false, usbSelected: false, transport: "sim" }),
+      files: {
+        list: () => [], bytes: (p) => files.get(p)!, initialize: async () => {},
+        import: async (p, bytes) => { files.set(p, bytes); },
+      },
+      run: async () => {
+        operations = JSON.parse(new TextDecoder().decode([...files.values()].at(-1)));
+        (globalThis as any).estepsTerminalPrint(JSON.stringify({ completed: operations.length, results: operations.map((op) => ({ setting: op.name, after: Number(op.value) })) }), "stdout");
+        return { code: 0 };
+      },
+    });
+    // Selecting destination 0 automatically clamps speed from 32 down to 25
+    controller.stageParameter("destination", 0);
+    assert.deepEqual(controller.getState().stagedValues, { destination: 0, "speed-limit": 25 });
+    await controller.commitStagedBatch();
+    assert.deepEqual(operations.map(({ name, value }) => [name, value]), [["destination", "0"], ["speed-limit", "25"]]);
+    assert.equal(controller.getState().liveValues.destination.value, 0);
+    assert.equal(controller.getState().liveValues["speed-limit"].value, 25);
   });
 });
 
@@ -1208,11 +1235,26 @@ describe("Concise connection errors", () => {
     assert.equal(controller.getState().linkLost, true);
   });
 
-  it("prioritizes uncertain cleanup over PIN and motor authorization failures", () => {
-    for (const original of ["BLE authentication failed: rejected", "drive-unit authentication challenge rejected"]) {
+  it("preserves the connection cause alongside uncertain cleanup guidance", () => {
+    for (const [original, cause] of [
+      ["BLE authentication failed: rejected", /PIN was not accepted/],
+      ["drive-unit authentication challenge rejected", /rejected authorization/],
+      ["BLE gateway did not confirm normal\/master source zero", /did not confirm normal\/master source zero/],
+      ["BLE response timeout or notification overflow; reconnect before another command", /stopped responding/],
+    ] as const) {
       const message = userFacingError(`error: ${original}\nThis cleanup also failed: BLE PC-link stop was not confirmed\n    at host_call (host.js:1)\n[exit 1]`);
       assert.match(message, /closed before the bike confirmed/);
-      assert.doesNotMatch(message, /PIN|authorization|host_call|exit/);
+      assert.match(message, cause);
+      assert.doesNotMatch(message, /host_call|exit/);
+    }
+  });
+
+  it("requires reconnect after an unconfirmed component owner and keeps receipts in diagnostics", () => {
+    for (const detail of ["local PC ownership", "PC owner zero; privileged routing is unverified"]) {
+      const failure = describeFailure({ kind: "read", error: `BLE component did not confirm ${detail} (slot 19, expected owner 3, receipt 1332120100ffff); reconnect before another command` }, "ble", []);
+      assert.equal(failure.linkLost, true);
+      assert.match(failure.message, /Disconnect, then reconnect/);
+      assert.doesNotMatch(failure.message, /1332120100ffff/);
     }
   });
 });

@@ -433,7 +433,26 @@ impl BleSession {
         if result.is_err() {
             self.poison();
         }
-        result.context("BLE write failed; outcome may be uncertain")
+        result.with_context(|| {
+            // Only protocol headers enter errors. Parameters can contain PIN
+            // proofs, regulation keys or firmware data and must stay private.
+            let operation = match id {
+                PCE_COMMAND => match bytes {
+                    [0, 3, mode] => format!("gateway PCE 03 mode {mode:02X}"),
+                    [0, command, ..] => format!("gateway PCE {command:02X}"),
+                    _ => "gateway PCE".into(),
+                },
+                FREE_COMMAND => match bytes {
+                    [slot, group, command, ..] => {
+                        format!("unit slot {slot}, group {group:02X}, command {command:02X}")
+                    }
+                    _ => "unit command".into(),
+                },
+                AUTH_CONTROL => "gateway authentication".into(),
+                _ => "gateway access check".into(),
+            };
+            format!("BLE write failed; outcome may be uncertain ({operation})")
+        })
     }
     fn receive(&mut self, timeout: Duration) -> Result<Option<Notification>> {
         let result = self.io.receive(timeout);
@@ -561,10 +580,8 @@ impl BleSession {
         }
         // Select normal/slave mode before checking the resulting state.
         // A newly authenticated gateway need not start in that protocol state.
-        self.gateway(3, &[0], 0x23)?;
-        sleep(Duration::from_secs(1));
         // A successful GATT write is insufficient: require a protocol reply.
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = self.negotiate_slave_routing()?;
         ensure!(
             !mode.is_empty() && mode[0] & 0xe0 == 0x80,
             "invalid BLE gateway protocol identity"
@@ -574,6 +591,12 @@ impl BleSession {
         Ok(())
     }
     fn gateway(&mut self, control: u8, params: &[u8], reply: u8) -> Result<Vec<u8>> {
+        self.dispatch_gateway(control, params)?;
+        let n =
+            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply))?;
+        Ok(n.value[1..].to_vec())
+    }
+    fn dispatch_gateway(&mut self, control: u8, params: &[u8]) -> Result<()> {
         ensure!(
             matches!(control, 3 | 4 | 5 | 6 | 0x0c | 0x0d | 0x13 | 0x1b | 0x1d),
             "BLE gateway operation disabled"
@@ -595,11 +618,7 @@ impl BleSession {
         self.drain()?;
         let mut bytes = vec![0, control];
         bytes.extend_from_slice(params);
-        self.write(PCE_COMMAND, &bytes)?;
-        let response =
-            self.wait(|n| n.characteristic == PCE_RESPONSE && n.value.first() == Some(&reply));
-        let n = response?;
-        Ok(n.value[1..].to_vec())
+        self.write(PCE_COMMAND, &bytes)
     }
     /// Slave discovery enters gateway PC-link (0C/01), reads master information
     /// (0D/00), then uses routed 01/14 rather than the USB master's PCE 1B.
@@ -614,11 +633,11 @@ impl BleSession {
             return self.discover_master_units();
         }
         let retained = self.gateway_mode;
-        if !retained {
-            self.gateway(3, &[0], 0x23)?;
-            sleep(Duration::from_secs(1));
-        }
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = if retained {
+            self.gateway(4, &[], 0x24)?
+        } else {
+            self.negotiate_slave_routing()?
+        };
         ensure!(
             !mode.is_empty() && mode[0] & 0xe0 == 0x80,
             "BLE gateway did not enter normal slave mode"
@@ -629,11 +648,15 @@ impl BleSession {
         );
         self.pc_slot = mode[0] & 31;
         // Enter gateway service mode once per connection.
-        self.gateway_mode = true;
         if !retained {
             // Require the matching gateway startup receipt once.
-            self.gateway(0x0c, &[1], 0x2c)?;
+            let reply = self.gateway(0x0c, &[1], 0x2c)?;
+            if reply.first() != Some(&0) {
+                self.poison();
+                bail!("BLE gateway PC-link start rejected");
+            }
         }
+        self.gateway_mode = true;
         // Query the bus master separately as logical slot zero. The slave bitmap can
         // omit this master even when it is the motor we need to read.
         let master = self.gateway(0x0d, &[0], 0x2d)?;
@@ -708,6 +731,20 @@ impl BleSession {
                 && stock[3] != 0xff,
             "truncated or invalid BLE gateway stock identity"
         );
+        let names = crate::unit_models::candidates(stock[2], stock[3], None, None);
+        let gateway = if names.is_empty() {
+            format!("stock {:02X}/{:02X}", stock[2], stock[3])
+        } else {
+            names.join(" / ")
+        };
+        self.enter_master_routing().with_context(|| {
+            format!(
+                "BLE master setup through {gateway}, gateway firmware {}",
+                version(&revision).unwrap_or_else(|_| "unknown".into())
+            )
+        })
+    }
+    fn enter_master_routing(&mut self) -> Result<Vec<u8>> {
         self.master_routing_active = true; // Also restore after a partial setup.
         let reply = self.gateway(3, &[0x20], 0x23)?;
         ensure!(
@@ -924,7 +961,8 @@ impl BleSession {
                     receipt.value.len() >= 7
                         && receipt.value[4] == 0
                         && receipt.value[5..7] == [0xff, 0xff],
-                    "BLE component did not confirm PC owner zero; privileged routing is unverified"
+                    "BLE component did not confirm PC owner zero; privileged routing is unverified (slot {slot}, receipt {}); reconnect before another command",
+                    hex::encode(&receipt.value)
                 );
             }
         }
@@ -934,7 +972,11 @@ impl BleSession {
                     && receipt.value[3..7] == [1, self.pc_slot, 0xff, 0xff])
                 {
                     self.poison();
-                    bail!("BLE component did not confirm local PC ownership");
+                    bail!(
+                        "BLE component did not confirm local PC ownership (slot {slot}, expected owner {}, receipt {}); reconnect before another command",
+                        self.pc_slot,
+                        hex::encode(&receipt.value)
+                    );
                 }
             }
             self.slave_component_links.insert(slot, stock);
@@ -1060,16 +1102,7 @@ impl BleSession {
         Ok(())
     }
     fn restore_slave_routing(&mut self) -> Result<()> {
-        let reply = self.gateway(3, &[0], 0x23)?;
-        ensure!(
-            matches!(reply.first(), Some(0 | 0x10)),
-            "BLE normal/slave restoration rejected"
-        );
-        // A master-to-slave transition can complete asynchronously with 23/10
-        // without an immediate 23/00. Neither
-        // receipt proves the resulting mode; the following PCE4 must confirm it.
-        sleep(Duration::from_secs(1));
-        let mode = self.gateway(4, &[], 0x24)?;
+        let mode = self.negotiate_slave_routing()?;
         ensure!(
             mode.first().is_some_and(|m| m & 0xe0 == 0x80),
             "BLE normal/slave restoration was not confirmed"
@@ -1078,6 +1111,35 @@ impl BleSession {
         self.master_routing_active = false;
         self.linked_slot = None;
         Ok(())
+    }
+    fn negotiate_slave_routing(&mut self) -> Result<Vec<u8>> {
+        self.dispatch_gateway(3, &[0])?;
+        // SC-E8000 4.0.7 executes this transition without an immediate 23
+        // receipt. Other gateways return 23/00 or pending 23/10. Only PCE4
+        // confirms the resulting role; do not time out waiting for optional 23.
+        sleep(Duration::from_secs(1));
+        // Preserve any queued rejection instead of draining it through gateway().
+        self.write(PCE_COMMAND, &[0, 4])?;
+        let mut mode = None;
+        // At most a pending receipt, a completion receipt, then mode readback.
+        for _ in 0..3 {
+            let n = self.wait(|n| {
+                n.characteristic == PCE_RESPONSE && matches!(n.value.first(), Some(0x23 | 0x24))
+            })?;
+            if n.value[0] == 0x24 {
+                mode = Some(n.value[1..].to_vec());
+                break;
+            }
+            ensure!(
+                matches!(n.value.get(1), Some(0 | 0x10)),
+                "BLE normal/slave transition rejected"
+            );
+        }
+        let Some(mode) = mode else {
+            self.poison();
+            bail!("BLE normal/slave transition mode reply missing");
+        };
+        Ok(mode)
     }
     /// Close GATT and invalidate local session state. Normal/slave firmware
     /// owns teardown on disconnect; master routing must call `stop` first.
@@ -1375,6 +1437,9 @@ pub(crate) mod tests {
         lamp: u8,
         destination: u8,
         speed_limit: u16,
+        tire_circumference: u16,
+        allow_normal_regulation_writes: bool,
+        legacy_proof: Vec<u8>,
         unit_authenticated: bool,
         reject_destination_write: bool,
         reject_lamp: bool,
@@ -1382,6 +1447,7 @@ pub(crate) mod tests {
         drop_query: Option<(u8, u8)>,
         flood_query: bool,
         fail_receive: bool,
+        fail_write: Option<(u16, Vec<u8>)>,
         drop_master_metadata: bool,
         invalid_nonce: bool,
         bad_mode: bool,
@@ -1406,12 +1472,17 @@ pub(crate) mod tests {
         wrong_pc_owner: bool,
         omit_gateway_motor_receipt: bool,
         asynchronous_mode_completion: bool,
+        final_slave_ack: bool,
+        silent_slave_restore: bool,
+        reject_slave_restore: bool,
+        drop_slave_mode_reply: bool,
         motor_slot: Option<u8>,
         motor_slots: Vec<u8>,
         gateway_version: Option<Vec<u8>>,
         gateway_stock: Option<Vec<u8>>,
         reject_pc_stop: bool,
         timeout_pc_stop: bool,
+        gateway_pc_start_reply: Option<Vec<u8>>,
         reject_gateway_pc_stop: bool,
         target: Option<u8>,
         closed: bool,
@@ -1466,6 +1537,12 @@ pub(crate) mod tests {
             assert!(!without_response);
             let mut s = self.0.borrow_mut();
             s.writes.push((id, data.to_vec()));
+            if s.fail_write
+                .as_ref()
+                .is_some_and(|(failed_id, failed_bytes)| *failed_id == id && failed_bytes == data)
+            {
+                bail!("GATT operation failed for unknown reason");
+            }
             if id == PCE_COMMAND {
                 assert_eq!(data[0], 0);
                 let response = match data[1] {
@@ -1484,6 +1561,7 @@ pub(crate) mod tests {
                         );
                         reply
                     }
+                    4 if !s.master_mode && s.drop_slave_mode_reply => return Ok(()),
                     4 if s.master_mode => vec![0x24, 0xa0],
                     4 if s.initial_extended_mode => hex::decode(if s.mode_negotiated {
                         "2493ff00100200f7df80"
@@ -1497,11 +1575,23 @@ pub(crate) mod tests {
                             notify(&mut s, PCE_RESPONSE, vec![0x23, 1]);
                             return Ok(());
                         }
+                        if s.master_mode && data[2] == 0 && s.reject_slave_restore {
+                            notify(&mut s, PCE_RESPONSE, vec![0x23, 1]);
+                            return Ok(());
+                        }
+                        let silent = data[2] == 0 && s.silent_slave_restore;
                         s.master_mode = data[2] == 0x20;
                         s.mode_negotiated = true;
+                        if silent {
+                            return Ok(());
+                        }
+                        if data[2] == 0 && s.asynchronous_mode_completion && s.final_slave_ack {
+                            notify(&mut s, PCE_RESPONSE, vec![0x23, 0x10]);
+                        }
                         vec![
                             0x23,
-                            if s.asynchronous_mode_completion && data[2] == 0 {
+                            if s.asynchronous_mode_completion && !s.final_slave_ack && data[2] == 0
+                            {
                                 0x10
                             } else {
                                 0
@@ -1517,6 +1607,12 @@ pub(crate) mod tests {
                         vec![0x26, 0]
                     }
                     0x0c => {
+                        if data[2] == 1 {
+                            if let Some(reply) = s.gateway_pc_start_reply.clone() {
+                                notify(&mut s, PCE_RESPONSE, reply);
+                                return Ok(());
+                            }
+                        }
                         if data[2] == 0 && s.timeout_pc_stop {
                             return Ok(());
                         }
@@ -1622,6 +1718,10 @@ pub(crate) mod tests {
                     return Ok(());
                 }
                 if group == 0x16 && cmd == 0xd8 {
+                    if s.allow_normal_regulation_writes {
+                        let keys = unit_auth::derive(&[1, 2, 3, 4, 5, 6]);
+                        assert_eq!(&data[3..], &keys.auth_key);
+                    }
                     for fragment in [
                         vec![data[0], 0x16, 0xda, 0x16, 0, 1, 2, 3, 4, 5],
                         vec![data[0], 0x16, 0xda, 0x26, 6, 7, 8, 9, 10, 11],
@@ -1632,7 +1732,19 @@ pub(crate) mod tests {
                     return Ok(());
                 }
                 if group == 0x16 && cmd == 0xe0 {
+                    if s.allow_normal_regulation_writes {
+                        let length = if data[3] == 0x34 { 4 } else { 6 };
+                        s.legacy_proof.extend_from_slice(&data[4..4 + length]);
+                    }
                     if data[3] == 0x34 {
+                        if s.allow_normal_regulation_writes {
+                            let keys = unit_auth::derive(&[1, 2, 3, 4, 5, 6]);
+                            let challenge = std::array::from_fn(|i| i as u8);
+                            assert_eq!(
+                                s.legacy_proof,
+                                unit_auth::encrypt_challenge(&keys, &challenge)
+                            );
+                        }
                         s.unit_authenticated = true;
                         notify(
                             &mut s,
@@ -1748,15 +1860,34 @@ pub(crate) mod tests {
                     }
                     (0x16, 0xac) => response.extend([data[3], s.destination, 0xff, 0xff]),
                     (0x16, 0xa8) => {
-                        if !s.master_mode
+                        if (!s.master_mode && !s.allow_normal_regulation_writes)
                             || s.wrong_pc_owner
                             || !s.unit_authenticated
                             || s.reject_destination_write
                         {
                             response[2] += 1;
                         } else {
+                            if let Some(p) = &s.backup_required {
+                                let backup: serde_json::Value =
+                                    serde_json::from_slice(&std::fs::read(p)?).unwrap();
+                                assert_eq!(backup["serial"], "010203040506");
+                            }
                             s.destination = data[4];
                         }
+                    }
+                    (0x35, 0x04) => {
+                        response.extend(s.tire_circumference.to_le_bytes());
+                        response.extend([0xff, 0xff]);
+                    }
+                    (0x35, 0x00) => {
+                        assert!(s.allow_normal_regulation_writes && s.unit_authenticated);
+                        assert!(!s.wrong_pc_owner);
+                        if let Some(p) = &s.backup_required {
+                            let backup: serde_json::Value =
+                                serde_json::from_slice(&std::fs::read(p)?).unwrap();
+                            assert_eq!(backup["serial"], "010203040506");
+                        }
+                        s.tire_circumference = u16::from_le_bytes([data[3], data[4]]);
                     }
                     (0x16, 0xb4) => {
                         response.extend_from_slice(&s.speed_limit.to_le_bytes());
@@ -2595,11 +2726,7 @@ pub(crate) mod tests {
         state.borrow_mut().reject_master_mode = true;
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
-        assert!(session
-            .discover_units()
-            .unwrap_err()
-            .to_string()
-            .contains("routing rejected"));
+        assert!(format!("{:#}", session.discover_units().unwrap_err()).contains("routing rejected"));
         assert!(
             !state
                 .borrow()
@@ -2624,6 +2751,154 @@ pub(crate) mod tests {
         session.stop().unwrap();
         assert!(!session.master_routing_active);
         assert!(!state.borrow().master_mode);
+    }
+    #[test]
+    fn silent_stock_slave_transition_is_confirmed_by_mode_readback() {
+        let (mut session, state) = mock();
+        state.borrow_mut().silent_slave_restore = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        session.stop().unwrap();
+        assert!(!session.master_routing_active);
+        assert!(!session.poisoned);
+        assert!(!state.borrow().master_mode);
+    }
+    #[test]
+    fn normal_discovery_confirms_mode_when_slave_requests_are_silent() {
+        let (mut session, state) = mock();
+        state.borrow_mut().silent_slave_restore = true;
+        session.authenticate().unwrap();
+        assert_eq!(session.discover_units().unwrap(), [13]);
+        assert!(!session.poisoned);
+        session.stop().unwrap();
+    }
+    #[test]
+    fn normal_discovery_rejects_refused_or_missing_service_status_before_bus_queries() {
+        for reply in [vec![0x2c, 1], vec![0x2c, 0x10], vec![0x2c]] {
+            let (mut session, state) = mock();
+            session.authenticate().unwrap();
+            state.borrow_mut().writes.clear();
+            state.borrow_mut().gateway_pc_start_reply = Some(reply);
+            let error = session.discover_units().unwrap_err();
+            assert!(error.to_string().contains("gateway PC-link start rejected"));
+            let sent = state.borrow().writes.len();
+            assert!(session.discover_units().is_err());
+            assert_eq!(state.borrow().writes.len(), sent);
+            assert!(!session.gateway_mode);
+            {
+                let state = state.borrow();
+                assert_eq!(
+                    state
+                        .writes
+                        .iter()
+                        .filter(|(c, b)| *c == PCE_COMMAND && b == &[0, 0x0c, 1])
+                        .count(),
+                    1
+                );
+                assert!(!state
+                    .writes
+                    .iter()
+                    .any(|(c, b)| *c == FREE_COMMAND || (*c == PCE_COMMAND && b[1] == 0x0d)));
+            }
+            session.stop().unwrap();
+            assert!(state.borrow().closed);
+        }
+    }
+    #[test]
+    fn master_write_failure_names_gateway_firmware_and_command_without_replay() {
+        for packet in [
+            vec![0, 3, 0x20],
+            vec![0, 4],
+            vec![0, 0x1d, 0],
+            vec![0, 0x1b],
+            vec![0, 0x0c, 1],
+        ] {
+            let (mut session, state) = mock();
+            session.set_master_routing(true).unwrap();
+            session.authenticate().unwrap();
+            state.borrow_mut().fail_write = Some((PCE_COMMAND, packet.clone()));
+            let error = format!("{:#}", session.discover_units().unwrap_err());
+            assert!(
+                error.contains("SC-EM800, gateway firmware 4.6.0.0"),
+                "{error}"
+            );
+            assert!(
+                error.contains(&format!("gateway PCE {:02X}", packet[1])),
+                "{error}"
+            );
+            assert!(error.contains("GATT operation failed for unknown reason"));
+            assert!(session.poisoned);
+            let written = state.borrow().writes.len();
+            assert!(session.stop().is_err());
+            assert_eq!(state.borrow().writes.len(), written);
+            assert_eq!(state.borrow().writes.last(), Some(&(PCE_COMMAND, packet)));
+        }
+    }
+    #[test]
+    fn failed_write_diagnostics_never_include_authentication_parameters() {
+        for (id, packet) in [
+            (AUTH_CONTROL, vec![1, 0xaa, 0xbb, 0xcc, 0xdd]),
+            (FREE_COMMAND, vec![13, 0x16, 0xe0, 0xaa, 0xbb, 0xcc, 0xdd]),
+        ] {
+            let (mut session, state) = mock();
+            state.borrow_mut().fail_write = Some((id, packet.clone()));
+            let error = format!("{:#}", session.write(id, &packet).unwrap_err());
+            assert!(error.contains("BLE write failed; outcome may be uncertain"));
+            assert!(!error.contains("aabbccdd"));
+            assert!(!error.contains("AA BB CC DD"));
+        }
+    }
+    #[test]
+    fn authentication_recovers_a_gateway_left_in_master_without_a_transition_ack() {
+        let (mut session, state) = mock();
+        state.borrow_mut().master_mode = true;
+        state.borrow_mut().silent_slave_restore = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        assert!(session.authenticated);
+        assert!(!state.borrow().master_mode);
+        assert_eq!(session.discover_units().unwrap(), [3, 13]);
+        assert!(state.borrow().master_mode);
+        session.stop().unwrap();
+    }
+    #[test]
+    fn pending_and_completion_receipts_are_followed_by_mode_confirmation() {
+        let (mut session, state) = mock();
+        state.borrow_mut().asynchronous_mode_completion = true;
+        state.borrow_mut().final_slave_ack = true;
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        session.stop().unwrap();
+        assert!(!session.master_routing_active && !session.poisoned);
+    }
+    #[test]
+    fn silent_transition_without_mode_readback_never_confirms_release() {
+        let (mut session, state) = mock();
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        state.borrow_mut().silent_slave_restore = true;
+        state.borrow_mut().drop_slave_mode_reply = true;
+        let before = state.borrow().writes.len();
+        assert!(session.stop().is_err());
+        assert!(session.master_routing_active && session.poisoned);
+        assert_eq!(
+            &state.borrow().writes[before..],
+            &[(PCE_COMMAND, vec![0, 3, 0]), (PCE_COMMAND, vec![0, 4])]
+        );
+    }
+    #[test]
+    fn explicit_slave_transition_rejection_is_not_discarded_by_mode_query() {
+        let (mut session, state) = mock();
+        session.set_master_routing(true).unwrap();
+        session.authenticate().unwrap();
+        session.discover_units().unwrap();
+        state.borrow_mut().reject_slave_restore = true;
+        let error = session.stop().unwrap_err();
+        assert!(format!("{error:#}").contains("normal/slave transition rejected"));
+        assert!(session.master_routing_active);
     }
     #[test]
     fn unlisted_gateway_version_uses_runtime_master_capabilities() {
@@ -2749,11 +3024,9 @@ pub(crate) mod tests {
         state.borrow_mut().unit_bitmap = Some([0; 4]);
         session.set_master_routing(true).unwrap();
         session.authenticate().unwrap();
-        assert!(session
-            .discover_units()
-            .unwrap_err()
-            .to_string()
-            .contains("no remote components"));
+        assert!(
+            format!("{:#}", session.discover_units().unwrap_err()).contains("no remote components")
+        );
         assert!(!state
             .borrow()
             .writes
@@ -3354,6 +3627,81 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn normal_e8000_410_legacy_auth_allows_mocked_region_and_wheel_backup_readback() {
+        // A peer that accepts these normal-route SETs is a protocol fixture,
+        // not evidence that a particular bike accepts them on hardware.
+        let (mut session, state) = mock();
+        {
+            let mut peer = state.borrow_mut();
+            peer.master_info = Some(vec![1, 0x12, 1]);
+            peer.master_stock_reply = Some(vec![0x12, 0, 0xff]);
+            peer.motor_slot = Some(0);
+            peer.stock_series = Some(0x12);
+            peer.motor_params = Some(vec![0; 7]);
+            peer.motor_version = Some(vec![0x4a, 0, 0]);
+            peer.tire_circumference = 2200;
+            peer.allow_normal_regulation_writes = true;
+        }
+        session.set_master_routing(false).unwrap();
+        session.authenticate().unwrap();
+        let identity = session.start_component(Some(0), None).unwrap();
+        assert_eq!(identity.slot, 0, "exercise the normal gateway proxy");
+        assert_eq!(identity.dcas_version, "4.10.0.0");
+        // Authenticate the same synthetic motor serial used by durable backups.
+        assert!(session.authenticate_unit_settings("FFFFFFFFFFFF").is_err());
+        assert!(!state.borrow().unit_authenticated);
+        let receipt = session.authenticate_unit_settings("010203040506").unwrap();
+        assert_eq!(receipt["protocol"], "legacy");
+        assert_eq!(receipt["unit_authentication_receipt"], true);
+
+        for (name, value, previous) in [
+            ("destination", "0", 1),
+            ("tire-circumference", "2250", 2200),
+        ] {
+            let backup = path(&format!("normal-e8000-{name}.json"));
+            state.borrow_mut().backup_required = Some(backup.clone());
+            let result = crate::settings::set_for_model(
+                &mut session,
+                identity.slot,
+                name,
+                value,
+                &backup,
+                crate::settings::SettingsModel::E8000,
+            )
+            .unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
+            assert_eq!(saved["serial"], "010203040506");
+            assert_eq!(saved["settings_model"], "e8000");
+            assert_eq!(saved["setting"], name);
+            assert_eq!(saved["before"], previous);
+            assert_eq!(result.after, value.parse::<i64>().unwrap());
+            std::fs::remove_file(backup).unwrap();
+        }
+        assert_eq!(state.borrow().destination, 0);
+        assert_eq!(state.borrow().tire_circumference, 2250);
+        {
+            let writes = &state.borrow().writes;
+            assert!(!writes.iter().any(|(id, bytes)| {
+                *id == PCE_COMMAND && bytes.len() >= 3 && bytes[1] == 3 && bytes[2] & 0x20 != 0
+            }));
+            assert!(writes
+                .iter()
+                .filter(|(id, _)| *id == FREE_COMMAND)
+                .all(|(_, bytes)| bytes[0] == 0));
+            assert_eq!(
+                writes
+                    .iter()
+                    .filter(|(id, b)| *id == FREE_COMMAND
+                        && matches!(&b[1..3], [0x16, 0xa8] | [0x35, 0]))
+                    .count(),
+                2
+            );
+        }
+        session.stop().unwrap();
+    }
+
+    #[test]
     fn rejected_destination_write_stops_without_route_retry_or_second_write() {
         // Explicit normal routing or motor rejection must fail on the first attempt without retrying.
         let (mut session, state) = mock();
@@ -3437,11 +3785,13 @@ pub(crate) mod tests {
         let (mut session, state) = component_mock(0x16, 4);
         state.borrow_mut().component_part = Some(4);
         state.borrow_mut().wrong_pc_owner = true;
-        assert!(session
+        let error = session
             .start_component(Some(4), Some("RD-RX815"))
             .unwrap_err()
-            .to_string()
-            .contains("local PC ownership"));
+            .to_string();
+        assert!(error.contains("local PC ownership"));
+        assert!(error.contains("slot 4, expected owner 3, receipt 0432120113ffff"));
+        assert!(error.contains("reconnect before another command"));
         assert!(session.slave_component_links.is_empty());
         assert!(session.poisoned);
         assert!(session.pause_settings_command().is_err());

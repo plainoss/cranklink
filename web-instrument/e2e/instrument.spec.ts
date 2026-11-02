@@ -35,6 +35,52 @@ async function openInstrument(page: Page) {
 }
 
 test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", () => {
+  test("failed connection logs stay reachable and copyable without reconnecting", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openInstrument(page);
+    const failure = await page.evaluate(async () => {
+      const controller = (window as any).cranklinkInstrumentController;
+      await controller.connectAndSync("sim", { model: "ep800-crg", fault: "disconnect_on_connect" }).catch(() => {});
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: async (text: string) => { (window as any).copiedDiagnosticReport = text; },
+      } });
+      const state = controller.getState();
+      return { error: state.failure?.error, entries: state.logs.length };
+    });
+    expect(failure.error).toBeTruthy();
+    expect(failure.entries).toBeGreaterThan(0);
+    await page.getByTestId("btn-connect-diagnostics").click();
+    await expect(page).toHaveURL(/\/diagnostics$/);
+    await expect(page.getByTestId("offline-diagnostics")).toBeVisible();
+    await expect(page.getByTestId("console-input")).toHaveCount(0);
+    await page.getByTestId("btn-copy-diagnostics").click();
+    await expect(page.getByRole("status")).toContainText("Diagnostic report copied.");
+    const report = await page.evaluate(() => (window as any).copiedDiagnosticReport);
+    expect(report).toContain(failure.error);
+    expect(report).toContain("Build:");
+    expect(report).toContain("connect sim");
+    await page.getByRole("button", { name: "Back to connection", exact: true }).click();
+    await expect(page.getByTestId("error-banner")).toBeVisible();
+    await page.evaluate(() => (window as any).cranklinkInstrumentController.dismissError());
+    await page.getByTestId("btn-connect-diagnostics").click();
+    expect(await page.evaluate(() => (window as any).cranklinkInstrumentController.getState().logs.length)).toBe(failure.entries);
+    await page.screenshot({ path: "test-results/offline-diagnostics-mobile.png", fullPage: true });
+  });
+
+  test("offline diagnostics offers manual copy when clipboard access fails", async ({ page }) => {
+    await openInstrument(page);
+    await page.goto("./#/diagnostics");
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: async () => { throw new Error("Clipboard denied"); },
+      } });
+    });
+    await page.getByTestId("btn-copy-diagnostics").click();
+    await expect(page.getByRole("textbox", { name: "Diagnostic report" })).toHaveValue(/cranklink diagnostic report/);
+    await expect(page.getByRole("status")).toContainText("Select and copy");
+    await expect(page.getByTestId("console-input")).toHaveCount(0);
+  });
+
   test("zero-click connect, inline staging, ordered batch commit, and snapshot rollback @smoke", async ({
     page,
   }) => {
@@ -215,6 +261,32 @@ test.describe("cranklink Drive Unit Field Instrument (WASM + Wire Simulator)", (
     await expect(calibration.getByTestId("slider-outside-display-speed-adjustment")).toHaveText(
       "The current value, 7.5%, is outside the range cranklink can write (-5% to 5%), so the slider stops at 5%.");
     await expect(calibration.getByRole("slider")).toHaveAccessibleDescription(/Percentage correction[\s\S]*The current value, 7\.5%/);
+  });
+
+  test("E8000 shows region-based assist speed and stages only the market setting", async ({ page }) => {
+    await openInstrument(page);
+    await page.getByTestId("btn-connect-sim").click();
+    await expect(page.getByTestId("identity-strip")).toContainText("EP800-CRG");
+    // Presentation fixture: the radio peer is still EP800. Load the real E8000
+    // schema, but do not send this fixture's settings to that different motor.
+    await page.evaluate(async () => {
+      const controller = (window as any).cranklinkInstrumentController;
+      const previous = controller.getState();
+      const schema = await controller.loadSchema("e8000", true);
+      controller.update({ schema,
+        identity: { ...previous.identity, modelSlug: "e8000", model: "DU-E8000", modelSeries: 0x12, dcasVersion: "4.6.0.0" },
+        liveValues: { ...Object.fromEntries(schema.map((spec: any) => [spec.name, previous.liveValues[spec.name]])), destination: { value: 0, raw: "0100ffff" } },
+      });
+    });
+    await expect(page.getByTestId("e8000-settings-support")).toContainText("independent speed slider is not available");
+    await expect(page.getByTestId("param-row-speed-limit")).toHaveCount(0);
+    await page.getByTestId("param-row-destination").getByRole("button", { name: /Region & assist speed/ }).click();
+    await expect(page.getByRole("option")).toHaveText(["Europe · 25 km/h", "United States · 32 km/h"]);
+    await page.getByRole("option", { name: "United States · 32 km/h", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).cranklinkInstrumentController.getState().stagedValues)).toEqual({ destination: 1 });
+    await page.getByTestId("btn-review-save").click();
+    await expect(page.getByTestId("review-dialog")).toContainText("Region & assist speed");
+    await page.screenshot({ path: "test-results/e8000-region-review.png", fullPage: true });
   });
 
   test("the review does not promise to restore a value cranklink cannot write", async ({ page }) => {

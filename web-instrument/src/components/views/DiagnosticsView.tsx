@@ -3,6 +3,7 @@ import { Copy } from "lucide-react";
 import type { InstrumentState, LogEntry } from "../../types.ts";
 import type { SessionController } from "../../core/sessionController.ts";
 import { Button, Card, Disclosure, Form, Input, Label, TextField } from "@heroui/react";
+import { BUILD_REVISION, formatDiagnosticReport } from "../../domain/diagnostics.ts";
 
 interface DiagnosticsViewProps {
   state: InstrumentState;
@@ -21,7 +22,19 @@ const COLLAPSE_AT = 240;
 
 export function DiagnosticsView({ state, controller }: DiagnosticsViewProps) {
   const [cmdDraft, setCmdDraft] = useState("");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
   const logRef = useRef<HTMLDivElement>(null);
+  const canRunCommands = state.phase === "ready" && !state.linkLost;
+  const report = formatDiagnosticReport(state, { url: location.href, userAgent: navigator.userAgent });
+  const copyReport = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(report);
+      setCopyState("copied");
+    } catch {
+      setCopyState("manual");
+    }
+  };
 
   useEffect(() => {
     const log = logRef.current;
@@ -31,7 +44,7 @@ export function DiagnosticsView({ state, controller }: DiagnosticsViewProps) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const command = cmdDraft.trim();
-    if (!command) return;
+    if (!command || !canRunCommands) return;
     setCmdDraft("");
     controller.runRawCommand(command).catch(() => {});
   };
@@ -41,6 +54,22 @@ export function DiagnosticsView({ state, controller }: DiagnosticsViewProps) {
       <p className="text-sm text-muted">
         Every command this session ran and its full output. Errors shown elsewhere are summaries; the details are here.
       </p>
+
+      <Card className="gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-muted">Build <code>{BUILD_REVISION}</code></span>
+          <Button variant="tertiary" onPress={() => void copyReport()} data-testid="btn-copy-diagnostics">
+            <Copy size={16} aria-hidden="true" />Copy diagnostic report
+          </Button>
+        </div>
+        <p className="text-sm text-muted">Logs stay available in this tab after a failed connection or disconnect. Copy them before reloading.</p>
+        <p role="status" className="text-sm">
+          {copyState === "copied" ? "Diagnostic report copied." : copyState === "manual" ? "Automatic copy is unavailable. Select and copy the report below." : ""}
+        </p>
+        {copyState === "manual" && <textarea readOnly aria-label="Diagnostic report" value={report}
+          onFocus={(event) => event.currentTarget.select()} rows={12}
+          className="w-full rounded-lg border border-separator bg-surface-secondary p-3 font-mono text-xs" />}
+      </Card>
 
       <Card aria-labelledby="log-heading" className="p-0 gap-0 min-h-[24rem] max-h-[70dvh] overflow-hidden" data-testid="console-body">
         <Card.Header className="flex flex-row items-center justify-between px-4 py-3 sm:px-5 border-b border-separator">
@@ -62,7 +91,7 @@ export function DiagnosticsView({ state, controller }: DiagnosticsViewProps) {
         </div>
 
         <Card.Footer className="p-3 sm:p-4 border-t border-separator">
-          <Form onSubmit={handleSubmit} className="flex w-full flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+          {canRunCommands ? <Form onSubmit={handleSubmit} className="flex w-full flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
             <TextField value={cmdDraft} onChange={setCmdDraft} className="min-w-0 flex-1" fullWidth>
               <Label className="font-mono text-xs font-semibold">cranklink&gt;</Label>
               <Input
@@ -77,7 +106,7 @@ export function DiagnosticsView({ state, controller }: DiagnosticsViewProps) {
             <Button type="submit" className="sm:min-w-20">
               Run
             </Button>
-          </Form>
+          </Form> : <p className="text-sm text-muted">Connect to run commands. Viewing and copying these logs does not contact the bike.</p>}
         </Card.Footer>
       </Card>
     </div>

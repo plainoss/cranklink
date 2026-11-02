@@ -2,10 +2,15 @@
 //! to one connection; no async work survives close/drop.
 use super::*;
 use btleplug::{
-    api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType},
-    platform::{Manager, Peripheral},
+    api::{
+        Central, CentralEvent, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType,
+    },
+    platform::{Adapter, Manager, Peripheral},
 };
-use futures_util::StreamExt;
+use futures_util::{
+    future::{select, Either},
+    pin_mut, StreamExt,
+};
 use std::{
     future::Future,
     sync::{
@@ -13,7 +18,12 @@ use std::{
         Arc,
     },
 };
-use tokio::{runtime::Runtime, sync::mpsc, task::JoinHandle, time::timeout};
+use tokio::{
+    runtime::Runtime,
+    sync::{mpsc, watch},
+    task::JoinHandle,
+    time::timeout,
+};
 use uuid::Uuid;
 
 fn runtime() -> Result<Runtime> {
@@ -30,36 +40,103 @@ async fn bounded<T>(
         .context("Bluetooth operation timed out")?
         .context("Bluetooth operation failed (check OS permission and pairing)")
 }
-async fn discover(seconds: u64) -> Result<Vec<(PeripheralInfo, Peripheral)>> {
+/// A latched adapter event, independent of btleplug's cached peripheral map.
+/// Its macOS backend can leave state/disconnect futures pending after removing
+/// a disconnected peripheral. Wake in-flight calls instead of waiting for them.
+struct LinkState(watch::Sender<bool>);
+impl LinkState {
+    fn new() -> Self {
+        Self(watch::channel(false).0)
+    }
+    fn disconnected(&self) -> bool {
+        *self.0.borrow()
+    }
+    fn observe<T: PartialEq>(&self, disconnected: Option<&T>, target: &T) {
+        if disconnected == Some(target) {
+            self.0.send_replace(true);
+        }
+    }
+    async fn bounded<T>(
+        &self,
+        future: impl Future<Output = std::result::Result<T, btleplug::Error>>,
+    ) -> Result<T> {
+        let mut state = self.0.subscribe();
+        ensure!(!*state.borrow(), "Bluetooth peripheral disconnected");
+        let disconnected = state.wait_for(|down| *down);
+        let operation = bounded(future);
+        pin_mut!(disconnected, operation);
+        let result = match select(disconnected, operation).await {
+            Either::Left(_) => bail!("Bluetooth peripheral disconnected"),
+            Either::Right((result, _)) => result,
+        };
+        ensure!(!self.disconnected(), "Bluetooth peripheral disconnected");
+        result
+    }
+}
+// Poll only for discovery, never for connection or protocol retries. Return as
+// soon as the requested device appears so short advertising windows remain usable.
+async fn poll_discovery<T, F, Fut>(duration: Duration, mut poll: F) -> Result<Vec<T>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<T>>>,
+{
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        let found = poll().await?;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if !found.is_empty() || remaining.is_zero() {
+            return Ok(found);
+        }
+        tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
+    }
+}
+async fn discover(
+    seconds: u64,
+    target: Option<&str>,
+) -> Result<Vec<(PeripheralInfo, Peripheral, Adapter)>> {
     let manager = bounded(Manager::new()).await?;
     let adapters = bounded(manager.adapters()).await?;
     ensure!(!adapters.is_empty(), "no Bluetooth adapters available");
     let mut started = Vec::new();
-    let result: Result<Vec<(PeripheralInfo, Peripheral)>> = async {
+    let result: Result<Vec<(PeripheralInfo, Peripheral, Adapter)>> = async {
         for adapter in &adapters {
             bounded(adapter.start_scan(ScanFilter::default())).await?;
             started.push(adapter);
         }
-        tokio::time::sleep(Duration::from_secs(seconds)).await;
-        let mut found = Vec::new();
-        for adapter in &adapters {
-            for p in bounded(adapter.peripherals()).await? {
-                if let Some(props) = bounded(p.properties()).await? {
-                    found.push((
-                        PeripheralInfo {
-                            id: p.id().to_string(),
-                            name: props.local_name,
-                            rssi: props.rssi,
-                            etube_service_advertised: props
-                                .services
-                                .contains(&Uuid::parse_str(SERVICE)?),
-                        },
-                        p,
-                    ));
+        let snapshot = || async {
+            let mut found = Vec::new();
+            for adapter in &adapters {
+                for p in bounded(adapter.peripherals()).await? {
+                    let id = p.id().to_string();
+                    if target.is_some_and(|target| target != id) {
+                        continue;
+                    }
+                    if let Some(props) = bounded(p.properties()).await? {
+                        found.push((
+                            PeripheralInfo {
+                                id,
+                                name: props.local_name,
+                                rssi: props.rssi,
+                                etube_service_advertised: props
+                                    .services
+                                    .contains(&Uuid::parse_str(SERVICE)?),
+                            },
+                            p,
+                            adapter.clone(),
+                        ));
+                    }
                 }
             }
+            Ok(found)
+        };
+        let duration = Duration::from_secs(seconds);
+        if target.is_some() {
+            poll_discovery(duration, snapshot).await
+        } else {
+            // User-requested scans retain their full observation window.
+            tokio::time::sleep(duration).await;
+            snapshot().await
         }
-        Ok(found)
     }
     .await;
     let mut stop_error = None;
@@ -76,9 +153,9 @@ async fn discover(seconds: u64) -> Result<Vec<(PeripheralInfo, Peripheral)>> {
 }
 pub(super) fn scan(seconds: u64, all: bool) -> Result<Vec<PeripheralInfo>> {
     let mut result: Vec<_> = runtime()?
-        .block_on(discover(seconds))?
+        .block_on(discover(seconds, None))?
         .into_iter()
-        .map(|(info, _)| info)
+        .map(|(info, _, _)| info)
         .filter(|i| all || i.etube_service_advertised)
         .collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
@@ -87,9 +164,12 @@ pub(super) fn scan(seconds: u64, all: bool) -> Result<Vec<PeripheralInfo>> {
 pub(super) struct NativeGatt {
     rt: Runtime,
     peripheral: Peripheral,
+    _adapter: Adapter,
     chars: BTreeMap<u16, btleplug::api::Characteristic>,
     rx: mpsc::Receiver<Notification>,
     pump: JoinHandle<()>,
+    event_pump: JoinHandle<()>,
+    link: Arc<LinkState>,
     failed: Arc<AtomicBool>,
     overflow: Arc<AtomicBool>,
     credential: Option<String>,
@@ -99,19 +179,47 @@ impl NativeGatt {
     pub fn open(id: &str, credential: Option<String>) -> Result<Self> {
         let rt = runtime()?;
         let mut matches: Vec<_> = rt
-            .block_on(discover(5))?
+            .block_on(discover(5, Some(id)))?
             .into_iter()
-            .filter(|(i, _)| i.id == id)
+            .filter(|(i, _, _)| i.id == id)
             .collect();
         ensure!(
             matches.len() == 1,
             "expected one BLE peripheral with ID {id}; found {} (run ble scan)",
             matches.len()
         );
-        let (_, peripheral) = matches.remove(0);
+        let (_, peripheral, adapter) = matches.remove(0);
+        let link = Arc::new(LinkState::new());
+        let failed = Arc::new(AtomicBool::new(false));
+        // Subscribe on the discovery adapter before connecting so a fast drop
+        // cannot fall between connection setup and event registration.
+        let event_pump = rt.block_on(async {
+            let mut events = bounded(adapter.events()).await?;
+            let target = peripheral.id();
+            let link = link.clone();
+            let failed = failed.clone();
+            Ok::<_, anyhow::Error>(tokio::spawn(async move {
+                while let Some(event) = events.next().await {
+                    let disconnected = match &event {
+                        CentralEvent::DeviceDisconnected(id) => Some(id),
+                        _ => None,
+                    };
+                    link.observe(disconnected, &target);
+                    if link.disconnected() {
+                        failed.store(true, Ordering::Release);
+                        return;
+                    }
+                }
+                failed.store(true, Ordering::Release);
+            }))
+        })?;
         let setup = rt.block_on(async {
-            bounded(peripheral.connect()).await?;
-            bounded(peripheral.discover_services()).await?;
+            link.bounded(peripheral.connect())
+                .await
+                .context("connect native BLE peripheral")?;
+            link.bounded(peripheral.discover_services())
+                .await
+                .context("discover native BLE services")?;
             let service = Uuid::parse_str(SERVICE)?;
             let chars: BTreeMap<_, _> = peripheral
                 .characteristics()
@@ -128,9 +236,8 @@ impl NativeGatt {
                 chars.contains_key(&PCE_COMMAND) && chars.contains_key(&FREE_COMMAND),
                 "selected peripheral has no E-TUBE configuration service"
             );
-            let mut notifications = bounded(peripheral.notifications()).await?;
+            let mut notifications = link.bounded(peripheral.notifications()).await?;
             let (tx, rx) = mpsc::channel(256);
-            let failed = Arc::new(AtomicBool::new(false));
             let failed_task = failed.clone();
             let overflow = Arc::new(AtomicBool::new(false));
             let overflow_task = overflow.clone();
@@ -154,21 +261,27 @@ impl NativeGatt {
                 }
                 failed_task.store(true, Ordering::Release);
             });
-            Ok((chars, rx, pump, failed, overflow))
+            Ok((chars, rx, pump, overflow))
         });
-        let (chars, rx, pump, failed, overflow) = match setup {
+        let (chars, rx, pump, overflow) = match setup {
             Ok(x) => x,
             Err(e) => {
-                let _ = rt.block_on(bounded(peripheral.disconnect()));
+                if !link.disconnected() {
+                    let _ = rt.block_on(link.bounded(peripheral.disconnect()));
+                }
+                event_pump.abort();
                 return Err(e);
             }
         };
         Ok(Self {
             rt,
             peripheral,
+            _adapter: adapter,
             chars,
             rx,
             pump,
+            event_pump,
+            link,
             failed,
             overflow,
             credential,
@@ -177,7 +290,7 @@ impl NativeGatt {
     }
     fn ready(&self) -> Result<()> {
         ensure!(
-            !self.closed && !self.failed.load(Ordering::Acquire),
+            !self.closed && !self.link.disconnected() && !self.failed.load(Ordering::Acquire),
             "Bluetooth disconnected or receive queue failed; reconnect"
         );
         Ok(())
@@ -216,7 +329,9 @@ impl Gatt for NativeGatt {
     }
     fn read(&mut self, id: u16) -> Result<Vec<u8>> {
         let c = self.characteristic(id)?;
-        let result = self.rt.block_on(bounded(self.peripheral.read(&c)));
+        let result = self
+            .rt
+            .block_on(self.link.bounded(self.peripheral.read(&c)));
         self.finish(result)
     }
     fn write(&mut self, id: u16, bytes: &[u8], without_response: bool) -> Result<()> {
@@ -228,12 +343,14 @@ impl Gatt for NativeGatt {
         };
         let result = self
             .rt
-            .block_on(bounded(self.peripheral.write(&c, bytes, kind)));
+            .block_on(self.link.bounded(self.peripheral.write(&c, bytes, kind)));
         self.finish(result)
     }
     fn subscribe(&mut self, id: u16) -> Result<()> {
         let c = self.characteristic(id)?;
-        let result = self.rt.block_on(bounded(self.peripheral.subscribe(&c)));
+        let result = self
+            .rt
+            .block_on(self.link.bounded(self.peripheral.subscribe(&c)));
         self.finish(result)
     }
     fn receive(&mut self, duration: Duration) -> Result<Option<Notification>> {
@@ -246,7 +363,8 @@ impl Gatt for NativeGatt {
         // schedules, and is still a valid reply.
         let live = self.ready().and_then(|()| {
             ensure!(
-                self.rt.block_on(bounded(self.peripheral.is_connected()))?,
+                self.rt
+                    .block_on(self.link.bounded(self.peripheral.is_connected()))?,
                 "Bluetooth peripheral disconnected"
             );
             Ok(())
@@ -259,12 +377,31 @@ impl Gatt for NativeGatt {
         }
         let result = self.rt.block_on(reject_overflow(
             async {
-                match timeout(duration, self.rx.recv()).await {
+                let mut state = self.link.0.subscribe();
+                let received = {
+                    let disconnected = state.wait_for(|down| *down);
+                    let receiving = timeout(duration, self.rx.recv());
+                    pin_mut!(disconnected, receiving);
+                    match select(disconnected, receiving).await {
+                        Either::Left(_) => None,
+                        Either::Right((received, _)) => Some(received),
+                    }
+                };
+                let Some(received) = received else {
+                    // Preserve any final receipt already queued before the
+                    // radio dropped, as in the synchronous queue path.
+                    return take_queued(
+                        &mut self.rx,
+                        &self.overflow,
+                        Err(anyhow::anyhow!("Bluetooth peripheral disconnected")),
+                    );
+                };
+                match received {
                     Ok(Some(n)) => Ok(Some(n)),
                     Ok(None) => bail!("Bluetooth notification stream closed"),
                     Err(_) => {
                         ensure!(
-                            bounded(self.peripheral.is_connected()).await?,
+                            self.link.bounded(self.peripheral.is_connected()).await?,
                             "Bluetooth peripheral disconnected"
                         );
                         Ok(None)
@@ -292,12 +429,25 @@ impl Gatt for NativeGatt {
             credential.zeroize();
         }
         self.pump.abort();
-        self.rt.block_on(async {
-            match bounded(self.peripheral.disconnect()).await {
-                Ok(()) => Ok(()),
-                Err(e) => already_closed(e, bounded(self.peripheral.is_connected()).await),
+        let result = self.rt.block_on(async {
+            if self.link.disconnected() {
+                return Ok(());
             }
-        })
+            match self.link.bounded(self.peripheral.disconnect()).await {
+                Ok(()) => Ok(()),
+                Err(_) if self.link.disconnected() => Ok(()),
+                Err(e) => {
+                    let connected = self.link.bounded(self.peripheral.is_connected()).await;
+                    if self.link.disconnected() {
+                        Ok(())
+                    } else {
+                        already_closed(e, connected)
+                    }
+                }
+            }
+        });
+        self.event_pump.abort();
+        result
     }
 }
 /// A peripheral that dropped the link itself (the gateway does after its
@@ -356,6 +506,109 @@ impl Drop for NativeGatt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disconnection_events_only_fence_the_selected_peripheral_and_stay_latched() {
+        let link = LinkState::new();
+        link.observe(Some(&2), &1);
+        link.observe(None, &1);
+        assert!(!link.disconnected());
+        runtime()
+            .unwrap()
+            .block_on(link.bounded(async { Ok::<_, btleplug::Error>(()) }))
+            .unwrap();
+        link.observe(Some(&1), &1);
+        link.observe(Some(&2), &1);
+        assert!(link.disconnected());
+        let touched = AtomicBool::new(false);
+        let error = runtime()
+            .unwrap()
+            .block_on(link.bounded(async {
+                touched.store(true, Ordering::Release);
+                Ok::<_, btleplug::Error>(())
+            }))
+            .unwrap_err();
+        assert!(error.to_string().contains("disconnected"));
+        assert!(!touched.load(Ordering::Acquire));
+    }
+    #[test]
+    fn disconnect_event_wakes_an_operation_that_would_never_reply() {
+        let link = Arc::new(LinkState::new());
+        let disconnect = link.clone();
+        let error = runtime().unwrap().block_on(async {
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                disconnect.observe(Some(&1), &1);
+            });
+            timeout(
+                Duration::from_secs(1),
+                link.bounded(std::future::pending::<
+                    std::result::Result<(), btleplug::Error>,
+                >()),
+            )
+            .await
+            .expect("disconnect event must wake pending state/disconnect calls")
+            .unwrap_err()
+        });
+        assert!(error.to_string().contains("disconnected"));
+    }
+    #[test]
+    fn disconnect_racing_an_operation_result_still_fences_the_result() {
+        let link = LinkState::new();
+        let error = runtime()
+            .unwrap()
+            .block_on(link.bounded(async {
+                link.observe(Some(&1), &1);
+                Ok::<_, btleplug::Error>(())
+            }))
+            .unwrap_err();
+        assert!(error.to_string().contains("disconnected"));
+    }
+    #[test]
+    fn discovery_returns_without_waiting_when_target_is_already_visible() {
+        let rt = runtime().unwrap();
+        // A zero-duration outer timeout still polls its future once. This fails
+        // if discovery inserts any sleep before returning an available device.
+        let found = rt.block_on(async {
+            timeout(
+                Duration::ZERO,
+                poll_discovery(Duration::from_secs(5), || async { Ok(vec![42]) }),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+        });
+        assert_eq!(found, [42]);
+    }
+    #[test]
+    fn discovery_waits_for_a_later_advertisement_and_stops_after_finding_it() {
+        let mut calls = 0;
+        let found = runtime()
+            .unwrap()
+            .block_on(poll_discovery(Duration::from_secs(5), || {
+                calls += 1;
+                std::future::ready(Ok(if calls == 2 { vec![42] } else { vec![] }))
+            }))
+            .unwrap();
+        assert_eq!(found, [42]);
+        assert_eq!(calls, 2);
+    }
+    #[test]
+    fn discovery_ends_when_absent_and_does_not_retry_backend_errors() {
+        let rt = runtime().unwrap();
+        let found: Vec<u8> = rt
+            .block_on(poll_discovery(Duration::ZERO, || async { Ok(vec![]) }))
+            .unwrap();
+        assert!(found.is_empty());
+        let mut calls = 0;
+        let error = rt
+            .block_on(poll_discovery::<u8, _, _>(Duration::from_secs(5), || {
+                calls += 1;
+                std::future::ready(Err(anyhow::anyhow!("discovery failed")))
+            }))
+            .unwrap_err();
+        assert!(error.to_string().contains("discovery failed"));
+        assert_eq!(calls, 1);
+    }
     fn note(value: u8) -> Notification {
         Notification {
             characteristic: FREE_RESPONSE,
