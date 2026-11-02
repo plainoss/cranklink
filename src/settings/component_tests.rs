@@ -156,6 +156,8 @@ fn hub_adjustment_waits_for_actuator_readback_without_repeating_set() {
 struct Switch {
     state: Vec<u8>,
     backup: PathBuf,
+    model: &'static str,
+    setting: &'static str,
     calls: usize,
     writes: usize,
     corrupt_sibling: bool,
@@ -167,6 +169,8 @@ impl Switch {
             // Classic GET replies may pad the meaningful AB/CS prefix with FF.
             state: vec![0x23, 0xaf, 0xff, 0xff],
             backup,
+            model: "ST-9070-L",
+            setting: "switch-a-function",
             calls: 0,
             writes: 0,
             corrupt_sibling: false,
@@ -203,10 +207,10 @@ impl UnitCommands for Switch {
                 // identity before the first mutable command reaches hardware.
                 let backup: Value = serde_json::from_slice(&std::fs::read(&self.backup)?)?;
                 assert_eq!(backup["serial"], "010203040506");
-                assert_eq!(backup["settings_model"], "ST-9070-L");
+                assert_eq!(backup["settings_model"], self.model);
                 assert_eq!(backup["original_parameters"], hex::encode(&self.state));
                 assert_eq!(backup["planned_parameters"], hex::encode(params));
-                assert_eq!(backup["setting"], "switch-a-function");
+                assert_eq!(backup["setting"], self.setting);
                 assert_eq!(params.len(), 4);
                 assert_eq!(params[2..], [0, 0]);
                 self.writes += 1;
@@ -370,4 +374,36 @@ fn unsupported_and_read_only_component_settings_fail_before_io() {
     }
     assert_eq!(switch.calls, 0);
     assert!(!backup.exists());
+}
+
+#[test]
+fn extended_switch_c_dfly_assignment_journals_backup_and_preserves_siblings() {
+    let files = Files::new();
+    let backup = files.backup("st-r9150-before.json");
+    let mut switch = Switch::new(backup.clone());
+    switch.model = "ST-R9150-L";
+    switch.setting = "switch-c-function";
+    switch.state = vec![0x23, 0x0f, 0, 0];
+    let model = SettingsModel::Component("ST-R9150-L");
+    let receipt = set_for_model(&mut switch, 7, "switch-c-function", "10", &backup, model).unwrap();
+    assert_eq!(receipt.before, json!(0));
+    assert_eq!(receipt.after, json!(10));
+    assert_eq!(switch.state, [0x23, 0xaf, 0, 0]);
+    assert_eq!(switch.writes, 1);
+}
+
+#[test]
+fn steps_switch_mode_and_assist_button_swap_journal_backup() {
+    let files = Files::new();
+    let backup = files.backup("sw-e7000-before.json");
+    let mut switch = Switch::new(backup.clone());
+    switch.model = "SW-E7000-L";
+    switch.setting = "switch-mode";
+    switch.state = vec![0x67, 0x00, 0, 0];
+    let model = SettingsModel::Component("SW-E7000-L");
+    let receipt = set_for_model(&mut switch, 7, "switch-mode", "0", &backup, model).unwrap();
+    assert_eq!(receipt.before, json!(2));
+    assert_eq!(receipt.after, json!(0));
+    assert_eq!(switch.state, [0x23, 0x00, 0, 0]);
+    assert_eq!(switch.writes, 1);
 }

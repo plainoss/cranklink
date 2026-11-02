@@ -56,5 +56,9 @@ class UserMessagesTest {
         assertEquals("10336 mAh", formatSettingValue("battery-full-capacity", "10336"))
         assertEquals("142 cycles", formatSettingValue("battery-charge-cycles", "142"))
         assertEquals("3 events", formatSettingValue("battery-protection-events", "3"))
+        assertEquals("Assist", formatSettingValue("switch-mode", "2"))
+        assertEquals("Shifting", formatSettingValue("switch-mode", "0"))
+        assertEquals("D-Fly channel 1", formatSettingValue("switch-c-function", "10"))
+        assertEquals("Assist mode up", formatSettingValue("switch-a-function", "6"))
     }
 }

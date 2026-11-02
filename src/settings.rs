@@ -463,6 +463,17 @@ impl SettingSpec {
         if self.nullable && b.iter().all(|&x| x == 255) {
             return Ok(Value::Null);
         }
+        if self.name == "switch-mode" {
+            let b0 = b.first().copied().unwrap_or(0);
+            let upper = (b0 & 0xf0) >> 4;
+            let lower = b0 & 0x0f;
+            let mode = if upper == 6 || upper == 7 || lower == 6 || lower == 7 {
+                2
+            } else {
+                0
+            };
+            return Ok(json!(mode));
+        }
         let mut n = 0i64;
         for (i, x) in b.iter().enumerate() {
             n |= (*x as i64) << (8 * i);
@@ -1760,6 +1771,13 @@ fn updated_payload(s: &SettingSpec, original: &[u8], n: i64, unset: bool) -> Res
         payload[1..3].copy_from_slice(&ratio.to_le_bytes());
         payload[3] = torque;
         payload[4..6].copy_from_slice(&500u16.to_le_bytes());
+        return Ok(payload);
+    }
+    if s.name == "switch-mode" {
+        payload[0] = match n {
+            2 => 0x67,
+            _ => 0x23,
+        };
         return Ok(payload);
     }
     if s.name.starts_with("speed-limit") {

@@ -124,6 +124,22 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
                 "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
             }
             "start-mode" -> if (choice == 0) "Off" else "Gear $choice"
+            "switch-mode" -> mapOf(0 to "Shifting", 2 to "Assist")[choice]
+            "switch-a-function", "switch-b-function", "switch-c-function", "switch-s-function" -> mapOf(
+                0 to "Front shift up",
+                1 to "Front shift down",
+                2 to "Rear shift up",
+                3 to "Rear shift down",
+                4 to "Display screen / left",
+                5 to "Display mode / right",
+                6 to "Assist mode up",
+                7 to "Assist mode down",
+                10 to "D-Fly channel 1",
+                11 to "D-Fly channel 2",
+                12 to "D-Fly channel 3",
+                13 to "D-Fly channel 4",
+                15 to "Disabled",
+            )[choice]
             else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
                 mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
             } else null
@@ -229,4 +245,14 @@ private val standardPresentations = mapOf(
         "Total completed lifetime battery charge cycles.", "cycles"),
     "battery-protection-events" to SettingPresentation("Protection events",
         "Total overcurrent, overtemperature, or safety protection shutdowns recorded by the battery management system.", "events"),
+    "switch-mode" to SettingPresentation("Switch operation mode",
+        "Switch control function: shifting or motor assist mode."),
+    "switch-a-function" to SettingPresentation("Switch A function",
+        "Button assignment for control channel A."),
+    "switch-b-function" to SettingPresentation("Switch B function",
+        "Button assignment for control channel B."),
+    "switch-c-function" to SettingPresentation("Switch C function",
+        "Button assignment for control channel C."),
+    "switch-s-function" to SettingPresentation("Switch S function",
+        "Button assignment for control channel S."),
 )
