@@ -24,14 +24,14 @@ import kotlin.test.assertTrue
 
 class SessionControllerTest {
     @Test
-    fun experimentalNormalIsExplicitAndRestrictsWrites() = runTest {
+    fun normalRoutingAllowsE8000RegionAndWheelAndRestrictsOtherWrites() = runTest {
         val snapshot = e600xFixture(0x12, "e8000", "4.8.0.0")
             .withIdentity("model_name", JsonPrimitive("DU-E8000"))
+            .withIdentity("master_routing", JsonPrimitive(false))
         val backend = FakeBackend(snapshot)
         val controller = SessionController(backend)
-        controller.connect(experimentalE8000Normal = true)
+        controller.connect(master = false)
         assertEquals("false", backend.requests.first().string("master"))
-        assertEquals("true", backend.requests.first().string("experimental_e8000_normal"))
         controller.stage("lamp", "1")
         assertTrue(controller.state.value.staged.isEmpty())
         controller.stage("tire-circumference", "2300")
@@ -40,20 +40,10 @@ class SessionControllerTest {
     }
 
     @Test
-    fun experimentalNormalRejectsDifferentMotorOrRoute() = runTest {
-        val backend = FakeBackend()
-        val controller = SessionController(backend)
-        controller.connect(experimentalE8000Normal = true)
-        assertEquals(AppPhase.Disconnected, controller.state.value.phase)
-        assertTrue(backend.requests.any { it.string("op") == "disconnect" })
-    }
-
-    @Test
     fun defaultConnectKeepsConservativeMasterRouting() = runTest {
         val backend = FakeBackend()
         SessionController(backend).connect()
         assertEquals("true", backend.requests.first().string("master"))
-        assertEquals("false", backend.requests.first().string("experimental_e8000_normal"))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

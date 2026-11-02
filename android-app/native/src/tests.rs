@@ -22,7 +22,6 @@ fn dispatch_cannot_represent_firmware_usb_di2_or_raw_commands() {
         r#"{"op":"command","group":22,"command":216}"#,
         r#"{"op":"connect","component":"RD-R8150"}"#,
         r#"{"op":"connect","port":"usb"}"#,
-        r#"{"op":"connect","master":false}"#,
         r#"{"op":"read","serial":"010203040506","slot":4}"#,
         r#"{"op":"commit","serial":"010203040506","changes":{"lamp":1}}"#,
         r#"{"op":"disconnect","slot":4}"#,
@@ -33,6 +32,7 @@ fn dispatch_cannot_represent_firmware_usb_di2_or_raw_commands() {
     for request in [
         r#"{"op":"connect"}"#,
         r#"{"op":"connect","master":true}"#,
+        r#"{"op":"connect","master":false}"#,
         r#"{"op":"read","serial":"010203040506"}"#,
         r#"{"op":"commit","serial":"010203040506","changes":{"lamp":"1"}}"#,
         r#"{"op":"restore","serial":"010203040506","file":"test.backup.json"}"#,
@@ -483,8 +483,8 @@ fn only_shifting_only_systems_are_refused_before_service_mode() {
 }
 
 #[test]
-fn experimental_normal_requires_optin_and_narrow_consistent_route() {
-    assert!(parse_request(r#"{"op":"connect","master":false}"#).is_err());
+fn normal_routing_e8000_and_boundary_checks() {
+    assert!(parse_request(r#"{"op":"connect","master":false}"#).is_ok());
     assert!(
         parse_request(r#"{"op":"connect","master":false,"experimental_e8000_normal":true}"#)
             .is_ok()
@@ -492,21 +492,25 @@ fn experimental_normal_requires_optin_and_narrow_consistent_route() {
     let mut m = motor();
     m.model = SettingsModel::E8000;
     m.model_name = "DU-E8000".into();
+    // Normal routing on E8000 allows region and wheel circumference:
     assert!(!write_route(
         &m,
-        true,
+        false,
         false,
         ["destination", "tire-circumference"].into_iter()
     )
     .unwrap());
-    assert!(write_route(&m, true, false, ["lamp"].into_iter()).is_err());
-    assert!(write_route(&m, true, false, ["lighting-time"].into_iter()).is_err());
-    assert!(write_route(&m, true, true, ["destination"].into_iter()).is_err());
-    assert!(write_route(&m, false, false, ["destination"].into_iter()).unwrap());
+    // Normal routing blocks lamp or lighting-time:
+    assert!(write_route(&m, false, false, ["lamp"].into_iter()).is_err());
+    assert!(write_route(&m, false, false, ["lighting-time"].into_iter()).is_err());
+    // Master routing allows everything:
+    assert!(write_route(&m, true, true, ["destination"].into_iter()).unwrap());
+    assert!(write_route(&m, true, false, ["destination"].into_iter()).unwrap());
     m.model_name = "DU-E8080".into();
-    assert!(!write_route(&m, true, false, ["tire-circumference"].into_iter()).unwrap());
+    assert!(!write_route(&m, false, false, ["tire-circumference"].into_iter()).unwrap());
     m.model_name = "unresolved".into();
-    assert!(write_route(&m, true, false, ["destination"].into_iter()).is_err());
+    assert!(write_route(&m, false, false, ["destination"].into_iter()).is_err());
+    // Non-E8000 motor (e.g. EP800) blocks destination in normal routing:
     m.model = SettingsModel::Ep800Crg;
-    assert!(write_route(&m, true, false, ["destination"].into_iter()).is_err());
+    assert!(write_route(&m, false, false, ["destination"].into_iter()).is_err());
 }

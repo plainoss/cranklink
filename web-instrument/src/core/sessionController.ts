@@ -807,9 +807,6 @@ export class SessionController {
     if (this.state.transport === "sim") return "--ble-master=master ";
     if (this.state.transport !== "ble") return "";
     if (!this.state.bluetoothSystem) throw new Error("Choose the Bluetooth bike system before discovering components.");
-    // This pre-connect experiment explicitly selects normal routing, including
-    // when the operator supplied the STEPS identification override.
-    if (this.state.experimentalNormalWrites) return "--ble-master=normal ";
     // E8000/E8080 reads work through the existing logical master at slot zero.
     // Keep that route for the whole retained connection instead of forcing the
     // gateway into the newer motor workflow (or labelling this bike as Di2).
@@ -1224,15 +1221,12 @@ export class SessionController {
         || this.bluetoothSessionFlags() !== "--ble-master=normal ") return;
     const masterSetting = names.find((name) => typeof name === "string"
       && ["destination", "tire-circumference", "lamp", "lighting-time"].includes(name)
-      && !(this.state.experimentalNormalWrites
-        && this.state.identity!.modelSlug === "e8000"
+      && !(this.state.identity!.modelSlug === "e8000"
         && ["destination", "tire-circumference"].includes(name)));
-    if (masterSetting && this.state.identity.modelSlug === "e8000"
-        && ["destination", "tire-circumference"].includes(String(masterSetting))) {
-      this.refuse(kind, `${settingLabel(this.state.schema, String(masterSetting))} writes in normal Bluetooth routing are blocked by default. No changes were sent. Disconnect and explicitly select Bluetooth options → Experimental E8000 region & wheel writes to test this route, or use USB or master routing. Read the settings again before saving.`);
+    if (masterSetting) {
+      this.refuse(kind,
+        `${settingLabel(this.state.schema, String(masterSetting))} requires a USB connection on bikes with this display (such as SC-E7000 or EW-EN100). Please connect using a USB PCE cable to modify ${settingLabel(this.state.schema, String(masterSetting))}.`);
     }
-    if (masterSetting) this.refuse(kind,
-      `${settingLabel(this.state.schema, String(masterSetting))} requires Bluetooth master routing. No changes were sent. Use USB, or disconnect and select Bluetooth options → Bike system override → STEPS before reconnecting. Read the settings again before saving. Master-mode connection failures must be resolved before these Bluetooth writes can run.`);
   }
 
   /**

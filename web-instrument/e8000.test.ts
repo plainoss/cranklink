@@ -80,24 +80,9 @@ describe("E8000 region-based assist speed", () => {
     }
   });
 
-  it("refuses master-required saves and restores on a normal retained connection before importing a plan", async () => {
-    const h = connected("ble", true);
-    h.controller.stageParameter("destination", 1);
-    await assert.rejects(h.controller.commitStagedBatch(), /normal Bluetooth routing are blocked by default.*No changes were sent/);
-    assert.deepEqual(h.controller.getState().stagedValues, { destination: 1 });
-    assert.equal(h.files.size, 0);
-    h.controller.discardAllStaged();
-    h.files.set("before.json", new TextEncoder().encode(JSON.stringify({ format: "cranklink-setting-backup-v1", settings_model: "e8000", serial: "010203040506", setting: "destination", before: 0 })));
-    await assert.rejects(h.controller.restoreBackupFiles(["before.json"]), /normal Bluetooth routing are blocked by default/);
-    assert.equal(h.files.size, 1);
-    assert.deepEqual(h.commands, []);
-    assert.throws(() => h.controller.stageParameter("speed-limit", 25), /unavailable or read-only/);
-    assert.throws(() => h.controller.stageParameter("destination", 5), /outside the permitted/);
-  });
-  it("allows only opted-in E8000 region and wheel saves/restores while retaining normal routing", async () => {
+  it("allows E8000 region and wheel saves/restores while retaining normal routing automatically", async () => {
     for (const name of ["destination", "tire-circumference"]) {
       const h = connected("ble", true);
-      (h.controller as any).update({ experimentalNormalWrites: true });
       const value = name === "destination" ? 1 : 2200;
       h.controller.stageParameter(name, value);
       await h.controller.commitStagedBatch();
@@ -111,32 +96,24 @@ describe("E8000 region-based assist speed", () => {
     }
   });
 
-  it("keeps lamp and other models blocked despite experimental opt-in", () => {
+  it("refuses master-required settings on normal routing with friendly USB PCE message", () => {
     const h = connected("ble", true);
-    (h.controller as any).update({ experimentalNormalWrites: true });
-    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination", "lamp"]), /requires Bluetooth master routing/);
-    assert.throws(() => (h.controller as any).requireWriteRouting("restore", ["lighting-time"]), /requires Bluetooth master routing/);
+    assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination", "lamp"]),
+      /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
+    assert.throws(() => (h.controller as any).requireWriteRouting("restore", ["lighting-time"]),
+      /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
     for (const modelSlug of ["ep800-crg", "e8000-pre41"]) {
       (h.controller as any).update({ identity: { ...h.controller.getState().identity!, modelSlug } });
-      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination"]), /requires Bluetooth master routing/);
-      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]), /requires Bluetooth master routing/);
+      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["destination"]),
+        /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
+      assert.throws(() => (h.controller as any).requireWriteRouting("save", ["tire-circumference"]),
+        /requires a USB connection on bikes with this display \(such as SC-E7000 or EW-EN100\)/);
     }
   });
 
-  it("defaults off and requires choosing the experiment before connection", () => {
-    const controller = new SessionController();
-    assert.equal(controller.getState().experimentalNormalWrites, false);
-    controller.setExperimentalNormalWrites(true);
-    assert.equal(controller.getState().experimentalNormalWrites, true);
-    const h = connected("ble", true);
-    assert.throws(() => h.controller.setExperimentalNormalWrites(true), /Disconnect before changing/);
-  });
-
-  it("selects normal discovery and reads before connecting even with the STEPS override", async () => {
+  it("selects normal discovery and reads automatically when an E8000 gateway is detected", async () => {
     (globalThis as any).window = globalThis;
     const controller = new SessionController();
-    controller.setBluetoothBike("steps");
-    controller.setExperimentalNormalWrites(true);
     const commands: string[] = [];
     const identity = { slot: 0, model_series: 0x12, model_unit: 0, model_name: "DU-E8000", settings_model: "e8000", dcas_version: "4.6.0.0", rx_version: "4.6.0.0", serial: "010203040506" };
     controller.attachTerminal({
@@ -147,7 +124,8 @@ describe("E8000 region-based assist speed", () => {
         commands.push(line);
         const print = (data: unknown) => (globalThis as any).estepsTerminalPrint(JSON.stringify(data), "stdout");
         if (line === "connect ble") return { code: 0 };
-        if (line === "--ble-master=normal units") print({ units: [{ slot: 0, model_series: 0x12, model_unit: 0, model: "DU-E8000", model_candidates: ["DU-E8000"] }] });
+        if (line === "ble detect-system") print({ system: "steps", master_series: 0x12, service_started: false });
+        else if (line === "--ble-master=normal units") print({ units: [{ slot: 0, model_series: 0x12, model_unit: 0, model: "DU-E8000", model_candidates: ["DU-E8000"] }] });
         else if (line.startsWith("settings schema")) print(rawSchema("e8000"));
         else {
           assert.match(line, /^--ble-master=normal --slot 0 --component 'DU-E8000' settings read$/);
@@ -163,7 +141,6 @@ describe("E8000 region-based assist speed", () => {
     assert.ok(commands.includes("--ble-master=normal units"));
     assert.ok(commands.some((line) => line.endsWith("settings read")));
     assert.ok(commands.every((line) => !line.includes("--ble-master=master")));
-    assert.throws(() => controller.setExperimentalNormalWrites(false), /Disconnect before changing/);
   });
 
 });
