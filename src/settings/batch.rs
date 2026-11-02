@@ -243,6 +243,7 @@ pub fn run_bound(
     // Model-dependent combinations (e.g. speed after region) use live reads at
     // each step, so later operations see changes made earlier in this session.
     let serial = checked_serial(session, slot, expected_serial, model)?;
+    let bluetooth_link = session.bluetooth_link();
     let mut resolved_restores: Vec<Option<ParsedRestore>> = Vec::with_capacity(operations.len());
     for (index, op) in operations.iter().enumerate() {
         let valid = (|| -> Result<Option<ParsedRestore>> {
@@ -253,7 +254,7 @@ pub fn run_bound(
                 }
                 Operation::Read { name: None } => Ok(None),
                 Operation::Set { name, value } => {
-                    validate_input(&spec_for_model(name, model)?, value)?;
+                    validate_new_value(&spec_for_model(name, model)?, value, bluetooth_link)?;
                     Ok(None)
                 }
                 Operation::Restore { file, parsed } => {
@@ -261,7 +262,8 @@ pub fn run_bound(
                         Some(p) => p.clone(),
                         None => parse_restore_file(file)?,
                     };
-                    parsed.validate_for_model(model, &serial)?;
+                    let spec = parsed.validate_for_model(model, &serial)?;
+                    validate_link_safe(&spec, &parsed.planned_value(), bluetooth_link)?;
                     Ok(Some(parsed))
                 }
             }

@@ -1336,6 +1336,9 @@ impl BleSession {
     }
 }
 impl UnitCommands for BleSession {
+    fn bluetooth_link(&self) -> bool {
+        true
+    }
     fn model_identity(&mut self, slot: u8) -> Result<Vec<u8>> {
         if self.master_routing {
             ensure!(

@@ -112,7 +112,7 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     description: "Switch control function: shifting or motor assist mode.",
     section: "drivetrain",
     displayUnit: "",
-    choiceLabels: { 0: "Shifting", 2: "Assist" },
+    choiceLabels: { 0: "Shifting", 1: "Mixed (custom A/B)", 2: "Assist" },
   },
   ...Object.fromEntries(["a", "b", "c", "s"].map((channel) => [`switch-${channel}-function`, {
     label: `Switch ${channel.toUpperCase()} function`, description: "Button assignment for this control.", section: "drivetrain",
@@ -153,8 +153,8 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   "display-language": { label: "Display language", description: "Language used by the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "English", 1: "French", 2: "German", 3: "Dutch", 4: "Italian", 5: "Spanish" } },
   "display-backlight": { label: "Display backlight", description: "Backlight behavior on the cycle computer.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Off", 1: "On", 2: "Manual" } },
   "display-brightness": { label: "Display brightness", description: "Cycle-computer screen brightness.", section: "geometry", displayUnit: "%" },
-  "display-time": { label: "Display time", description: "Cycle-computer clock time in minutes from midnight (0–1439).", section: "geometry", displayUnit: "min" },
-  "wireless-mode": { label: "Wireless mode", description: "Active wireless communication standards on this unit.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" } },
+  "display-time": { label: "Display time", description: "Cycle-computer clock time in minutes from midnight (0–1439). It is written when you save, so save promptly after using the current time.", section: "geometry", displayUnit: "min" },
+  "wireless-mode": { label: "Wireless mode", description: "Active radios on this derailleur. ANT+ only turns Bluetooth off, so it can only be set over USB; radio off is never offered.", section: "geometry", displayUnit: "", choiceLabels: { 0: "Radio off", 1: "ANT+ only", 2: "Bluetooth only", 3: "Bluetooth & ANT+" } },
   "bluetooth-passkey": { label: "Bluetooth passkey", description: "Six-digit numeric PIN for Bluetooth pairing and authentication.", section: "geometry", displayUnit: "" },
   "tire-circumference": {
     label: "Tire Circumference",
@@ -365,42 +365,6 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     description: "Day of the month for the next service reminder. Combine it with the service month and year to form a valid date.",
     section: "maintenance",
     displayUnit: "day",
-  },
-  "battery-soc": {
-    label: "State of Charge",
-    description: "Current battery charge percentage.",
-    section: "maintenance",
-    displayUnit: "%",
-  },
-  "battery-soh": {
-    label: "Battery Health",
-    description: "Battery state of health representing actual full-charge capacity relative to design capacity.",
-    section: "maintenance",
-    displayUnit: "%",
-  },
-  "battery-remaining-capacity": {
-    label: "Remaining Capacity",
-    description: "Current available charge in milliampere-hours.",
-    section: "maintenance",
-    displayUnit: "mAh",
-  },
-  "battery-full-capacity": {
-    label: "Full Charge Capacity",
-    description: "Actual maximum capacity when fully charged in milliampere-hours.",
-    section: "maintenance",
-    displayUnit: "mAh",
-  },
-  "battery-charge-cycles": {
-    label: "Charge Cycles",
-    description: "Total completed lifetime battery charge cycles.",
-    section: "maintenance",
-    displayUnit: "cycles",
-  },
-  "battery-protection-events": {
-    label: "Protection Events",
-    description: "Total overcurrent, overtemperature, or safety protection shutdowns recorded by the battery management system.",
-    section: "maintenance",
-    displayUnit: "events",
   },
 };
 

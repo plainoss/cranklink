@@ -145,19 +145,22 @@ function GenericEditor({ spec, descriptionId }: { spec: EnrichedSetting; descrip
           </NumberField.Group>
         </NumberField>
         {isDisplayTime && (
-          <Button
-            size="sm"
-            variant="tertiary"
-            onPress={syncCurrentTime}
-            isDisabled={setting.isDisabled}
-            data-testid="sync-display-time-btn"
-            className="self-end text-xs"
-          >
-            Sync Local Time ({(() => {
-              const now = new Date();
-              return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-            })()})
-          </Button>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-xs text-muted" data-testid="display-time-clock">
+              {Number.isFinite(setting.displayNumeric) ? setting.format(setting.displayNumeric) : ""}
+            </span>
+            {/* The time is staged now and written on save, so save promptly. */}
+            <Button
+              size="sm"
+              variant="tertiary"
+              onPress={syncCurrentTime}
+              isDisabled={setting.isDisabled}
+              data-testid="sync-display-time-btn"
+              className="text-xs"
+            >
+              Use current time
+            </Button>
+          </div>
         )}
       </div>
     );

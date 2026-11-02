@@ -72,9 +72,9 @@ describe("Domain Schema Enrichment & Ordering", () => {
       formatValue(
         {
           name: "wireless-mode",
-          choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" },
+          choiceLabels: { 0: "Radio off", 1: "ANT+ only", 2: "Bluetooth only", 3: "Bluetooth & ANT+" },
         } as any,
-        0,
+        3,
       ),
       "Bluetooth & ANT+",
     );
@@ -82,7 +82,7 @@ describe("Domain Schema Enrichment & Ordering", () => {
       formatValue(
         {
           name: "wireless-mode",
-          choiceLabels: { 0: "Bluetooth & ANT+", 1: "ANT+ only" },
+          choiceLabels: { 0: "Radio off", 1: "ANT+ only", 2: "Bluetooth only", 3: "Bluetooth & ANT+" },
         } as any,
         1,
       ),
@@ -97,34 +97,10 @@ describe("Domain Schema Enrichment & Ordering", () => {
       "70 rpm",
     );
     assert.equal(
-      formatValue({ name: "battery-soc", displayUnit: "%" } as any, 92),
-      "92%",
-    );
-    assert.equal(
-      formatValue({ name: "battery-soh", displayUnit: "%" } as any, 88),
-      "88%",
-    );
-    assert.equal(
-      formatValue({ name: "battery-remaining-capacity", displayUnit: "mAh" } as any, 7200),
-      "7200 mAh",
-    );
-    assert.equal(
-      formatValue({ name: "battery-full-capacity", displayUnit: "mAh" } as any, 10336),
-      "10336 mAh",
-    );
-    assert.equal(
-      formatValue({ name: "battery-charge-cycles", displayUnit: "cycles" } as any, 142),
-      "142 cycles",
-    );
-    assert.equal(
-      formatValue({ name: "battery-protection-events", displayUnit: "events" } as any, 3),
-      "3 events",
-    );
-    assert.equal(
       formatValue(
         {
           name: "switch-mode",
-          choiceLabels: { 0: "Shifting", 2: "Assist" },
+          choiceLabels: { 0: "Shifting", 1: "Mixed (custom A/B)", 2: "Assist" },
         } as any,
         2,
       ),

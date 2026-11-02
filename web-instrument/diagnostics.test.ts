@@ -30,3 +30,16 @@ test("explicit PIN arguments are redacted from reports without removing other fl
     assert.ok(result.includes("--ble-master units"));
   }
 });
+
+test("bike passkey values read or written as settings are redacted per log entry", () => {
+  const state = new SessionController().getState();
+  state.logs = [
+    { id: 1, timestamp: "14:00:00", stream: "cmd", text: "cranklink> settings set bluetooth-passkey 482913" },
+    { id: 2, timestamp: "14:00:01", stream: "stdout", text: '{"setting":"bluetooth-passkey","before":"135790","after":"482913","raw":"343832393133"}' },
+    { id: 3, timestamp: "14:00:02", stream: "stdout", text: '{"setting":"display-time","before":600,"serial":"123456"}' },
+  ];
+  const report = formatDiagnosticReport(state, { url: "https://example.test/", userAgent: "Test", generatedAt: "2026-11-02T00:00:00Z" });
+  for (const secret of ["482913", "135790", "343832393133"]) assert.ok(!report.includes(secret), secret);
+  assert.ok(report.includes("bluetooth-passkey"));
+  assert.ok(report.includes('"serial":"123456"'), "entries without a passkey stay intact");
+});

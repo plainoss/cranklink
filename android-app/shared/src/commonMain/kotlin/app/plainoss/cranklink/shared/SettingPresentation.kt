@@ -116,7 +116,7 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
             }
             "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
             "destination" -> marketLabel(model, choice)
-            "wireless-mode" -> mapOf(0 to "Bluetooth & ANT+", 1 to "ANT+ only")[choice]
+            "wireless-mode" -> mapOf(0 to "Radio off", 1 to "ANT+ only", 2 to "Bluetooth only", 3 to "Bluetooth & ANT+")[choice]
             "display-time" -> {
                 val mins = number.toInt()
                 val h = mins / 60
@@ -124,7 +124,7 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
                 "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
             }
             "start-mode" -> if (choice == 0) "Off" else "Gear $choice"
-            "switch-mode" -> mapOf(0 to "Shifting", 2 to "Assist")[choice]
+            "switch-mode" -> mapOf(0 to "Shifting", 1 to "Mixed (custom A/B)", 2 to "Assist")[choice]
             "switch-a-function", "switch-b-function", "switch-c-function", "switch-s-function" -> mapOf(
                 0 to "Front shift up",
                 1 to "Front shift down",
@@ -224,7 +224,7 @@ private val standardPresentations = mapOf(
     "torque-maximum" to SettingPresentation("Maximum profile torque",
         "Upper bound for assist-profile peak torque. Profile torque values must stay at or below this limit.", "Nm"),
     "wireless-mode" to SettingPresentation("Wireless mode",
-        "Selects active wireless communication channels (Bluetooth Low Energy and ANT+)."),
+        "Selects the derailleur's active radios (Bluetooth Low Energy and ANT+). ANT+ only turns Bluetooth off, so it can only be set over USB."),
     "display-time" to SettingPresentation("Display time",
         "Cycle computer clock time in minutes from midnight (0–1439).", "min"),
     "bluetooth-passkey" to SettingPresentation("Bluetooth passkey",
@@ -233,18 +233,6 @@ private val standardPresentations = mapOf(
         "Gear selected automatically when stopping. Off leaves the current gear selected.", "gear"),
     "auto-gear-cadence" to SettingPresentation("Auto-shift cadence",
         "Target pedaling cadence for automatic gear changes.", "rpm"),
-    "battery-soc" to SettingPresentation("State of charge",
-        "Current battery charge percentage.", "%"),
-    "battery-soh" to SettingPresentation("Battery health",
-        "Battery state of health representing actual full-charge capacity relative to design capacity.", "%"),
-    "battery-remaining-capacity" to SettingPresentation("Remaining capacity",
-        "Current available charge.", "mAh"),
-    "battery-full-capacity" to SettingPresentation("Full-charge capacity",
-        "Actual maximum capacity when fully charged.", "mAh"),
-    "battery-charge-cycles" to SettingPresentation("Charge cycles",
-        "Total completed lifetime battery charge cycles.", "cycles"),
-    "battery-protection-events" to SettingPresentation("Protection events",
-        "Total overcurrent, overtemperature, or safety protection shutdowns recorded by the battery management system.", "events"),
     "switch-mode" to SettingPresentation("Switch operation mode",
         "Switch control function: shifting or motor assist mode."),
     "switch-a-function" to SettingPresentation("Switch A function",

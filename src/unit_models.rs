@@ -609,13 +609,6 @@ pub const UNIT_MODELS: &[UnitModel] = &[
     },
     UnitModel {
         series: 0x14,
-        unit: 0x00,
-        name: "BT-E8010",
-        part: None,
-        model_params: None,
-    },
-    UnitModel {
-        series: 0x14,
         unit: 0x01,
         name: "ST-R8050-L",
         part: Some(1),
@@ -1155,13 +1148,6 @@ pub const UNIT_MODELS: &[UnitModel] = &[
     },
     UnitModel {
         series: 0x39,
-        unit: 0x00,
-        name: "BT-EN805",
-        part: None,
-        model_params: None,
-    },
-    UnitModel {
-        series: 0x39,
         unit: 0x01,
         name: "ST-RX825-L",
         part: Some(13),
@@ -1549,10 +1535,6 @@ mod tests {
         assert_eq!(identify(0x23, 1, Some(16), None), Some("EW-SW300"));
         assert_eq!(identify(0x21, 1, Some(11), None), Some("SW-E7000-L"));
         assert_eq!(identify(0x21, 1, Some(2), None), Some("SW-E7000-R"));
-        assert_eq!(identify(0x14, 0, None, None), Some("BT-E8010"));
-        assert_eq!(identify(0x39, 0, None, None), Some("BT-EN805"));
-        assert_eq!(identify(0x11, 0, None, None), Some("BT-DN110"));
-        assert_eq!(identify(0x25, 0, None, None), Some("BT-DN300"));
     }
 
     #[test]

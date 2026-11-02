@@ -1,11 +1,6 @@
-//! Model-gated Di2 power, internal-hub, and display service settings.
-//!
-//! Wire evidence: vendor SmBmr1Unit.Get/SetLumpShiftLimit,
-//! MUUnitDataLink.Get/SetAdjust and Get/SetGearMinMax, SCUnitDataLink.
-//! Model/range evidence: Android DI2MasterUnit, GearNumberLimit,
-//! MUS705Unit/MUUR500Unit/MUUR510Unit/MUUR520Unit, and each SC class's
-//! canCustomize flags and displaymonitor enums. Catalog identity is not a
-//! substitute for those per-model capability declarations.
+//! Model-gated Di2 power-unit, internal-hub, display and wireless service
+//! settings. Each model list follows that model's own declared capabilities;
+//! catalog identity alone never enables a setting.
 
 use super::SettingSpec;
 use anyhow::{ensure, Result};
@@ -17,9 +12,6 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         "SM-BMR1" | "SM-BMR2" | "BM-DN100" | "BT-DN110" | "BT-DN300"
     ) {
         specs.extend(shift_limits());
-    }
-    if is_battery_model(name) {
-        specs.extend(battery_telemetry());
     }
     match name {
         "MU-S705" | "MU-UR500" | "MU-UR510" | "MU-UR520" => {
@@ -65,42 +57,8 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         _ => {}
     }
 
-    if matches!(
-        name,
-        "MU-S705" | "MU-UR500" | "MU-UR510" | "MU-UR520" | "FH-U6060"
-    ) {
-        let mut start_mode = SettingSpec::new(
-            "start-mode",
-            "gear, 0=off",
-            (0, 11, 1),
-            0x0b,
-            0x88,
-            &[0],
-            &[0; 4],
-            0,
-            1,
-        );
-        start_mode.preserve = Some(2);
-        specs.push(start_mode);
-
-        let mut cadence = SettingSpec::new(
-            "auto-gear-cadence",
-            "rpm",
-            (500, 760, 10),
-            0x0b,
-            0x90,
-            &[0],
-            &[0; 4],
-            0,
-            2,
-        );
-        cadence.scale = 10.0;
-        cadence.preserve = Some(2);
-        specs.push(cadence);
-    }
-
-    // The Android model classes explicitly enable these controls. Newer
-    // displays with different or unspecified flags stay outside each list.
+    // Each display enables these controls individually. Newer displays with
+    // different or unspecified capabilities stay outside each list.
     if matches!(
         name,
         "SC-M9050" | "SC-M9051" | "SC-E8000" | "SC-E6100" | "SC-E7000" | "SC-EM800" | "SC-EN610"
@@ -147,7 +105,7 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         ));
     }
     if matches!(name, "SC-E8000" | "SC-EM800" | "SC-EN600" | "SC-EN610") {
-        // GET reports one meaningful byte; vendor SET uses a four-byte
+        // GET reports one meaningful byte; the SET uses a four-byte
         // little-endian tuple whose remaining bytes are zero, not GET data.
         let mut brightness = SettingSpec::new(
             "display-brightness",
@@ -182,32 +140,49 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         time.preserve = Some(2);
         specs.push(time);
     }
-    if matches!(
+    let integrated_wireless_rd = matches!(
         name,
-        "EW-WU101"
-            | "EW-WU111"
-            | "EW-EN100"
-            | "SC-E8000"
-            | "SC-E6100"
-            | "SC-E7000"
-            | "SC-EM800"
-            | "SC-EN600"
-            | "SC-EN610"
-            | "RD-R9250"
+        "RD-R9250"
             | "RD-R8150"
             | "RD-R7150"
             | "RD-RX825"
             | "RD-RX827-SGS"
             | "RD-RX717-SGS"
             | "RD-RX828-SGS"
-    ) {
-        specs.push(byte_setting(
+    );
+    // Gateways and displays gate the radio mode on firmware versions this
+    // tool cannot check, so only the 12-speed derailleurs offer it.
+    if integrated_wireless_rd {
+        // GET carries no parameter. 0 (radio off) is readable but never offered.
+        let mut mode = SettingSpec::new(
             "wireless-mode",
-            "0 BLE and ANT+, 1 ANT+ only",
+            "1 ANT+ only, 2 Bluetooth only, 3 Bluetooth and ANT+ (0 radio off is read-only)",
+            (0, 3, 1),
             0x40,
             0x50,
-            &[0, 1],
-        ));
+            &[],
+            &[0],
+            0,
+            1,
+        )
+        .choices(&[0, 1, 2, 3]);
+        mode.preserve = Some(1);
+        specs.push(mode);
+    }
+    if integrated_wireless_rd
+        || matches!(
+            name,
+            "EW-WU101"
+                | "EW-WU111"
+                | "EW-EN100"
+                | "SC-E8000"
+                | "SC-E6100"
+                | "SC-E7000"
+                | "SC-EM800"
+                | "SC-EN600"
+                | "SC-EN610"
+        )
+    {
         let mut passkey = SettingSpec::new(
             "bluetooth-passkey",
             "6-digit numeric PIN",
@@ -241,119 +216,6 @@ fn byte_setting(name: &str, unit: &str, group: u8, set: u8, choices: &[i64]) -> 
     .choices(choices);
     spec.preserve = Some(1);
     spec
-}
-
-pub(crate) const BATTERY_MODELS: &[&str] = &[
-    "BT-DN110",
-    "BT-DN300",
-    "BT-E8010",
-    "BT-E8014",
-    "BT-E8016",
-    "BT-E8020",
-    "BT-E8035",
-    "BT-E8035-L",
-    "BT-E8036",
-    "BT-EN805",
-    "BT-EN806",
-    "BT-EN604",
-    "BT-EN605",
-    "BT-EN606",
-    "BT-E6000",
-    "BT-E6001",
-    "BT-E6010",
-];
-
-pub(crate) fn canonical_model_name(name: &str) -> Option<&'static str> {
-    BATTERY_MODELS
-        .iter()
-        .copied()
-        .find(|&model| crate::unit_models::name_matches(name, model))
-}
-
-fn is_battery_model(name: &str) -> bool {
-    canonical_model_name(name).is_some()
-}
-
-fn battery_telemetry() -> Vec<SettingSpec> {
-    let mut soc = SettingSpec::new(
-        "battery-soc",
-        "%",
-        (0, 100, 1),
-        0x26,
-        0x40,
-        &[0],
-        &[0; 6],
-        0,
-        1,
-    );
-    soc.read_only = true;
-
-    let mut soh = SettingSpec::new(
-        "battery-soh",
-        "%",
-        (0, 100, 1),
-        0x26,
-        0x40,
-        &[0],
-        &[0; 6],
-        1,
-        1,
-    );
-    soh.read_only = true;
-
-    let mut rem_cap = SettingSpec::new(
-        "battery-remaining-capacity",
-        "mAh",
-        (0, 65535, 1),
-        0x26,
-        0x40,
-        &[0],
-        &[0; 6],
-        2,
-        2,
-    );
-    rem_cap.read_only = true;
-
-    let mut full_cap = SettingSpec::new(
-        "battery-full-capacity",
-        "mAh",
-        (0, 65535, 1),
-        0x26,
-        0x40,
-        &[0],
-        &[0; 6],
-        4,
-        2,
-    );
-    full_cap.read_only = true;
-
-    let mut cycles = SettingSpec::new(
-        "battery-charge-cycles",
-        "cycles",
-        (0, 65535, 1),
-        0x18,
-        0x10,
-        &[0],
-        &[0; 4],
-        0,
-        2,
-    );
-    cycles.read_only = true;
-
-    let mut protection = SettingSpec::new(
-        "battery-protection-events",
-        "events",
-        (0, 65535, 1),
-        0x18,
-        0x10,
-        &[0],
-        &[0; 4],
-        2,
-        2,
-    );
-    protection.read_only = true;
-
-    vec![soc, soh, rem_cap, full_cap, cycles, protection]
 }
 
 fn shift_limits() -> Vec<SettingSpec> {
@@ -421,11 +283,7 @@ pub(super) fn validate_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
         }
         "wireless-mode" => {
             ensure!(!raw.is_empty(), "short wireless-mode reply");
-            ensure!(
-                matches!(raw[0], 0 | 1),
-                "unsupported wireless mode: {}",
-                raw[0]
-            );
+            ensure!(raw[0] <= 3, "unsupported wireless mode: {}", raw[0]);
         }
         "bluetooth-passkey" => {
             ensure!(raw.len() >= 6, "short bluetooth-passkey reply");
@@ -433,34 +291,6 @@ pub(super) fn validate_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
                 raw[..6].iter().all(|b| b.is_ascii_digit()),
                 "passkey reply contains non-numeric bytes"
             );
-        }
-        "start-mode" => {
-            ensure!(raw.len() >= 2, "short start-mode reply");
-            ensure!(raw[0] <= 11, "start mode gear exceeds maximum: {}", raw[0]);
-        }
-        "auto-gear-cadence" => {
-            ensure!(raw.len() >= 2, "short auto-gear-cadence reply");
-            let raw_cadence = u16::from_le_bytes([raw[0], raw[1]]);
-            ensure!(
-                raw_cadence <= 1200,
-                "auto-gear-cadence exceeds reasonable range: {raw_cadence}"
-            );
-        }
-        "battery-soc" | "battery-soh" | "battery-remaining-capacity" | "battery-full-capacity" => {
-            ensure!(raw.len() >= 6, "short battery-health reply");
-            ensure!(
-                raw[0] <= 100,
-                "battery state of charge exceeds 100%: {}",
-                raw[0]
-            );
-            ensure!(
-                raw[1] <= 100,
-                "battery state of health exceeds 100%: {}",
-                raw[1]
-            );
-        }
-        "battery-charge-cycles" | "battery-protection-events" => {
-            ensure!(raw.len() >= 4, "short battery-telemetry reply");
         }
         _ => {}
     }
@@ -493,8 +323,9 @@ mod tests {
         assert!(super::super::validate_input(&up, "4").is_err());
         assert!(validate_reply(&up, &[2]).is_err());
         assert!(validate_reply(&up, &[2, 4]).is_err());
-        assert!(schema("SM-JC41").is_empty());
-        assert_eq!(named("BT-DN300", "multi-shift-limit.up").group, 0x0b);
+        // BT-DN300 is a Di2 master unit with the same limit tuple.
+        let dn300: Vec<_> = schema("BT-DN300").into_iter().map(|s| s.name).collect();
+        assert_eq!(dn300, ["multi-shift-limit.up", "multi-shift-limit.down"]);
     }
 
     #[test]
@@ -531,48 +362,13 @@ mod tests {
     }
 
     #[test]
-    fn hub_start_mode_and_autoshift_cadence() {
+    fn hub_components_expose_no_drive_unit_autoshift_settings() {
+        // Start gear and AutoShift cadence are drive-unit commands, not hub ones.
         for model in ["MU-S705", "MU-UR500", "MU-UR510", "MU-UR520", "FH-U6060"] {
-            let start = named(model, "start-mode");
-            assert_eq!((start.group, start.get, start.set), (0x0b, 0x8c, 0x88));
-            assert_eq!(start.query, [0]);
-            assert_eq!(
-                super::super::updated_payload(&start, &[0, 0], 3, false).unwrap(),
-                [3, 0, 0, 0]
-            );
-            assert_eq!(start.decode(&[3, 0]).unwrap(), json!(3));
-            assert!(super::super::validate_input(&start, "0").is_ok());
-            assert!(super::super::validate_input(&start, "11").is_ok());
-            assert!(super::super::validate_input(&start, "12").is_err());
-            assert!(validate_reply(&start, &[0, 0]).is_ok());
-            assert!(validate_reply(&start, &[11, 0]).is_ok());
-            assert!(validate_reply(&start, &[12, 0]).is_err());
-            assert!(validate_reply(&start, &[0]).is_err());
-
-            let cadence = named(model, "auto-gear-cadence");
-            assert_eq!(
-                (cadence.group, cadence.get, cadence.set),
-                (0x0b, 0x94, 0x90)
-            );
-            assert_eq!(cadence.scale, 10.0);
-            assert_eq!(
-                super::super::updated_payload(&cadence, &[0, 0], 700, false).unwrap(),
-                [0xbc, 0x02, 0, 0]
-            );
-            assert_eq!(cadence.decode(&[0xbc, 0x02]).unwrap(), json!(70.0));
-            assert!(super::super::validate_input(&cadence, "50").is_ok());
-            assert!(super::super::validate_input(&cadence, "76").is_ok());
-            assert!(super::super::validate_input(&cadence, "49").is_err());
-            assert!(super::super::validate_input(&cadence, "77").is_err());
-            assert!(validate_reply(&cadence, &[0xbc, 0x02]).is_ok());
-            assert!(validate_reply(&cadence, &[0, 0]).is_ok());
-            assert!(validate_reply(&cadence, &[0xff, 0xff]).is_err());
-            assert!(validate_reply(&cadence, &[0]).is_err());
+            assert!(schema(model)
+                .iter()
+                .all(|s| s.name != "start-mode" && s.name != "auto-gear-cadence"));
         }
-
-        assert!(schema("FH-U6060")
-            .iter()
-            .all(|s| s.name != "hub-adjustment" && s.name != "hub-gear-count"));
     }
 
     #[test]
@@ -602,25 +398,28 @@ mod tests {
         assert!(schema("SC-E7000")
             .iter()
             .all(|s| s.name != "display-brightness"));
-        assert!(schema("SM-JC41").is_empty());
-        assert_eq!(named("BT-E8010", "battery-soh").group, 0x26);
+        assert!(schema("BT-E8010").is_empty());
     }
 
     #[test]
     fn wireless_mode_and_passkey_support_gateways_and_wireless_displays() {
-        for gateway in ["EW-WU101", "EW-WU111", "EW-EN100"] {
-            let wm = named(gateway, "wireless-mode");
-            assert_eq!((wm.group, wm.get, wm.set), (0x40, 0x54, 0x50));
-            assert_eq!(wm.choices, [0, 1]);
-            assert_eq!(
-                super::super::updated_payload(&wm, &[0], 1, false).unwrap(),
-                [1]
-            );
-            assert!(validate_reply(&wm, &[0]).is_ok());
-            assert!(validate_reply(&wm, &[1]).is_ok());
-            assert!(validate_reply(&wm, &[2]).is_err());
-            assert!(validate_reply(&wm, &[]).is_err());
+        let wm = named("RD-R9250", "wireless-mode");
+        assert_eq!((wm.group, wm.get, wm.set), (0x40, 0x54, 0x50));
+        assert!(wm.query.is_empty());
+        assert_eq!(
+            super::super::updated_payload(&wm, &[3], 1, false).unwrap(),
+            [1]
+        );
+        assert!(validate_reply(&wm, &[3]).is_ok());
+        assert!(validate_reply(&wm, &[4]).is_err());
+        assert!(validate_reply(&wm, &[]).is_err());
+        // Radio off reads back but is never a new value.
+        assert!(super::super::validate_input(&wm, "0").is_ok());
+        assert!(super::super::validate_new_value(&wm, "0", false).is_err());
+        assert!(super::super::validate_new_value(&wm, "2", false).is_ok());
 
+        for gateway in ["EW-WU101", "EW-WU111", "EW-EN100"] {
+            assert!(schema(gateway).iter().all(|s| s.name != "wireless-mode"));
             let passkey = named(gateway, "bluetooth-passkey");
             assert_eq!(
                 (passkey.group, passkey.get, passkey.set),
@@ -645,7 +444,7 @@ mod tests {
         for display in [
             "SC-E8000", "SC-E6100", "SC-E7000", "SC-EM800", "SC-EN600", "SC-EN610",
         ] {
-            assert!(schema(display).iter().any(|s| s.name == "wireless-mode"));
+            assert!(schema(display).iter().all(|s| s.name != "wireless-mode"));
             assert!(schema(display)
                 .iter()
                 .any(|s| s.name == "bluetooth-passkey"));
@@ -782,17 +581,6 @@ mod tests {
                 vec![1, 5, 0, 0],
             ),
             (
-                3,
-                "EW-WU111",
-                "wireless-mode",
-                "1",
-                0x40,
-                0x54,
-                0x50,
-                vec![0],
-                vec![1],
-            ),
-            (
                 4,
                 "SC-E8000",
                 "display-time",
@@ -813,28 +601,6 @@ mod tests {
                 0x08,
                 b"123456".to_vec(),
                 b"876543".to_vec(),
-            ),
-            (
-                6,
-                "MU-UR510",
-                "start-mode",
-                "3",
-                0x0b,
-                0x8c,
-                0x88,
-                vec![0, 0],
-                vec![3, 0, 0, 0],
-            ),
-            (
-                7,
-                "FH-U6060",
-                "auto-gear-cadence",
-                "75",
-                0x0b,
-                0x94,
-                0x90,
-                vec![0xbc, 0x02],
-                vec![0xee, 0x02, 0, 0],
             ),
         ] {
             let backup = std::env::temp_dir().join(format!(
@@ -865,7 +631,12 @@ mod tests {
             let journal: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&backup).unwrap()).unwrap();
             assert_eq!(journal["original_parameters"], hex::encode(&current));
-            assert_eq!(journal["planned_parameters"], hex::encode(&expected));
+            if name == "bluetooth-passkey" {
+                // The new PIN is the operator's own input; never journal it.
+                assert!(journal.get("planned_parameters").is_none());
+            } else {
+                assert_eq!(journal["planned_parameters"], hex::encode(&expected));
+            }
             std::fs::remove_file(backup).unwrap();
         }
     }
@@ -915,7 +686,7 @@ mod tests {
         assert_eq!(report["changed"], true);
         assert_eq!(report["current_value"], "000000");
         assert_eq!(report["planned_value"], "876543");
-        assert_eq!(report["planned_parameters"], hex::encode("876543"));
+        assert!(report.get("planned_parameters").is_none());
 
         assert!(dry_run_for_model(
             &mut gw,
@@ -950,124 +721,147 @@ mod tests {
         )
         .is_err());
         assert!(!rejected_backup.exists());
+    }
 
-        struct MockHub {
-            start_mode: Vec<u8>,
-            cadence: Vec<u8>,
-        }
-        impl UnitCommands for MockHub {
-            fn command(
-                &mut self,
-                slot: u8,
-                group: u8,
-                command: u8,
-                params: &[u8],
-                reply: u8,
-            ) -> Result<Vec<u8>> {
-                assert_eq!(slot, 3);
-                match (group, command) {
-                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
-                    (0x0b, 0x8c) => {
-                        assert_eq!(params, [0]);
-                        assert_eq!(reply, 0x8e);
-                        Ok(self.start_mode.clone())
-                    }
-                    (0x0b, 0x94) => {
-                        assert_eq!(params, [0]);
-                        assert_eq!(reply, 0x96);
-                        Ok(self.cadence.clone())
-                    }
-                    _ => panic!("unexpected hub command {group:02x}/{command:02x}"),
-                }
+    struct Gateway {
+        bluetooth: bool,
+        mode: u8,
+        passkey: Vec<u8>,
+        clock: u16,
+        clock_drift: u16,
+        writes: usize,
+    }
+    impl Gateway {
+        fn new(bluetooth: bool) -> Self {
+            Self {
+                bluetooth,
+                mode: 3,
+                passkey: b"000000".to_vec(),
+                clock: 600,
+                clock_drift: 0,
+                writes: 0,
             }
         }
+    }
+    impl crate::device::UnitCommands for Gateway {
+        fn bluetooth_link(&self) -> bool {
+            self.bluetooth
+        }
+        fn command(
+            &mut self,
+            _: u8,
+            group: u8,
+            command: u8,
+            params: &[u8],
+            _: u8,
+        ) -> Result<Vec<u8>> {
+            Ok(match (group, command) {
+                (1, 0x3c) => vec![1, 2, 3, 4, 5, 6],
+                (0x40, 0x54) => {
+                    assert!(params.is_empty());
+                    vec![self.mode]
+                }
+                (0x40, 0x0c) => self.passkey.clone(),
+                (0x05, 0x44) => ((self.clock + self.clock_drift) % 1440)
+                    .to_le_bytes()
+                    .to_vec(),
+                (0x40, 0x50) | (0x40, 0x08) | (0x05, 0x40) => {
+                    self.writes += 1;
+                    match command {
+                        0x50 => self.mode = params[0],
+                        0x08 => self.passkey = params.to_vec(),
+                        _ => self.clock = u16::from_le_bytes([params[0], params[1]]),
+                    }
+                    Vec::new()
+                }
+                _ => panic!("unexpected gateway command {group:02x}/{command:02x}"),
+            })
+        }
+    }
 
-        let mut hub = MockHub {
-            start_mode: vec![0, 0],
-            cadence: vec![0xbc, 0x02], // 700 = 70.0 rpm
-        };
-        let start_report = dry_run_for_model(
-            &mut hub,
-            3,
-            "start-mode",
-            "3",
-            SettingsModel::Component("MU-UR500"),
-        )
-        .unwrap();
-        assert_eq!(start_report["valid"], true);
-        assert_eq!(start_report["changed"], true);
-        assert_eq!(start_report["current_value"], 0);
-        assert_eq!(start_report["planned_value"], "3");
-        assert_eq!(
-            start_report["planned_parameters"],
-            hex::encode([3, 0, 0, 0])
-        );
-
-        let cadence_report = dry_run_for_model(
-            &mut hub,
-            3,
-            "auto-gear-cadence",
-            "75",
-            SettingsModel::Component("FH-U6060"),
-        )
-        .unwrap();
-        assert_eq!(cadence_report["valid"], true);
-        assert_eq!(cadence_report["changed"], true);
-        assert_eq!(cadence_report["current_value"], 70.0);
-        assert_eq!(cadence_report["planned_value"], "75");
-        assert_eq!(
-            cadence_report["planned_parameters"],
-            hex::encode([0xee, 0x02, 0, 0])
-        );
+    fn temp(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "cranklink-{name}-{}-{}",
+            std::process::id(),
+            crate::platform::now_ms()
+        ))
     }
 
     #[test]
-    fn battery_health_and_diagnostics_telemetry() {
-        for model in ["BT-DN110", "BT-DN300", "BT-E8010", "BT-EN805", "BT-E6000"] {
-            let s_soc = named(model, "battery-soc");
-            let s_soh = named(model, "battery-soh");
-            let s_rem = named(model, "battery-remaining-capacity");
-            let s_full = named(model, "battery-full-capacity");
-            let s_cycles = named(model, "battery-charge-cycles");
-            let s_prot = named(model, "battery-protection-events");
+    fn ant_only_mode_is_refused_over_the_bluetooth_link() {
+        use crate::settings::{dry_run_for_model, set_for_model, SettingsModel};
+        let model = SettingsModel::Component("RD-R9250");
+        let mut ble = Gateway::new(true);
+        assert!(dry_run_for_model(&mut ble, 2, "wireless-mode", "1", model).is_err());
+        let backup = temp("ant-only-ble.json");
+        assert!(set_for_model(&mut ble, 2, "wireless-mode", "1", &backup, model).is_err());
+        assert!(!backup.exists());
+        assert_eq!(ble.writes, 0);
+        let prefix = temp("ant-only-batch");
+        let ops = [crate::settings::batch::Operation::Set {
+            name: "wireless-mode".into(),
+            value: "1".into(),
+        }];
+        assert!(crate::settings::batch::run(&mut ble, 2, &ops, &prefix, model).is_err());
+        assert_eq!(ble.writes, 0);
 
-            assert!(s_soc.read_only);
-            assert!(s_soh.read_only);
-            assert!(s_rem.read_only);
-            assert!(s_full.read_only);
-            assert!(s_cycles.read_only);
-            assert!(s_prot.read_only);
+        let mut usb = Gateway::new(false);
+        let backup = temp("ant-only-usb.json");
+        set_for_model(&mut usb, 2, "wireless-mode", "1", &backup, model).unwrap();
+        assert_eq!(usb.mode, 1);
+        std::fs::remove_file(&backup).unwrap();
+        // A captured ANT+-only original cannot be restored over Bluetooth either.
+        set_for_model(&mut usb, 2, "wireless-mode", "3", &backup, model).unwrap();
+        let restored = temp("ant-only-restore.json");
+        assert!(
+            crate::settings::restore_for_model(&mut ble, 2, &backup, &restored, model).is_err()
+        );
+        assert_eq!(ble.writes, 0);
+        std::fs::remove_file(backup).unwrap();
+    }
 
-            assert_eq!((s_soc.group, s_soc.get, s_soc.set), (0x26, 0x44, 0x40));
-            assert_eq!(
-                (s_cycles.group, s_cycles.get, s_cycles.set),
-                (0x18, 0x14, 0x10)
-            );
+    #[test]
+    fn trivial_passkey_fails_batch_preflight_before_any_write() {
+        use crate::settings::{batch::Operation, set_for_model, SettingsModel};
+        let model = SettingsModel::Component("RD-R9250");
+        let mut gw = Gateway::new(false);
+        let prefix = temp("passkey-batch");
+        let ops = [
+            Operation::Set {
+                name: "wireless-mode".into(),
+                value: "1".into(),
+            },
+            Operation::Set {
+                name: "bluetooth-passkey".into(),
+                value: "000000".into(),
+            },
+        ];
+        let err = crate::settings::batch::run(&mut gw, 2, &ops, &prefix, model).unwrap_err();
+        assert!(format!("{err:#}").contains("no batch writes sent"));
+        assert_eq!(gw.writes, 0);
 
-            // Decode 6-byte health payload: [soc, soh, rem_lo, rem_hi, full_lo, full_hi]
-            let health_raw = [92, 88, 0x20, 0x1c, 0x60, 0x28];
-            assert_eq!(s_soc.decode(&health_raw).unwrap(), json!(92));
-            assert_eq!(s_soh.decode(&health_raw).unwrap(), json!(88));
-            assert_eq!(s_rem.decode(&health_raw).unwrap(), json!(7200));
-            assert_eq!(s_full.decode(&health_raw).unwrap(), json!(10336));
+        // A unit still on the 000000 default can change away from it.
+        let backup = temp("passkey-from-default.json");
+        set_for_model(&mut gw, 2, "bluetooth-passkey", "482913", &backup, model).unwrap();
+        assert_eq!(gw.passkey, b"482913");
+        std::fs::remove_file(backup).unwrap();
+    }
 
-            // Decode 4-byte cycles payload: [cycles_lo, cycles_hi, prot_lo, prot_hi]
-            let cycles_raw = [142, 0, 3, 0];
-            assert_eq!(s_cycles.decode(&cycles_raw).unwrap(), json!(142));
-            assert_eq!(s_prot.decode(&cycles_raw).unwrap(), json!(3));
-
-            // Reply validation
-            assert!(validate_reply(&s_soh, &health_raw).is_ok());
-            assert!(validate_reply(&s_soh, &[92, 88, 0x20, 0x1c, 0x60]).is_err());
-            assert!(validate_reply(&s_soh, &[101, 88, 0x20, 0x1c, 0x60, 0x28]).is_err());
-            assert!(validate_reply(&s_soh, &[92, 101, 0x20, 0x1c, 0x60, 0x28]).is_err());
-
-            assert!(validate_reply(&s_cycles, &cycles_raw).is_ok());
-            assert!(validate_reply(&s_cycles, &[142, 0, 3]).is_err());
-
-            // Write protection (read-only settings must reject all write attempts)
-            assert!(super::super::validate_input(&s_soh, "80").is_err());
-            assert!(super::super::validate_input(&s_cycles, "50").is_err());
-        }
+    #[test]
+    fn display_clock_tolerates_a_minute_tick_and_is_never_restored() {
+        use crate::settings::{restore_for_model, set_for_model, SettingsModel};
+        let model = SettingsModel::Component("SC-E8000");
+        let mut display = Gateway::new(false);
+        display.clock_drift = 1;
+        let backup = temp("clock.json");
+        let receipt =
+            set_for_model(&mut display, 2, "display-time", "1439", &backup, model).unwrap();
+        assert!(receipt.changed);
+        assert_eq!(display.clock, 1439);
+        let restored = temp("clock-restore.json");
+        let err = restore_for_model(&mut display, 2, &backup, &restored, model).unwrap_err();
+        assert!(format!("{err:#}").contains("current time"));
+        assert_eq!(display.writes, 1);
+        std::fs::remove_file(backup).unwrap();
     }
 }
