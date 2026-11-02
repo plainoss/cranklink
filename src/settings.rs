@@ -1965,6 +1965,17 @@ pub fn restore_parsed_for_model(
             model,
         );
     }
+    if setting.name == "switch-mode" {
+        return restore_switch_mode(
+            session,
+            slot,
+            &setting,
+            &parsed.raw_backup,
+            new_backup_path,
+            Some(&serial),
+            model,
+        );
+    }
     if setting.name == "bluetooth-passkey" {
         return set_passkey(
             session,
@@ -2081,6 +2092,80 @@ fn restore_date(
         ensure!(
             got.get(..3) == Some(&original[..3]),
             "date restore readback mismatch"
+        );
+    }
+    Ok(ChangeReceipt {
+        setting: s.name.clone(),
+        before,
+        after,
+        backup: path.display().to_string(),
+        changed,
+    })
+}
+
+fn restore_switch_mode(
+    session: &mut dyn UnitCommands,
+    slot: u8,
+    s: &SettingSpec,
+    backup: &Value,
+    path: &Path,
+    expected_serial: Option<&str>,
+    model: SettingsModel,
+) -> Result<ChangeReceipt> {
+    let original = hex::decode(
+        backup["original_parameters"]
+            .as_str()
+            .context("switch-mode backup lacks original parameters")?,
+    )?;
+    ensure!(original.len() >= 2, "short original switch parameters");
+    let current = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+    validate_model_reply(s, &current).context("invalid switch readback")?;
+    let before = s.decode(&current)?;
+    let after = s.decode(&original)?;
+    let mut payload = vec![0u8; 4];
+    payload[0] = original[0];
+    payload[1] = current[1];
+    let serial = checked_serial(session, slot, expected_serial, model)?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .context("create new restore backup")?;
+    serde_json::to_writer_pretty(
+        &mut file,
+        &json!({
+            "format": "cranklink-setting-backup-v1",
+            "serial": serial,
+            "slot": slot,
+            "settings_model": model.slug(),
+            "setting": s.name,
+            "before": before,
+            "original_parameters": hex::encode(&current),
+            "planned_parameters": hex::encode(&payload),
+            "group": s.group,
+            "command": s.set,
+            "query": s.query
+        }),
+    )?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    crate::storage::sync_parent(path).context("persist settings backup directory")?;
+    let changed = current[0] != payload[0];
+    if changed {
+        session
+            .command(slot, s.group, s.set, &payload, s.set + 2)
+            .context("switch mode restore failed; backup retained")?;
+        let got = session.command(slot, s.group, s.get, &s.query, s.get + 2)?;
+        validate_model_reply(s, &got).context("invalid switch restore readback")?;
+        ensure!(
+            got[0] == payload[0],
+            "switch mode restore readback mismatch; original preserved in {}",
+            path.display()
+        );
+        ensure!(
+            got[1] == current[1],
+            "switch auxiliary settings changed unexpectedly; original preserved in {}",
+            path.display()
         );
     }
     Ok(ChangeReceipt {

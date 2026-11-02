@@ -396,14 +396,25 @@ fn extended_switch_c_dfly_assignment_journals_backup_and_preserves_siblings() {
 fn steps_switch_mode_and_assist_button_swap_journal_backup() {
     let files = Files::new();
     let backup = files.backup("sw-e7000-before.json");
+    let restored_backup = files.backup("sw-e7000-restore-before.json");
     let mut switch = Switch::new(backup.clone());
     switch.model = "SW-E7000-L";
     switch.setting = "switch-mode";
-    switch.state = vec![0x67, 0x00, 0, 0];
+    // Custom button assignment in assist mode: A = 7 (down), B = 6 (up) -> 0x76
+    switch.state = vec![0x76, 0x04, 0, 0];
     let model = SettingsModel::Component("SW-E7000-L");
     let receipt = set_for_model(&mut switch, 7, "switch-mode", "0", &backup, model).unwrap();
     assert_eq!(receipt.before, json!(2));
     assert_eq!(receipt.after, json!(0));
-    assert_eq!(switch.state, [0x23, 0x00, 0, 0]);
+    assert_eq!(switch.state, [0x23, 0x04, 0, 0]);
     assert_eq!(switch.writes, 1);
+
+    // Restoring must restore the exact custom assignment 0x76, not generic 0x67.
+    switch.backup = restored_backup.clone();
+    let restore_receipt =
+        restore_for_model(&mut switch, 7, &backup, &restored_backup, model).unwrap();
+    assert_eq!(restore_receipt.before, json!(0));
+    assert_eq!(restore_receipt.after, json!(2));
+    assert_eq!(switch.state, [0x76, 0x04, 0, 0]);
+    assert_eq!(switch.writes, 2);
 }
