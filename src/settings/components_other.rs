@@ -193,6 +193,13 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
             | "SC-EM800"
             | "SC-EN600"
             | "SC-EN610"
+            | "RD-R9250"
+            | "RD-R8150"
+            | "RD-R7150"
+            | "RD-RX825"
+            | "RD-RX827-SGS"
+            | "RD-RX717-SGS"
+            | "RD-RX828-SGS"
     ) {
         specs.push(byte_setting(
             "wireless-mode",
@@ -642,6 +649,19 @@ mod tests {
             assert!(schema(display)
                 .iter()
                 .any(|s| s.name == "bluetooth-passkey"));
+        }
+
+        for rd12 in [
+            "RD-R9250",
+            "RD-R8150",
+            "RD-R7150",
+            "RD-RX825",
+            "RD-RX827-SGS",
+            "RD-RX717-SGS",
+            "RD-RX828-SGS",
+        ] {
+            assert!(schema(rd12).iter().any(|s| s.name == "wireless-mode"));
+            assert!(schema(rd12).iter().any(|s| s.name == "bluetooth-passkey"));
         }
 
         for wired in ["SC-EN500", "SC-M9050", "MU-S705", "SM-BMR1"] {

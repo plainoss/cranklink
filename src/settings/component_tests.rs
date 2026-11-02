@@ -357,7 +357,7 @@ fn unsupported_and_read_only_component_settings_fail_before_io() {
     let backup = files.backup("unused.json");
     let mut switch = Switch::new(backup.clone());
     for (model, setting) in [
-        ("ST-R9270-L", "switch-a-function"),
+        ("SM-PCE1", "switch-a-function"),
         ("ST-9070-L", "switch-c-function"),
         ("RD-M8050-GS", "derailleur-adjustment"),
         ("RD-X8050", "multi-shift-speed"),
