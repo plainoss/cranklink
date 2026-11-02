@@ -474,6 +474,7 @@ mod tests {
             [0x32, 0, 0, 0]
         );
         assert!(super::super::updated_payload(mode, &[0x63, 0, 0, 0], 1, false).is_err());
+        assert!(super::super::validate_new_value(mode, "1.0", false).is_err());
 
         let assist_payload = [0x67, 0x00, 0x00, 0x00];
         assert_eq!(mode.decode(&assist_payload).unwrap(), json!(2));

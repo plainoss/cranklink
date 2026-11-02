@@ -2232,12 +2232,13 @@ pub(crate) fn validate_new_value(s: &SettingSpec, value: &str, bluetooth_link: b
             value != "000000" && value != "999999",
             "bluetooth passkey cannot be 000000 or 999999"
         ),
+        // Compare wire values: "0.0" or "01" spell the same mode as "0".
         "wireless-mode" => ensure!(
-            value != "0",
+            s.raw_value(value)? != 0,
             "wireless-mode 0 turns the radio off; choose 1, 2 or 3"
         ),
         "switch-mode" => ensure!(
-            value != "1",
+            s.raw_value(value)? != 1,
             "switch-mode 1 (mixed) is read-only; set switch-a-function and switch-b-function"
         ),
         _ => {}
@@ -2248,10 +2249,13 @@ pub(crate) fn validate_new_value(s: &SettingSpec, value: &str, bluetooth_link: b
 /// Refuses writes that would cut the Bluetooth link carrying this session,
 /// leaving USB as the only way to undo them.
 pub(crate) fn validate_link_safe(s: &SettingSpec, value: &str, bluetooth_link: bool) -> Result<()> {
-    ensure!(
-        !(bluetooth_link && s.name == "wireless-mode" && matches!(value, "0" | "1")),
-        "wireless-mode {value} turns Bluetooth off and would end this session; change it over USB"
-    );
+    if bluetooth_link && s.name == "wireless-mode" {
+        let mode = s.raw_value(value)?;
+        ensure!(
+            !matches!(mode, 0 | 1),
+            "wireless-mode {mode} turns Bluetooth off and would end this session; change it over USB"
+        );
+    }
     Ok(())
 }
 

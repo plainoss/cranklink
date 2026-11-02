@@ -417,6 +417,14 @@ mod tests {
         assert!(super::super::validate_input(&wm, "0").is_ok());
         assert!(super::super::validate_new_value(&wm, "0", false).is_err());
         assert!(super::super::validate_new_value(&wm, "2", false).is_ok());
+        // Every numeric spelling of a refused mode is refused.
+        for spelling in ["0.0", "00"] {
+            assert!(super::super::validate_new_value(&wm, spelling, false).is_err());
+        }
+        for spelling in ["1.0", "01", "0.0"] {
+            assert!(super::super::validate_link_safe(&wm, spelling, true).is_err());
+        }
+        assert!(super::super::validate_link_safe(&wm, "3.0", true).is_ok());
 
         for gateway in ["EW-WU101", "EW-WU111", "EW-EN100"] {
             assert!(schema(gateway).iter().all(|s| s.name != "wireless-mode"));
