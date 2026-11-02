@@ -40,7 +40,7 @@ The debug APK is `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Inst
 adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ```
 
-The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml) builds the same debug APK and uploads it as an artifact. It is a development build signed with a debug key that changes per run, so it cannot update a previous install. The workflow also builds and verifies a release bundle signed with a disposable key.
+The [Android GitHub Actions workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml) builds the same debug APK and uploads it as an artifact. It is a development build signed with a debug key that changes per run, so it cannot update a previous install. Debug builds use the application ID `app.plainoss.cranklink.debug`, so they install beside the Play app instead of blocking its installation. The workflow also builds and verifies a release bundle signed with a disposable key.
 
 Signed release bundles are built by `tools/android-release/build.sh` and published to Google Play by CI; see [Android releases](../docs/android-releases.md). To build one locally, set `ANDROID_VERSION_CODE`, `ANDROID_VERSION_NAME`, `ANDROID_UPLOAD_CERTIFICATE_SHA256` and the `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` signing variables, then run `tools/android-release/build.sh <absolute output directory>` from the repository root. A release build without the signing variables fails.
 

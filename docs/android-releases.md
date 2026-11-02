@@ -59,4 +59,4 @@ The upload key is generated once and kept outside the repository; back up the ke
 - After a failed publish, read the failed step and Play Console, then rerun the same run.
 - A bad release is fixed by a newer version: Android does not downgrade. For production, halt the rollout in Console if Play offers it.
 
-The [privacy policy](android-privacy.md) and the store listing text in `android-app/play/listing/` are maintained here and entered in Play Console by hand; the workflows publish only bundles and release notes.
+The [privacy policy](android-privacy.md) and the store listing in `android-app/play/listing/` (text, icon, feature graphic and phone screenshots taken from demo mode) are maintained here and entered in Play Console by hand; changing them does not start a release. The workflows publish only bundles and release notes. `graphics/*.svg` are the sources of the icon and feature graphic PNGs (`rsvg-convert`).
