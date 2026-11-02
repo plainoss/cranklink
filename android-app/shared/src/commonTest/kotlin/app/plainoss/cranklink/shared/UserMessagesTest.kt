@@ -50,5 +50,11 @@ class UserMessagesTest {
         assertEquals("Off", formatSettingValue("start-mode", "0"))
         assertEquals("Gear 3", formatSettingValue("start-mode", "3"))
         assertEquals("70 rpm", formatSettingValue("auto-gear-cadence", "70"))
+        assertEquals("92%", formatSettingValue("battery-soc", "92"))
+        assertEquals("88%", formatSettingValue("battery-soh", "88"))
+        assertEquals("7200 mAh", formatSettingValue("battery-remaining-capacity", "7200"))
+        assertEquals("10336 mAh", formatSettingValue("battery-full-capacity", "10336"))
+        assertEquals("142 cycles", formatSettingValue("battery-charge-cycles", "142"))
+        assertEquals("3 events", formatSettingValue("battery-protection-events", "3"))
     }
 }

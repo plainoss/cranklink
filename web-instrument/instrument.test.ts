@@ -96,6 +96,30 @@ describe("Domain Schema Enrichment & Ordering", () => {
       formatValue({ name: "auto-gear-cadence", displayUnit: "rpm" } as any, 70),
       "70 rpm",
     );
+    assert.equal(
+      formatValue({ name: "battery-soc", displayUnit: "%" } as any, 92),
+      "92%",
+    );
+    assert.equal(
+      formatValue({ name: "battery-soh", displayUnit: "%" } as any, 88),
+      "88%",
+    );
+    assert.equal(
+      formatValue({ name: "battery-remaining-capacity", displayUnit: "mAh" } as any, 7200),
+      "7200 mAh",
+    );
+    assert.equal(
+      formatValue({ name: "battery-full-capacity", displayUnit: "mAh" } as any, 10336),
+      "10336 mAh",
+    );
+    assert.equal(
+      formatValue({ name: "battery-charge-cycles", displayUnit: "cycles" } as any, 142),
+      "142 cycles",
+    );
+    assert.equal(
+      formatValue({ name: "battery-protection-events", displayUnit: "events" } as any, 3),
+      "3 events",
+    );
   });
 
   it("offers modern torque levels only for OEM bounds with a vendor table", async () => {
