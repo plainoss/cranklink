@@ -59,6 +59,40 @@ pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
         _ => {}
     }
 
+    if matches!(
+        name,
+        "MU-S705" | "MU-UR500" | "MU-UR510" | "MU-UR520" | "FH-U6060"
+    ) {
+        let mut start_mode = SettingSpec::new(
+            "start-mode",
+            "gear, 0=off",
+            (0, 11, 1),
+            0x0b,
+            0x88,
+            &[0],
+            &[0; 4],
+            0,
+            1,
+        );
+        start_mode.preserve = Some(2);
+        specs.push(start_mode);
+
+        let mut cadence = SettingSpec::new(
+            "auto-gear-cadence",
+            "rpm",
+            (500, 760, 10),
+            0x0b,
+            0x90,
+            &[0],
+            &[0; 4],
+            0,
+            2,
+        );
+        cadence.scale = 10.0;
+        cadence.preserve = Some(2);
+        specs.push(cadence);
+    }
+
     // The Android model classes explicitly enable these controls. Newer
     // displays with different or unspecified flags stay outside each list.
     if matches!(
@@ -274,6 +308,18 @@ pub(super) fn validate_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
                 "passkey reply contains non-numeric bytes"
             );
         }
+        "start-mode" => {
+            ensure!(raw.len() >= 2, "short start-mode reply");
+            ensure!(raw[0] <= 11, "start mode gear exceeds maximum: {}", raw[0]);
+        }
+        "auto-gear-cadence" => {
+            ensure!(raw.len() >= 2, "short auto-gear-cadence reply");
+            let raw_cadence = u16::from_le_bytes([raw[0], raw[1]]);
+            ensure!(
+                raw_cadence <= 1200,
+                "auto-gear-cadence exceeds reasonable range: {raw_cadence}"
+            );
+        }
         _ => {}
     }
     Ok(())
@@ -342,6 +388,51 @@ mod tests {
     }
 
     #[test]
+    fn hub_start_mode_and_autoshift_cadence() {
+        for model in ["MU-S705", "MU-UR500", "MU-UR510", "MU-UR520", "FH-U6060"] {
+            let start = named(model, "start-mode");
+            assert_eq!((start.group, start.get, start.set), (0x0b, 0x8c, 0x88));
+            assert_eq!(start.query, [0]);
+            assert_eq!(
+                super::super::updated_payload(&start, &[0, 0], 3, false).unwrap(),
+                [3, 0, 0, 0]
+            );
+            assert_eq!(start.decode(&[3, 0]).unwrap(), json!(3));
+            assert!(super::super::validate_input(&start, "0").is_ok());
+            assert!(super::super::validate_input(&start, "11").is_ok());
+            assert!(super::super::validate_input(&start, "12").is_err());
+            assert!(validate_reply(&start, &[0, 0]).is_ok());
+            assert!(validate_reply(&start, &[11, 0]).is_ok());
+            assert!(validate_reply(&start, &[12, 0]).is_err());
+            assert!(validate_reply(&start, &[0]).is_err());
+
+            let cadence = named(model, "auto-gear-cadence");
+            assert_eq!(
+                (cadence.group, cadence.get, cadence.set),
+                (0x0b, 0x94, 0x90)
+            );
+            assert_eq!(cadence.scale, 10.0);
+            assert_eq!(
+                super::super::updated_payload(&cadence, &[0, 0], 700, false).unwrap(),
+                [0xbc, 0x02, 0, 0]
+            );
+            assert_eq!(cadence.decode(&[0xbc, 0x02]).unwrap(), json!(70.0));
+            assert!(super::super::validate_input(&cadence, "50").is_ok());
+            assert!(super::super::validate_input(&cadence, "76").is_ok());
+            assert!(super::super::validate_input(&cadence, "49").is_err());
+            assert!(super::super::validate_input(&cadence, "77").is_err());
+            assert!(validate_reply(&cadence, &[0xbc, 0x02]).is_ok());
+            assert!(validate_reply(&cadence, &[0, 0]).is_ok());
+            assert!(validate_reply(&cadence, &[0xff, 0xff]).is_err());
+            assert!(validate_reply(&cadence, &[0]).is_err());
+        }
+
+        assert!(schema("FH-U6060")
+            .iter()
+            .all(|s| s.name != "hub-adjustment" && s.name != "hub-gear-count"));
+    }
+
+    #[test]
     fn display_controls_follow_per_model_flags_and_exact_payload_widths() {
         let language = named("SC-E8000", "display-language");
         assert_eq!(language.preserve, Some(1));
@@ -395,8 +486,8 @@ mod tests {
             assert_eq!(passkey.decode(b"123456").unwrap(), json!("123456"));
             assert!(super::super::validate_input(&passkey, "123456").is_ok());
             assert!(super::super::validate_input(&passkey, "876543").is_ok());
-            assert!(super::super::validate_input(&passkey, "000000").is_err());
-            assert!(super::super::validate_input(&passkey, "999999").is_err());
+            assert!(super::super::validate_input(&passkey, "000000").is_ok());
+            assert!(super::super::validate_input(&passkey, "999999").is_ok());
             assert!(super::super::validate_input(&passkey, "12345").is_err());
             assert!(super::super::validate_input(&passkey, "1234567").is_err());
             assert!(super::super::validate_input(&passkey, "12345a").is_err());
@@ -566,6 +657,28 @@ mod tests {
                 b"123456".to_vec(),
                 b"876543".to_vec(),
             ),
+            (
+                6,
+                "MU-UR510",
+                "start-mode",
+                "3",
+                0x0b,
+                0x8c,
+                0x88,
+                vec![0, 0],
+                vec![3, 0, 0, 0],
+            ),
+            (
+                7,
+                "FH-U6060",
+                "auto-gear-cadence",
+                "75",
+                0x0b,
+                0x94,
+                0x90,
+                vec![0xbc, 0x02],
+                vec![0xee, 0x02, 0, 0],
+            ),
         ] {
             let backup = std::env::temp_dir().join(format!(
                 "cranklink-component-setting-{}-{}-{index}.json",
@@ -601,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_passkey_and_display_time() {
+    fn dry_run_component_settings() {
         use crate::device::UnitCommands;
         use crate::settings::{dry_run_for_model, SettingsModel};
 
@@ -631,7 +744,7 @@ mod tests {
         }
 
         let mut gw = MockGateway {
-            passkey: b"123456".to_vec(),
+            passkey: b"000000".to_vec(),
         };
         let report = dry_run_for_model(
             &mut gw,
@@ -643,8 +756,111 @@ mod tests {
         .unwrap();
         assert_eq!(report["valid"], true);
         assert_eq!(report["changed"], true);
-        assert_eq!(report["current_value"], "123456");
+        assert_eq!(report["current_value"], "000000");
         assert_eq!(report["planned_value"], "876543");
         assert_eq!(report["planned_parameters"], hex::encode("876543"));
+
+        assert!(dry_run_for_model(
+            &mut gw,
+            2,
+            "bluetooth-passkey",
+            "000000",
+            SettingsModel::Component("EW-EN100"),
+        )
+        .is_err());
+        assert!(dry_run_for_model(
+            &mut gw,
+            2,
+            "bluetooth-passkey",
+            "999999",
+            SettingsModel::Component("EW-EN100"),
+        )
+        .is_err());
+
+        let rejected_backup = std::env::temp_dir().join(format!(
+            "cranklink-passkey-reject-{}-{}.json",
+            std::process::id(),
+            crate::platform::now_ms()
+        ));
+        assert!(super::super::set_for_model_bound(
+            &mut gw,
+            2,
+            "bluetooth-passkey",
+            "000000",
+            &rejected_backup,
+            SettingsModel::Component("EW-EN100"),
+            Some("010203040506"),
+        )
+        .is_err());
+        assert!(!rejected_backup.exists());
+
+        struct MockHub {
+            start_mode: Vec<u8>,
+            cadence: Vec<u8>,
+        }
+        impl UnitCommands for MockHub {
+            fn command(
+                &mut self,
+                slot: u8,
+                group: u8,
+                command: u8,
+                params: &[u8],
+                reply: u8,
+            ) -> Result<Vec<u8>> {
+                assert_eq!(slot, 3);
+                match (group, command) {
+                    (1, 0x3c) => Ok(vec![1, 2, 3, 4, 5, 6]),
+                    (0x0b, 0x8c) => {
+                        assert_eq!(params, [0]);
+                        assert_eq!(reply, 0x8e);
+                        Ok(self.start_mode.clone())
+                    }
+                    (0x0b, 0x94) => {
+                        assert_eq!(params, [0]);
+                        assert_eq!(reply, 0x96);
+                        Ok(self.cadence.clone())
+                    }
+                    _ => panic!("unexpected hub command {group:02x}/{command:02x}"),
+                }
+            }
+        }
+
+        let mut hub = MockHub {
+            start_mode: vec![0, 0],
+            cadence: vec![0xbc, 0x02], // 700 = 70.0 rpm
+        };
+        let start_report = dry_run_for_model(
+            &mut hub,
+            3,
+            "start-mode",
+            "3",
+            SettingsModel::Component("MU-UR500"),
+        )
+        .unwrap();
+        assert_eq!(start_report["valid"], true);
+        assert_eq!(start_report["changed"], true);
+        assert_eq!(start_report["current_value"], 0);
+        assert_eq!(start_report["planned_value"], "3");
+        assert_eq!(
+            start_report["planned_parameters"],
+            hex::encode([3, 0, 0, 0])
+        );
+
+        let cadence_report = dry_run_for_model(
+            &mut hub,
+            3,
+            "auto-gear-cadence",
+            "75",
+            SettingsModel::Component("FH-U6060"),
+        )
+        .unwrap();
+        assert_eq!(cadence_report["valid"], true);
+        assert_eq!(cadence_report["changed"], true);
+        assert_eq!(cadence_report["current_value"], 70.0);
+        assert_eq!(cadence_report["planned_value"], "75");
+        assert_eq!(
+            cadence_report["planned_parameters"],
+            hex::encode([0xee, 0x02, 0, 0])
+        );
     }
 }

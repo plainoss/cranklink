@@ -49,7 +49,7 @@ strict DCAS serial-padding checks.
 | Classic rear derailleurs, including 6770, 6870, 9070, M8050/M9050, R8050/R9150 and RX805/RX815/RX817 | `multi-shift-speed`; current and maximum derailleur adjustment are read-only |
 | Classic front derailleurs, including 6770, 6870, 9070, M8070/M9050/M9070, R8050/R9150 and RX815 | `synchro-shift-interval` where supported; current and maximum derailleur adjustment are read-only |
 | SM-BMR1, SM-BMR2, BM-DN100, BT-DN110 power units | `multi-shift-limit.up`, `multi-shift-limit.down` (2, 3, or 255 for unlimited) |
-| MU-S705, MU-UR500, MU-UR510, MU-UR520 hub actuators | `hub-adjustment` (−4…4, live maximum must be 4); `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
+| MU-S705, MU-UR500, MU-UR510, MU-UR520, and FH-U6060 hub motor units | `start-mode` (0 off, 1…N start gear), `auto-gear-cadence` (50…76 rpm); `hub-adjustment` (−4…4, live maximum must be 4) on MU models; `hub-gear-count` on S705 (8/11) and UR500/UR510 (5/8/11) |
 | SC-M9050/M9051, SC-E8000/E6100/E7000, SC-EM800, SC-EN500/EN600/EN610 cycle computers | Model-specific `display-beep`, `display-distance-unit`, `display-backlight`, `display-language`, `display-brightness`, and `display-time` |
 | EW-WU101, EW-WU111, EW-EN100 wireless gateways & displays | `wireless-mode` (0 BLE & ANT+, 1 ANT+ only), `bluetooth-passkey` (6-digit numeric PIN) |
 
