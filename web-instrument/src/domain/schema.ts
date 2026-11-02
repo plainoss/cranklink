@@ -345,6 +345,42 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     section: "maintenance",
     displayUnit: "day",
   },
+  "battery-soc": {
+    label: "State of Charge",
+    description: "Current battery charge percentage.",
+    section: "maintenance",
+    displayUnit: "%",
+  },
+  "battery-soh": {
+    label: "Battery Health",
+    description: "Battery state of health representing actual full-charge capacity relative to design capacity.",
+    section: "maintenance",
+    displayUnit: "%",
+  },
+  "battery-remaining-capacity": {
+    label: "Remaining Capacity",
+    description: "Current available charge in milliampere-hours.",
+    section: "maintenance",
+    displayUnit: "mAh",
+  },
+  "battery-full-capacity": {
+    label: "Full Charge Capacity",
+    description: "Actual maximum capacity when fully charged in milliampere-hours.",
+    section: "maintenance",
+    displayUnit: "mAh",
+  },
+  "battery-charge-cycles": {
+    label: "Charge Cycles",
+    description: "Total completed lifetime battery charge cycles.",
+    section: "maintenance",
+    displayUnit: "cycles",
+  },
+  "battery-protection-events": {
+    label: "Protection Events",
+    description: "Total overcurrent, overtemperature, or safety protection shutdowns recorded by the battery management system.",
+    section: "maintenance",
+    displayUnit: "events",
+  },
 };
 
 const GEOMETRY_SORT_ORDER = [

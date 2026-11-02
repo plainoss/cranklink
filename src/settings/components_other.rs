@@ -12,8 +12,14 @@ use anyhow::{ensure, Result};
 
 pub(super) fn schema(name: &str) -> Vec<SettingSpec> {
     let mut specs = Vec::new();
-    if matches!(name, "SM-BMR1" | "SM-BMR2" | "BM-DN100" | "BT-DN110") {
+    if matches!(
+        name,
+        "SM-BMR1" | "SM-BMR2" | "BM-DN100" | "BT-DN110" | "BT-DN300"
+    ) {
         specs.extend(shift_limits());
+    }
+    if is_battery_model(name) {
+        specs.extend(battery_telemetry());
     }
     match name {
         "MU-S705" | "MU-UR500" | "MU-UR510" | "MU-UR520" => {
@@ -230,6 +236,119 @@ fn byte_setting(name: &str, unit: &str, group: u8, set: u8, choices: &[i64]) -> 
     spec
 }
 
+pub(crate) const BATTERY_MODELS: &[&str] = &[
+    "BT-DN110",
+    "BT-DN300",
+    "BT-E8010",
+    "BT-E8014",
+    "BT-E8016",
+    "BT-E8020",
+    "BT-E8035",
+    "BT-E8035-L",
+    "BT-E8036",
+    "BT-EN805",
+    "BT-EN806",
+    "BT-EN604",
+    "BT-EN605",
+    "BT-EN606",
+    "BT-E6000",
+    "BT-E6001",
+    "BT-E6010",
+];
+
+pub(crate) fn canonical_model_name(name: &str) -> Option<&'static str> {
+    BATTERY_MODELS
+        .iter()
+        .copied()
+        .find(|&model| crate::unit_models::name_matches(name, model))
+}
+
+fn is_battery_model(name: &str) -> bool {
+    canonical_model_name(name).is_some()
+}
+
+fn battery_telemetry() -> Vec<SettingSpec> {
+    let mut soc = SettingSpec::new(
+        "battery-soc",
+        "%",
+        (0, 100, 1),
+        0x26,
+        0x40,
+        &[0],
+        &[0; 6],
+        0,
+        1,
+    );
+    soc.read_only = true;
+
+    let mut soh = SettingSpec::new(
+        "battery-soh",
+        "%",
+        (0, 100, 1),
+        0x26,
+        0x40,
+        &[0],
+        &[0; 6],
+        1,
+        1,
+    );
+    soh.read_only = true;
+
+    let mut rem_cap = SettingSpec::new(
+        "battery-remaining-capacity",
+        "mAh",
+        (0, 65535, 1),
+        0x26,
+        0x40,
+        &[0],
+        &[0; 6],
+        2,
+        2,
+    );
+    rem_cap.read_only = true;
+
+    let mut full_cap = SettingSpec::new(
+        "battery-full-capacity",
+        "mAh",
+        (0, 65535, 1),
+        0x26,
+        0x40,
+        &[0],
+        &[0; 6],
+        4,
+        2,
+    );
+    full_cap.read_only = true;
+
+    let mut cycles = SettingSpec::new(
+        "battery-charge-cycles",
+        "cycles",
+        (0, 65535, 1),
+        0x18,
+        0x10,
+        &[0],
+        &[0; 4],
+        0,
+        2,
+    );
+    cycles.read_only = true;
+
+    let mut protection = SettingSpec::new(
+        "battery-protection-events",
+        "events",
+        (0, 65535, 1),
+        0x18,
+        0x10,
+        &[0],
+        &[0; 4],
+        2,
+        2,
+    );
+    protection.read_only = true;
+
+    vec![soc, soh, rem_cap, full_cap, cycles, protection]
+}
+
 fn shift_limits() -> Vec<SettingSpec> {
     ["multi-shift-limit.up", "multi-shift-limit.down"]
         .into_iter()
@@ -320,6 +439,22 @@ pub(super) fn validate_reply(spec: &SettingSpec, raw: &[u8]) -> Result<()> {
                 "auto-gear-cadence exceeds reasonable range: {raw_cadence}"
             );
         }
+        "battery-soc" | "battery-soh" | "battery-remaining-capacity" | "battery-full-capacity" => {
+            ensure!(raw.len() >= 6, "short battery-health reply");
+            ensure!(
+                raw[0] <= 100,
+                "battery state of charge exceeds 100%: {}",
+                raw[0]
+            );
+            ensure!(
+                raw[1] <= 100,
+                "battery state of health exceeds 100%: {}",
+                raw[1]
+            );
+        }
+        "battery-charge-cycles" | "battery-protection-events" => {
+            ensure!(raw.len() >= 4, "short battery-telemetry reply");
+        }
         _ => {}
     }
     Ok(())
@@ -351,7 +486,8 @@ mod tests {
         assert!(super::super::validate_input(&up, "4").is_err());
         assert!(validate_reply(&up, &[2]).is_err());
         assert!(validate_reply(&up, &[2, 4]).is_err());
-        assert!(schema("BT-DN300").is_empty());
+        assert!(schema("SM-JC41").is_empty());
+        assert_eq!(named("BT-DN300", "multi-shift-limit.up").group, 0x0b);
     }
 
     #[test]
@@ -459,7 +595,8 @@ mod tests {
         assert!(schema("SC-E7000")
             .iter()
             .all(|s| s.name != "display-brightness"));
-        assert!(schema("BT-E8010").is_empty());
+        assert!(schema("SM-JC41").is_empty());
+        assert_eq!(named("BT-E8010", "battery-soh").group, 0x26);
     }
 
     #[test]
@@ -862,5 +999,55 @@ mod tests {
             cadence_report["planned_parameters"],
             hex::encode([0xee, 0x02, 0, 0])
         );
+    }
+
+    #[test]
+    fn battery_health_and_diagnostics_telemetry() {
+        for model in ["BT-DN110", "BT-DN300", "BT-E8010", "BT-EN805", "BT-E6000"] {
+            let s_soc = named(model, "battery-soc");
+            let s_soh = named(model, "battery-soh");
+            let s_rem = named(model, "battery-remaining-capacity");
+            let s_full = named(model, "battery-full-capacity");
+            let s_cycles = named(model, "battery-charge-cycles");
+            let s_prot = named(model, "battery-protection-events");
+
+            assert!(s_soc.read_only);
+            assert!(s_soh.read_only);
+            assert!(s_rem.read_only);
+            assert!(s_full.read_only);
+            assert!(s_cycles.read_only);
+            assert!(s_prot.read_only);
+
+            assert_eq!((s_soc.group, s_soc.get, s_soc.set), (0x26, 0x44, 0x40));
+            assert_eq!(
+                (s_cycles.group, s_cycles.get, s_cycles.set),
+                (0x18, 0x14, 0x10)
+            );
+
+            // Decode 6-byte health payload: [soc, soh, rem_lo, rem_hi, full_lo, full_hi]
+            let health_raw = [92, 88, 0x20, 0x1c, 0x60, 0x28];
+            assert_eq!(s_soc.decode(&health_raw).unwrap(), json!(92));
+            assert_eq!(s_soh.decode(&health_raw).unwrap(), json!(88));
+            assert_eq!(s_rem.decode(&health_raw).unwrap(), json!(7200));
+            assert_eq!(s_full.decode(&health_raw).unwrap(), json!(10336));
+
+            // Decode 4-byte cycles payload: [cycles_lo, cycles_hi, prot_lo, prot_hi]
+            let cycles_raw = [142, 0, 3, 0];
+            assert_eq!(s_cycles.decode(&cycles_raw).unwrap(), json!(142));
+            assert_eq!(s_prot.decode(&cycles_raw).unwrap(), json!(3));
+
+            // Reply validation
+            assert!(validate_reply(&s_soh, &health_raw).is_ok());
+            assert!(validate_reply(&s_soh, &[92, 88, 0x20, 0x1c, 0x60]).is_err());
+            assert!(validate_reply(&s_soh, &[101, 88, 0x20, 0x1c, 0x60, 0x28]).is_err());
+            assert!(validate_reply(&s_soh, &[92, 101, 0x20, 0x1c, 0x60, 0x28]).is_err());
+
+            assert!(validate_reply(&s_cycles, &cycles_raw).is_ok());
+            assert!(validate_reply(&s_cycles, &[142, 0, 3]).is_err());
+
+            // Write protection (read-only settings must reject all write attempts)
+            assert!(super::super::validate_input(&s_soh, "80").is_err());
+            assert!(super::super::validate_input(&s_cycles, "50").is_err());
+        }
     }
 }

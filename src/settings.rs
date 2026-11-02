@@ -97,16 +97,22 @@ impl SettingsModel {
             "e6002-pre33" => Self::E6002Pre33,
             "e6002" => Self::E6002,
             _ => {
-                let entry = crate::unit_models::UNIT_MODELS.iter()
+                if let Some(entry) = crate::unit_models::UNIT_MODELS
+                    .iter()
                     .find(|entry| crate::unit_models::name_matches(name, entry.name))
-                    .with_context(|| format!("unknown settings model {name:?}; use a motor family alias or catalogued component name"))?;
-                // Drive units require their live product attributes; do not let
-                // a catalog name bypass the motor-specific schema selection.
-                ensure!(
-                    !entry.name.starts_with("DU-"),
-                    "use a motor family alias for drive-unit schemas"
-                );
-                Self::Component(entry.name)
+                {
+                    // Drive units require their live product attributes; do not let
+                    // a catalog name bypass the motor-specific schema selection.
+                    ensure!(
+                        !entry.name.starts_with("DU-"),
+                        "use a motor family alias for drive-unit schemas"
+                    );
+                    Self::Component(entry.name)
+                } else if let Some(canon) = components_other::canonical_model_name(name) {
+                    Self::Component(canon)
+                } else {
+                    bail!("unknown settings model {name:?}; use a motor family alias or catalogued component name");
+                }
             }
         };
         Ok(model)
@@ -1056,6 +1062,11 @@ pub(crate) fn supports_command(group: u8, command: u8) -> bool {
             .iter()
             .filter(|entry| !entry.name.starts_with("DU-"))
             .map(|entry| SettingsModel::Component(entry.name)),
+    )
+    .chain(
+        components_other::BATTERY_MODELS
+            .iter()
+            .map(|&name| SettingsModel::Component(name)),
     )
     .any(|model| {
         schema_for_model(model)
