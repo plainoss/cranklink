@@ -103,51 +103,71 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
     if (canonical == "unset") return "Not set"
     if (name.endsWith(".name") || name == "maintenance-date" || name == "bluetooth-passkey") return canonical
     val number = canonical.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return canonical
-    if (number == number.toInt().toDouble()) {
-        val choice = number.toInt()
-        val label = when (name) {
-            "lamp" -> mapOf(0 to "Off", 1 to "On", 2 to "Auto")[choice]
-            "maintenance-alert" -> mapOf(0 to "Off", 1 to "On")[choice]
-            "walk-assist" -> mapOf(0 to "Disabled", 2 to "Enabled")[choice]
-            "assist-pattern" -> when (model) {
-                "e6100" -> mapOf(0 to "Comfort", 1 to "Sportive")[choice]
-                "e8000", "e7000" -> mapOf(2 to "Dynamic", 3 to "Explorer", 4 to "Custom")[choice]
-                else -> mapOf(5 to "Standard", 6 to "Sport")[choice]
-            }
-            "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
-            "destination" -> marketLabel(model, choice)
-            "wireless-mode" -> mapOf(0 to "Radio off", 1 to "ANT+ only", 2 to "Bluetooth only", 3 to "Bluetooth & ANT+")[choice]
-            "display-time" -> {
-                val mins = number.toInt()
-                val h = mins / 60
-                val m = mins % 60
-                "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
-            }
-            "start-mode" -> if (choice == 0) "Off" else "Gear $choice"
-            "switch-mode" -> mapOf(0 to "Shifting", 1 to "Mixed (custom A/B)", 2 to "Assist")[choice]
-            "switch-a-function", "switch-b-function", "switch-c-function", "switch-s-function" -> mapOf(
-                0 to "Front shift up",
-                1 to "Front shift down",
-                2 to "Rear shift up",
-                3 to "Rear shift down",
-                4 to "Display screen / left",
-                5 to "Display mode / right",
-                6 to "Assist mode up",
-                7 to "Assist mode down",
-                10 to "D-Fly channel 1",
-                11 to "D-Fly channel 2",
-                12 to "D-Fly channel 3",
-                13 to "D-Fly channel 4",
-                15 to "Disabled",
-            )[choice]
-            else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
-                mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
-            } else null
-        }
-        if (label != null) return label
-    }
+    namedChoiceLabel(name, number, model)?.let { return it }
     val presentation = settingPresentation(name, model)
     return withDisplayUnit(formatNumber(presentationNumber(number, presentation.displayScale, presentation.displayOffset)), presentation.unit)
+}
+
+/** Most choices an enumeration may offer as buttons; longer ranges, such as start gears, keep the slider. */
+private const val MAX_NAMED_CHOICES = 8
+
+/**
+ * Values the edit dialog offers as named buttons: the schema's choices, or else every step of a short range
+ * whose values all have a known name, such as mode names or assist patterns.
+ */
+fun TuningSetting.editChoices(model: String?): List<String> {
+    if (choices.isNotEmpty()) return choices
+    if (valueType != "number" || step <= 0 || max < min) return emptyList()
+    val count = round((max - min) / step).toInt() + 1
+    if (count < 2 || count > MAX_NAMED_CHOICES) return emptyList()
+    val values = (0 until count).map { min + it * step }
+    if (values.any { namedChoiceLabel(name, it, model) == null }) return emptyList()
+    return values.map(::formatNumber)
+}
+
+/** The name of an enumeration value, or null when the value is a plain number. */
+private fun namedChoiceLabel(name: String, number: Double, model: String?): String? {
+    if (number != number.toInt().toDouble()) return null
+    val choice = number.toInt()
+    return when (name) {
+        "lamp" -> mapOf(0 to "Off", 1 to "On", 2 to "Auto")[choice]
+        "maintenance-alert" -> mapOf(0 to "Off", 1 to "On")[choice]
+        "walk-assist" -> mapOf(0 to "Disabled", 2 to "Enabled")[choice]
+        "assist-pattern" -> when (model) {
+            "e6100" -> mapOf(0 to "Comfort", 1 to "Sportive")[choice]
+            "e8000", "e7000" -> mapOf(2 to "Dynamic", 3 to "Explorer", 4 to "Custom")[choice]
+            else -> mapOf(5 to "Standard", 6 to "Sport")[choice]
+        }
+        "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
+        "destination" -> marketLabel(model, choice)
+        "wireless-mode" -> mapOf(0 to "Radio off", 1 to "ANT+ only", 2 to "Bluetooth only", 3 to "Bluetooth & ANT+")[choice]
+        "display-time" -> {
+            val mins = number.toInt()
+            val h = mins / 60
+            val m = mins % 60
+            "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
+        }
+        "start-mode" -> if (choice == 0) "Off" else "Gear $choice"
+        "switch-mode" -> mapOf(0 to "Shifting", 1 to "Mixed (custom A/B)", 2 to "Assist")[choice]
+        "switch-a-function", "switch-b-function", "switch-c-function", "switch-s-function" -> mapOf(
+            0 to "Front shift up",
+            1 to "Front shift down",
+            2 to "Rear shift up",
+            3 to "Rear shift down",
+            4 to "Display screen / left",
+            5 to "Display mode / right",
+            6 to "Assist mode up",
+            7 to "Assist mode down",
+            10 to "D-Fly channel 1",
+            11 to "D-Fly channel 2",
+            12 to "D-Fly channel 3",
+            13 to "D-Fly channel 4",
+            15 to "Disabled",
+        )[choice]
+        else -> if (Regex("profile[12]\\.display(?:-oem)?").matches(name)) {
+            mapOf(0 to "Eco / Normal / High", 1 to "Eco / Trail / Boost")[choice]
+        } else null
+    }
 }
 
 /** E6002 markets have no verified assist-speed range; other motors use the core's range table. */

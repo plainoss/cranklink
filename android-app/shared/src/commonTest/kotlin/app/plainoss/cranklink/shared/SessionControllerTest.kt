@@ -827,6 +827,31 @@ class SessionControllerTest {
     }
 
     @Test
+    fun shortNamedRangesAreEditedAsChoices() {
+        val settings = TuningRules.parseSchema(JsonArray(listOf(
+            schema("assist-pattern", 5, 6),
+            schema("profile1.display", 0, 1),
+            schema("lamp", 0, 2),
+            schema("walk-assist", 0, 2),
+            schema("profile1.eco.start", 0, 4),
+            schema("maintenance-month", 1, 12),
+        )), "ep800-crg").associateBy { it.name }
+        assertEquals(listOf("5", "6"), settings.getValue("assist-pattern").editChoices("ep800-crg"))
+        assertEquals(listOf("Standard", "Sport"),
+            settings.getValue("assist-pattern").editChoices("ep800-crg").map { formatSettingValue("assist-pattern", it, "ep800-crg") })
+        assertEquals(listOf("0", "1"), settings.getValue("profile1.display").editChoices("ep800-crg"))
+        assertEquals(listOf("0", "1", "2"), settings.getValue("lamp").editChoices("ep800-crg"))
+        // A value without a known name keeps the numeric editor rather than offering an unnamed button.
+        assertTrue(settings.getValue("walk-assist").editChoices("ep800-crg").isEmpty())
+        // Plain levels and long ranges keep the slider.
+        assertTrue(settings.getValue("profile1.eco.start").editChoices("ep800-crg").isEmpty())
+        assertTrue(settings.getValue("maintenance-month").editChoices("ep800-crg").isEmpty())
+        // Schema choices still win.
+        val e6100 = TuningRules.parseSchema(JsonArray(listOf(schema("assist-pattern", 0, 1, choices = listOf(0, 1)))), "e6100")
+        assertEquals(listOf("0", "1"), e6100.single().editChoices("e6100"))
+    }
+
+    @Test
     fun legacyAssistPresetsAndLevelsCoordinateInSessionController() = runTest {
         val specs = listOf(
             schema("lamp", 0, 1, choices = listOf(0, 1)),

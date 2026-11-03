@@ -617,7 +617,9 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
     AlertDialog(onDismissRequest = onDismiss, title = { Text(setting.label) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (setting.description.isNotBlank()) Text(setting.description, fontSize = 14.sp, lineHeight = 21.sp)
-            if (setting.choices.isNotEmpty()) setting.choices.forEach { choice ->
+            // Enumerations, such as mode names or assist patterns, get named buttons instead of a number and slider.
+            val choices = remember(setting, model) { setting.editChoices(model) }
+            if (choices.isNotEmpty()) choices.forEach { choice ->
                 OutlinedButton(onClick = { value = setting.inputText(choice); edited = true }, modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = if (value == setting.inputText(choice)) Lime else Color.Transparent)) {
                     Text(displayValue(setting, choice, model))
