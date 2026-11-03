@@ -3416,7 +3416,7 @@ fn print_probe_card(
     out_println!("  Renesas (M): {}", rx_str);
 }
 
-// Label a destination by the speed range the core enforces for it; the vendor
+// Label a destination by the maximum assist speed the core enforces for it; the vendor
 // region names are unverified.
 fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<String> {
     if model == crate::settings::SettingsModel::E8000 {
@@ -3426,9 +3426,8 @@ fn destination_label(model: crate::settings::SettingsModel, val: i64) -> Option<
             _ => None,
         };
     }
-    let (minimum, maximum) =
-        crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
-    Some(format!("{}-{} km/h", minimum / 100, maximum / 100))
+    let (_, maximum) = crate::settings::destination_speed_range(model, u8::try_from(val).ok()?)?;
+    Some(format!("max {} km/h", maximum / 100))
 }
 
 fn format_setting_value(
@@ -5593,11 +5592,11 @@ mod cli_tests {
         let specs = crate::settings::schema_for_model(model);
         assert_eq!(
             format_setting_value("destination", &serde_json::json!(1), &specs, model),
-            "1 (19-32 km/h)"
+            "1 (max 32 km/h)"
         );
         assert_eq!(
             format_setting_value("destination", &serde_json::json!(0), &specs, model),
-            "0 (15-25 km/h)"
+            "0 (max 25 km/h)"
         );
         // Destinations without a legacy speed range get no label.
         assert_eq!(
@@ -5608,11 +5607,11 @@ mod cli_tests {
         let modern_specs = crate::settings::schema_for_model(modern);
         assert_eq!(
             format_setting_value("destination", &serde_json::json!(5), &modern_specs, modern),
-            "5 (19-45 km/h)"
+            "5 (max 45 km/h)"
         );
         assert_eq!(
             format_setting_value("destination", &serde_json::json!(2), &modern_specs, modern),
-            "2 (14-24 km/h)"
+            "2 (max 24 km/h)"
         );
         assert_eq!(
             format_setting_value("destination", &serde_json::json!(4), &modern_specs, modern),
