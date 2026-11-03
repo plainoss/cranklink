@@ -33,6 +33,7 @@ import { PasskeyDialog } from "./components/ui/PasskeyDialog.tsx";
 import { BluetoothSystemDialog } from "./components/ui/BluetoothSystemDialog.tsx";
 import { RiskWarningModal } from "./components/ui/RiskWarningModal.tsx";
 import { OptionSelect } from "./components/ui/OptionSelect.tsx";
+import { componentLabel } from "./domain/componentType.ts";
 
 const DISCLAIMER_KEY = "cranklink_disclaimer_dismissed";
 
@@ -276,12 +277,15 @@ export function App({ controller }: AppProps) {
 
   const unitOptions = state.units
     .filter((unit) => unit.model !== null || unit.model_candidates.length > 0)
-    .map((unit) => ({
-      id: String(unit.slot),
-      label: `${unit.model ?? unit.model_candidates.join(" / ")} · slot ${unit.slot}`,
-    }));
+    .map((unit) => ({ id: String(unit.slot), label: componentLabel(unit.model ? [unit.model] : unit.model_candidates) }));
   if (state.identity && !unitOptions.some((option) => option.id === String(state.identity?.slot))) {
-    unitOptions.unshift({ id: String(state.identity.slot), label: `${state.identity.model} · slot ${state.identity.slot}` });
+    unitOptions.unshift({ id: String(state.identity.slot), label: componentLabel([state.identity.model]) });
+  }
+  // Two identical components (e.g. a pair of the same switch) are told apart by their bus slot.
+  const labelCounts = new Map<string, number>();
+  for (const { label } of unitOptions) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  for (const option of unitOptions) {
+    if (labelCounts.get(option.label)! > 1) option.label = `${option.label} (slot ${option.id})`;
   }
   const targetSelector = (
     <Card variant="secondary" className="gap-3" data-testid="component-selector">
@@ -317,7 +321,7 @@ export function App({ controller }: AppProps) {
               <ul className="text-xs flex flex-col gap-1.5" aria-label="Connected components">
                 {state.units.map((unit) => (
                   <li key={unit.slot} data-testid={`component-unit-${unit.slot}`}>
-                    <span className="font-medium">{unit.model ?? (unit.model_candidates.length ? unit.model_candidates.join(" / ") : "Unidentified component")}</span>
+                    <span className="font-medium">{unit.model || unit.model_candidates.length ? componentLabel(unit.model ? [unit.model] : unit.model_candidates) : "Unidentified component"}</span>
                     <span className="text-muted"> · slot {unit.slot}{unit.slot === state.identity?.slot ? " · active" : ""}</span>
                   </li>
                 ))}
