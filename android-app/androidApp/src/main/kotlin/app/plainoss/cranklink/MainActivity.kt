@@ -648,8 +648,8 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
                 }
                 if (setting.name == "tire-circumference") TirePresets(setting, value) { value = it; edited = true }
             }
-            if (setting.name == "speed-limit") Text("If the speed needs a different market region, that region change is staged too. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
-            if (setting.name == "destination") Text("If the assist speed does not fit the region, it is adjusted to the nearest permitted speed. Both appear in the review before saving.", color = Muted, fontSize = 12.sp)
+            if (setting.name == "speed-limit") Text("If your market region doesn't allow this speed, the region switches to one that does. You'll see both changes in the review before saving.", color = Muted, fontSize = 12.sp)
+            if (setting.name == "destination") Text("If your assist speed isn't allowed in this region, it changes to the closest speed that is. You'll see both changes in the review before saving.", color = Muted, fontSize = 12.sp)
             Text("This updates your staged changes. The bike is written only after review.", color = Muted, fontSize = 12.sp)
         }
     }, confirmButton = { Button(onClick = { edited = true; stage() }, enabled = validation.isSuccess) { Text("Stage change") } },
