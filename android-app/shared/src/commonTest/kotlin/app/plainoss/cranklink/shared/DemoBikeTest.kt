@@ -54,6 +54,21 @@ class DemoBikeTest {
     }
 
     @Test
+    fun demoRefusesARestoreThatLeavesSpeedAboveTheRegion() = runTest {
+        val bike = DemoBike()
+        val controller = SessionController(bike)
+        controller.connect()
+        controller.stage("speed-limit", "32")
+        controller.commit()
+        val region = bike.backups.single { it.setting == "destination" }
+        controller.restore(region.file)
+        assertEquals("Europe · max 25 km/h allows 15–25 km/h, but assist speed would be 32 km/h. Change the assist speed first.",
+            controller.state.value.error)
+        controller.connect()
+        assertEquals("1", controller.state.value.values["destination"])
+    }
+
+    @Test
     fun previewNamesTheRegionAFasterSpeedNeedsWithoutStaging() = runTest {
         val controller = connected()
         val note = controller.preview("speed-limit", "30").getOrThrow()

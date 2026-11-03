@@ -39,15 +39,33 @@ class DemoBike(private val clock: () -> Long = { 0L }) : AppBackend {
             "commit" -> {
                 val changes = request["changes"]?.jsonObject ?: error("Missing changes.")
                 changes.keys.forEach { require(it in names) { "Setting $it is not part of the demo bike." } }
+                checkLinkedLimits(values + changes.mapValues { it.value.jsonPrimitive.content })
                 changes.forEach { (name, value) -> write(name, value.jsonPrimitive.content) }
             }
             "restore" -> {
                 val file = request["file"]?.jsonPrimitive?.content
                 val backup = saved.firstOrNull { it.file == file } ?: error("Select an existing demo backup.")
+                // Like the core, refuse a restore that would leave speed or power above the region's limits.
+                checkLinkedLimits(values + (backup.setting to backup.before))
                 write(backup.setting, backup.before)
             }
         }
         return snapshot()
+    }
+
+    private fun checkLinkedLimits(effective: Map<String, String>) {
+        val destination = effective["destination"]?.toDoubleOrNull()?.toInt()
+        val range = TuningRules.speedRange(MODEL, destination)
+            ?: error("The demo bike has no assist-speed range for market region $destination.")
+        val speed = effective["speed-limit"]?.toDoubleOrNull()
+        require(speed != null && speed in range) {
+            "${formatSettingValue("destination", destination.toString(), MODEL)} allows " +
+                "${formatNumber(range.start)}–${formatNumber(range.endInclusive)} km/h, but assist speed would be " +
+                "${formatSettingValue("speed-limit", effective["speed-limit"] ?: "unset", MODEL)}. Change the assist speed first."
+        }
+        if (destination == 3) require(listOf("eco", "trail", "boost").all { (effective["max-power.$it"]?.toDoubleOrNull() ?: 0.0) <= 400 }) {
+            "Region 3 limits maximum motor power to 400 W. Lower it first."
+        }
     }
 
     private fun write(name: String, value: String) {
@@ -126,5 +144,6 @@ class DemoBike(private val clock: () -> Long = { 0L }) : AppBackend {
 
     companion object {
         const val SERIAL = "DE0000000001"
+        private const val MODEL = "ep800-crg"
     }
 }
