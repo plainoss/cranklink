@@ -150,14 +150,14 @@ fun formatSettingValue(name: String, canonical: String, model: String? = null): 
     return withDisplayUnit(formatNumber(presentationNumber(number, presentation.displayScale, presentation.displayOffset)), presentation.unit)
 }
 
-/** E6002 markets have no verified assist-speed range; other motors use the core's range table. */
+/** E6002 markets have no verified assist-speed range; other motors show the maximum from the core's range table. */
 private fun marketLabel(model: String?, choice: Int): String? {
     if (model == "e8000") return mapOf(0 to "Europe · 25 km/h", 1 to "United States · 32 km/h")[choice]
     if (model == "e6002") return mapOf(0 to "Europe (EU)", 1 to "United States (US)", 4 to "Korea")[choice]
     val name = marketName(model, choice) ?: "Region $choice"
     if (model == null) return name
     val range = TuningRules.speedRange(model, choice) ?: return null
-    return "$name · ${formatNumber(range.start)}–${formatNumber(range.endInclusive)} km/h"
+    return "$name · max ${formatNumber(range.endInclusive)} km/h"
 }
 
 /** Only codes whose market is known; 3 and legacy 4 keep their number. */
@@ -196,7 +196,7 @@ private val standardPresentations = mapOf(
     "mounting-angle" to SettingPresentation("Motor mounting angle",
         "Installation angle of the motor in the frame. Match this value to the motor's physical mounting angle.", "°"),
     "destination" to SettingPresentation("Market region",
-        "Selects the market region and its permitted assist-speed range. Choose the region where the bike is ridden."),
+        "Selects the market region and its maximum assist speed. Choose the region where the bike is ridden."),
     "assist-pattern" to SettingPresentation("Assist pattern",
         "Selects the motor response pattern shared by both assist profiles."),
     "boost-level" to SettingPresentation("Boost assist level",
