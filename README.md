@@ -4,7 +4,7 @@
 [![Web](https://github.com/plainoss/cranklink/actions/workflows/web.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/web.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**cranklink** can change a Shimano STEPS e-bike motor's market region and flash its firmware, including on recent motor firmware. Connect wirelessly over Bluetooth through the bike's own display or wireless unit, or with a wired SM-PCE02 adapter. No dealer visit needed.
+**cranklink** can change a Shimano STEPS e-bike motor's market region and flash its firmware over Bluetooth, including on recent motor firmware, through the bike's own display or wireless unit. A wired SM-PCE02 adapter works too. No dealer visit needed.
 
 The project began as the recovery of a bricked EP800-CRG motor that official tools and dealer service could not restore. It is unofficial and not made or endorsed by Shimano.
 
