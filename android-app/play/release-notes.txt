@@ -1,1 +1,1 @@
-First release of Cranklink: read and change the settings of Shimano STEPS drive units over Bluetooth, review edits before saving, and back up and restore settings.
+Demo mode now behaves like a real DU-EP800 over Bluetooth: change the market region and wheel size, raise assist speed up to the region's limit in whole km/h, explore factory bounds, and restore demo backups. The speed editor shows any region change before you stage it, and assist speed no longer stages a region change the connection can't save.

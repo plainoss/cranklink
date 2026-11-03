@@ -15,7 +15,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -23,6 +26,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import app.plainoss.cranklink.shared.AppBackend
 import app.plainoss.cranklink.shared.AppPhase
+import app.plainoss.cranklink.shared.DemoBackup
+import app.plainoss.cranklink.shared.DemoBike
 import app.plainoss.cranklink.shared.SessionController
 
 /** JNI sessions are thread-local: every native call stays on this one worker. */
@@ -44,7 +49,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val nativeDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val backupDir = File(application.filesDir, "backups").apply { mkdirs() }
     @Volatile private var gatt: AndroidGatt? = null
-    private var demoBackend = DemoBackend()
+    /** A separate in-memory bike: demo operations can never reach JNI or Bluetooth. */
+    private var demoBike = DemoBike(System::currentTimeMillis)
+    private val demoBackups = MutableStateFlow<List<DemoBackup>>(emptyList())
     private val _demo = MutableStateFlow(false)
     val demo = _demo.asStateFlow()
     private val _nearby = MutableStateFlow<List<NearbyBike>>(emptyList())
@@ -54,9 +61,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _notice = MutableStateFlow<String?>(null)
     val notice = _notice.asStateFlow()
     private val _backupFiles = MutableStateFlow<List<String>>(emptyList())
-    val backupFiles = _backupFiles.asStateFlow()
     private val _backupInfo = MutableStateFlow<Map<String, BackupInfo>>(emptyMap())
-    val backupInfo = _backupInfo.asStateFlow()
+    /** The demo lists only its own in-memory backups, so they can be restored like a real bike's. */
+    val backupFiles = combine(_backupFiles, demoBackups, _demo) { files, demoFiles, demo ->
+        if (demo) demoFiles.map { it.file } else files
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val backupInfo = combine(_backupInfo, demoBackups, _demo) { info, demoFiles, demo ->
+        if (demo) demoFiles.associate { it.file to BackupInfo(it.setting, it.before, DemoBike.SERIAL, "ep800-crg", it.savedAt) } else info
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     private val backupUpdates = Mutex()
     private data class CachedBackup(val modified: Long, val size: Long, val info: BackupInfo)
     private val backupCache = mutableMapOf<String, CachedBackup>()
@@ -72,10 +84,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (operation == "backups") {
                 updateBackups()
                 return@withContext buildJsonObject {
-                    putJsonArray("backups") { if (!_demo.value) _backupFiles.value.forEach { add(it) } }
+                    putJsonArray("backups") {
+                        if (_demo.value) demoBike.backups.forEach { add(it.file) } else _backupFiles.value.forEach { add(it) }
+                    }
                 }
             }
-            if (_demo.value) return@withContext demoBackend.execute(request)
+            if (_demo.value) {
+                val reply = demoBike.execute(request)
+                demoBackups.value = demoBike.backups
+                // Leaving the demo hands the session back the phone's real backup list.
+                return@withContext if (operation == "disconnect") buildJsonObject {
+                    put("disconnected", true)
+                    putJsonArray("backups") { _backupFiles.value.forEach { add(it) } }
+                } else reply
+            }
             val transport = gatt
             if (transport == null && operation == "disconnect") {
                 return@withContext buildJsonObject {
@@ -162,8 +184,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         stopScan()
         gatt?.close()
         gatt = null
+        demoBike = DemoBike(System::currentTimeMillis)
+        demoBackups.value = emptyList()
         _demo.value = true
-        demoBackend = DemoBackend()
         run { controller.connect() }
     }
 
@@ -209,8 +232,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun releaseSession() {
         val transport = gatt
+        val demo = _demo.value
         try {
             controller.disconnect()
+            // The demo bike has no logo screen to power-cycle out of.
+            if (demo) controller.acknowledgeRestart()
         } finally {
             transport?.close()
             if (gatt === transport) gatt = null
@@ -307,6 +333,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun exportBackup(file: String, uri: Uri) = viewModelScope.launch {
         try {
             withContext(Dispatchers.IO) {
+                require(!_demo.value) { "Demo backups stay in memory and can't be exported. Connect a real bike to export its backups." }
                 require(file in _backupFiles.value) { "Unknown backup." }
                 getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
                     File(backupDir, file).inputStream().use { it.copyTo(output) }
@@ -353,93 +380,5 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         require(size <= limit) { if (limit == 1024 * 1024) "Backup exceeds the 1 MiB limit." else "Backup metadata exceeds 64 KiB." }
         return bytes.copyOf(size)
-    }
-}
-
-/** A separate in-memory bike: demo operations can never reach JNI or Bluetooth. */
-private class DemoBackend : AppBackend {
-    private val values = linkedMapOf(
-        "destination" to "3", "speed-limit" to "25", "tire-circumference" to "2288",
-        "lamp" to "1", "mounting-angle" to "0", "lighting-time" to "30",
-        "light-output" to "1350", "display-speed-adjustment" to "15",
-        "assist-pattern" to "5", "maintenance-alert" to "1", "maintenance-distance" to "1000",
-    ).apply {
-        for (profile in 1..2) for (mode in listOf("eco", "trail", "boost")) {
-            put("profile$profile.$mode.torque", when (mode) { "eco" -> "40"; "trail" -> "70"; else -> "85" })
-            put("profile$profile.$mode.character", when (mode) { "eco" -> "3"; "trail" -> "6"; else -> "9" })
-            put("profile$profile.$mode.start", "3")
-        }
-    }
-
-    override suspend fun execute(request: JsonObject): JsonObject {
-        when (request["op"]?.jsonPrimitive?.content) {
-            "disconnect" -> return buildJsonObject { put("disconnected", true) }
-            "restore" -> error("Connect a real bike to restore a saved backup.")
-            "commit" -> request["changes"]?.jsonObject?.forEach { (key, value) -> values[key] = value.jsonPrimitive.content }
-        }
-        return buildJsonObject {
-            putJsonObject("identity") {
-                put("model", "DU-EP800")
-                put("model_name", "DU-EP800")
-                put("settings_model", "ep800-crg")
-                put("model_series", 0x23)
-                put("model_unit", 0)
-                put("serial", "DE0000000001")
-                put("slot", 13)
-                put("dcas_version", "4.2.0.0")
-                put("rx_version", "4.1.11.0")
-            }
-            putJsonArray("schema") {
-                values.forEach { (name, _) ->
-                    val range = when {
-                        name == "speed-limit" -> 1500..4500
-                        name == "destination" -> 0..4
-                        name == "tire-circumference" -> 1300..3000
-                        name == "light-output" -> 135..2700
-                        name == "display-speed-adjustment" -> -50..50
-                        name == "maintenance-distance" -> 0..10000
-                        name == "lighting-time" -> 0..180
-                        name == "mounting-angle" -> 0..60
-                        name.endsWith("torque") -> 20..85
-                        name.endsWith("character") -> 1..10
-                        name.endsWith("start") -> 1..5
-                        name == "assist-pattern" -> 5..6
-                        else -> 0..1
-                    }
-                    add(buildJsonObject {
-                        put("name", name)
-                        put("min_raw", range.first)
-                        put("max_raw", range.last)
-                        put("step_raw", if (name == "display-speed-adjustment") 5 else 1)
-                        put("wire_units_per_input", if (name == "speed-limit") 100 else 1)
-                        put("value_type", "number")
-                        put("oem", name == "light-output")
-                        put("read_only", false)
-                        put("nullable", false)
-                        put("unit", when {
-                            name.endsWith("torque") -> "Nm"
-                            name == "speed-limit" -> "km/h"
-                            name == "tire-circumference" -> "mm"
-                            name == "lighting-time" -> "min"
-                            name == "maintenance-distance" -> "km"
-                            name == "light-output" -> "0.01 W"
-                            name == "display-speed-adjustment" -> "0.1 percent"
-                            else -> ""
-                        })
-                        putJsonArray("choices") {
-                            if (name == "destination") listOf(0, 1, 3, 4).forEach { add(it) }
-                            if (name == "lamp" || name == "maintenance-alert") listOf(0, 1).forEach { add(it) }
-                            if (name == "assist-pattern") listOf(5, 6).forEach { add(it) }
-                        }
-                    })
-                }
-            }
-            putJsonObject("snapshot") {
-                put("slot", 13)
-                putJsonObject("values") { values.forEach { (key, value) -> putJsonObject(key) { put("value", value.toDouble()) } } }
-                putJsonObject("unavailable") {}
-            }
-            putJsonArray("backups") {}
-        }
     }
 }

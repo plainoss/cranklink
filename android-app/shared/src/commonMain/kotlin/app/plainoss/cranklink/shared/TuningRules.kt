@@ -181,6 +181,11 @@ internal object TuningRules {
         else -> null
     }
 
+    /** The highest assist speed any of [choices] permits, or null when no region has a verified range. */
+    fun maxRegionSpeed(model: String, choices: List<String>): Double? =
+        (if (choices.isEmpty()) (0..5).toList() else choices.mapNotNull { it.toDoubleOrNull()?.toInt() })
+            .mapNotNull { speedRange(model, it)?.endInclusive }.maxOrNull()
+
     /** The first region permitting [speed], preferring [preferred], as the web app picks it. */
     fun destinationForSpeed(model: String, speed: Double, preferred: Int?, choices: List<String>): Int? =
         (listOfNotNull(preferred) + (0..5)).firstOrNull { destination ->
@@ -230,4 +235,8 @@ internal fun JsonObject.int(name: String): Int = (this[name] as? JsonPrimitive)?
 internal fun JsonObject.numberOrNull(name: String): Double? = (this[name] as? JsonPrimitive)?.doubleOrNull
 internal fun JsonObject.bool(name: String): Boolean = (this[name] as? JsonPrimitive)?.booleanOrNull ?: false
 internal fun valueText(element: JsonElement): String = if (element == JsonNull) "unset" else element.jsonPrimitive.content
-internal fun formatNumber(number: Double): String = if (number == number.toLong().toDouble()) number.toLong().toString() else number.toString()
+/** Whole numbers without ".0"; decimal steps without binary floating-point tails such as 33.379999999999995. */
+internal fun formatNumber(number: Double): String {
+    val rounded = if (number.isFinite() && abs(number) < 1e9) round(number * 1e9) / 1e9 else number
+    return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()
+}

@@ -521,3 +521,44 @@ fn normal_routing_e8000_and_boundary_checks() {
     m.model = SettingsModel::Ep800Crg;
     assert!(write_route(&m, false, false, ["destination"].into_iter()).is_err());
 }
+
+/// The Android demo bike is built from this exact schema, so it can never offer
+/// ranges, steps or regions a real DU-EP800 over Bluetooth would not.
+#[test]
+fn demo_bike_schema_matches_the_ep800_bluetooth_schema() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../shared/src/commonMain/kotlin/app/plainoss/cranklink/shared/DemoSchema.kt"
+    );
+    let lines: Vec<String> = settings::ebike_schema_for_model(SettingsModel::Ep800Crg)
+        .iter()
+        .map(|spec| serde_json::to_string(spec).unwrap())
+        .collect();
+    let expected = format!(
+        "// Generated from the core's DU-EP800 Bluetooth schema; do not edit by hand.\n\
+         // Regenerate: CRANKLINK_UPDATE_DEMO_SCHEMA=1 cargo test --manifest-path android-app/native/Cargo.toml demo_bike_schema\n\
+         package app.plainoss.cranklink.shared\n\
+         \n\
+         internal const val DEMO_EP800_SCHEMA: String = \"\"\"[\n{}\n]\"\"\"\n",
+        lines.join(",\n")
+    );
+    if std::env::var_os("CRANKLINK_UPDATE_DEMO_SCHEMA").is_some() {
+        std::fs::write(path, &expected).unwrap();
+    }
+    let committed = std::fs::read_to_string(path).unwrap_or_default();
+    assert!(
+        committed == expected,
+        "{path} is stale; run CRANKLINK_UPDATE_DEMO_SCHEMA=1 cargo test --manifest-path android-app/native/Cargo.toml demo_bike_schema"
+    );
+}
+
+#[test]
+fn master_routing_refusal_names_the_setting_and_a_wired_alternative() {
+    let error = write_route(&motor(), false, false, ["destination"].into_iter()).unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.starts_with("Market region can't be changed over this Bluetooth connection"),
+        "{message}"
+    );
+    assert!(message.contains("SM-PCE02"), "{message}");
+}

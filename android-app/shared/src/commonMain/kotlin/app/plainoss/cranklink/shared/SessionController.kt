@@ -54,6 +54,9 @@ class SessionController(private val backend: AppBackend) {
         }
     }
 
+    private fun lockedOverBluetooth(label: String) =
+        "$label can't be changed over this Bluetooth connection on this bike. Change it with a wired SM-PCE02 adapter in the cranklink web app or command line."
+
     private fun requiresMasterRouting(modelSlug: String, settingName: String): Boolean {
         val isE8000 = modelSlug in setOf("e8000", "e8000-pre41")
         return settingName in setOf("lamp", "lighting-time") ||
@@ -67,79 +70,111 @@ class SessionController(private val backend: AppBackend) {
             return
         }
         try {
-            require(current.identity.masterRouting || !requiresMasterRouting(current.identity.modelSlug, name)) {
-                "$name requires a USB connection on this bike."
-            }
-            require(TuningRules.allowedName(name)) { "This setting is not available in the STEPS app." }
-            val setting = current.settings.singleOrNull { it.name == name }
-                ?: error("This setting is not supported by the connected motor.")
-            require(name !in current.unavailable && name in current.values) { "Read this setting from the bike before changing it." }
-            // Restoring the bike's own value removes the change without validating it:
-            // undo must work even when that value is outside the writable range.
-            val normalized = if (sameValue(setting, current.values[name], value)) value else TuningRules.validate(setting, value)
-            val changes = current.staged.toMutableMap()
-            fun put(key: String, next: String) {
-                val spec = current.settings.single { it.name == key }
-                if (sameValue(spec, current.values[key], next)) changes.remove(key) else changes[key] = next
-            }
-            val model = current.identity.modelSlug
-            val region = current.settings.singleOrNull { it.name == "destination" }
-            val linked = region != null && current.settings.any { it.name == "speed-limit" } &&
-                "destination" in current.values && "speed-limit" in current.values
-            // Forget an automatic region change the user has since replaced.
-            var auto = autoRegion?.takeIf { changes["destination"] == it.staged }
-            var note: String? = null
-            if (linked && name == "speed-limit") {
-                // Recompute from the user's own region choice, so undoing the speed
-                // also undoes a region change that only the faster speed needed.
-                auto?.let { if (it.before == null) changes.remove("destination") else changes["destination"] = it.before }
-                auto = null
-                val selected = (changes["destination"] ?: current.values["destination"])?.toDoubleOrNull()?.toInt()
-                val compatible = TuningRules.destinationForSpeed(model, normalized.toDouble(), selected, region!!.choices)
-                    ?: throw IllegalArgumentException("No supported market region permits $normalized km/h.")
-                if (compatible != selected) {
-                    val before = changes["destination"]
-                    put("destination", compatible.toString())
-                    auto = AutoRegion(before, changes["destination"])
-                    note = "Market region changes to ${formatSettingValue("destination", compatible.toString(), model)} to allow $normalized km/h."
-                }
-            } else if (linked && name == "destination") {
-                auto = null
-                val range = TuningRules.speedRange(model, normalized.toDouble().toInt())
-                val speed = (changes["speed-limit"] ?: current.values["speed-limit"])?.toDoubleOrNull()
-                if (range != null && speed != null && speed !in range) {
-                    val fitted = TuningRules.validate(current.settings.single { it.name == "speed-limit" }, formatNumber(speed.coerceIn(range)))
-                    put("speed-limit", fitted)
-                    note = "Assist speed changes to $fitted km/h to fit this market region."
-                }
-            } else if (model in setOf("e8000", "e7000")) {
-                if (name == "assist-pattern") {
-                    val p = normalized.toIntOrNull()
-                    if (p == 2) {
-                        if (current.settings.any { it.name == "boost-level" }) put("boost-level", "2")
-                        if (current.settings.any { it.name == "trail-level" }) put("trail-level", "0")
-                    } else if (p == 3) {
-                        if (current.settings.any { it.name == "boost-level" }) put("boost-level", "1")
-                        if (current.settings.any { it.name == "trail-level" }) put("trail-level", "1")
-                    }
-                } else if (name == "boost-level" || name == "trail-level") {
-                    val currentPattern = (changes["assist-pattern"] ?: current.values["assist-pattern"])?.toIntOrNull()
-                    if (currentPattern != 4 && current.settings.any { it.name == "assist-pattern" }) {
-                        put("assist-pattern", "4")
-                    }
-                }
-            }
-            put(name, normalized)
-            TuningRules.validateCombination(current.identity, current.values, changes)
-            autoRegion = auto
+            val plan = plan(current, current.identity, name, value)
+            autoRegion = plan.auto
+            val changes = plan.changes
             val summary = if (changes.isEmpty()) "No pending changes." else "${changeCount(changes.size)} ready for review."
             mutableState.value = current.copy(staged = changes, error = null,
-                status = if (note == null) summary else "$note $summary")
+                status = if (plan.note == null) summary else "${plan.note} $summary")
         } catch (error: IllegalArgumentException) {
             localError(error.message ?: "Invalid setting value.")
         } catch (error: IllegalStateException) {
             localError(error.message ?: "Invalid setting value.")
         }
+    }
+
+    /**
+     * What staging [value] would do, without staging it: a note on any linked change
+     * (such as the market region a faster speed needs), or the reason it would be refused.
+     * Lets an editor explain the effect before the rider commits to it.
+     */
+    fun preview(name: String, value: String): Result<String?> {
+        val current = state.value
+        val identity = current.identity ?: return Result.failure(IllegalStateException("Connect to your bike first."))
+        return runCatching { plan(current, identity, name, value).note }
+    }
+
+    private class StagePlan(val changes: Map<String, String>, val auto: AutoRegion?, val note: String?)
+
+    private fun plan(current: AppState, identity: MotorIdentity, name: String, value: String): StagePlan {
+        require(TuningRules.allowedName(name)) { "This setting is not available in the STEPS app." }
+        val setting = current.settings.singleOrNull { it.name == name }
+            ?: error("This setting is not supported by the connected motor.")
+        require(identity.masterRouting || !requiresMasterRouting(identity.modelSlug, name)) {
+            lockedOverBluetooth(setting.label)
+        }
+        require(name !in current.unavailable && name in current.values) { "Read this setting from the bike before changing it." }
+        // Restoring the bike's own value removes the change without validating it:
+        // undo must work even when that value is outside the writable range.
+        val normalized = if (sameValue(setting, current.values[name], value)) value else TuningRules.validate(setting, value)
+        val changes = current.staged.toMutableMap()
+        fun put(key: String, next: String) {
+            val spec = current.settings.single { it.name == key }
+            if (sameValue(spec, current.values[key], next)) changes.remove(key) else changes[key] = next
+        }
+        val model = identity.modelSlug
+        val region = current.settings.singleOrNull { it.name == "destination" }
+        val linked = region != null && current.settings.any { it.name == "speed-limit" } &&
+            "destination" in current.values && "speed-limit" in current.values
+        // Forget an automatic region change the user has since replaced.
+        var auto = autoRegion?.takeIf { changes["destination"] == it.staged }
+        var note: String? = null
+        if (linked && name == "speed-limit") {
+            // Recompute from the user's own region choice, so undoing the speed
+            // also undoes a region change that only the faster speed needed.
+            auto?.let { if (it.before == null) changes.remove("destination") else changes["destination"] = it.before }
+            auto = null
+            val selected = (changes["destination"] ?: current.values["destination"])?.toDoubleOrNull()?.toInt()
+            val speedText = formatSettingValue("speed-limit", normalized, model)
+            // Only a region this connection can write may be changed on the rider's behalf;
+            // otherwise Save would reject the region the speed silently pulled in.
+            val speed = normalized.toDouble()
+            val compatible = if (region!!.writable) TuningRules.destinationForSpeed(model, speed, selected, region.choices)
+                else selected?.takeIf { TuningRules.speedRange(model, it)?.contains(speed) == true }
+            if (compatible == null) {
+                val range = TuningRules.speedRange(model, selected)
+                throw IllegalArgumentException(if (!region.writable && range != null)
+                    "${region.label} can't be changed over this connection, so assist speed must stay within " +
+                        "${formatNumber(range.start)}–${formatNumber(range.endInclusive)} km/h."
+                    else TuningRules.maxRegionSpeed(model, region.choices)?.let {
+                        "No market region on this motor allows $speedText. The highest is ${formatNumber(it)} km/h."
+                    } ?: "No market region on this motor allows $speedText.")
+            }
+            if (compatible != selected) {
+                val before = changes["destination"]
+                put("destination", compatible.toString())
+                auto = AutoRegion(before, changes["destination"])
+                note = "Market region changes to ${formatSettingValue("destination", compatible.toString(), model)} to allow $speedText."
+            }
+        } else if (linked && name == "destination") {
+            auto = null
+            val range = TuningRules.speedRange(model, normalized.toDouble().toInt())
+            val speed = (changes["speed-limit"] ?: current.values["speed-limit"])?.toDoubleOrNull()
+            if (range != null && speed != null && speed !in range) {
+                val fitted = TuningRules.validate(current.settings.single { it.name == "speed-limit" }, formatNumber(speed.coerceIn(range)))
+                put("speed-limit", fitted)
+                note = "Assist speed changes to ${formatSettingValue("speed-limit", fitted, model)} to fit this market region."
+            }
+        } else if (model in setOf("e8000", "e7000")) {
+            if (name == "assist-pattern") {
+                val p = normalized.toIntOrNull()
+                if (p == 2) {
+                    if (current.settings.any { it.name == "boost-level" }) put("boost-level", "2")
+                    if (current.settings.any { it.name == "trail-level" }) put("trail-level", "0")
+                } else if (p == 3) {
+                    if (current.settings.any { it.name == "boost-level" }) put("boost-level", "1")
+                    if (current.settings.any { it.name == "trail-level" }) put("trail-level", "1")
+                }
+            } else if (name == "boost-level" || name == "trail-level") {
+                val currentPattern = (changes["assist-pattern"] ?: current.values["assist-pattern"])?.toIntOrNull()
+                if (currentPattern != 4 && current.settings.any { it.name == "assist-pattern" }) {
+                    put("assist-pattern", "4")
+                }
+            }
+        }
+        put(name, normalized)
+        TuningRules.validateCombination(identity, current.values, changes)
+        return StagePlan(changes, auto, note)
     }
 
     fun discard() {
@@ -361,4 +396,16 @@ class SessionController(private val backend: AppBackend) {
         else left?.toDoubleOrNull() == right.toDoubleOrNull()
 
     private fun changeCount(count: Int): String = "$count ${if (count == 1) "change" else "changes"}"
+}
+
+/**
+ * The highest assist speed this session can stage: the fastest region it may switch to,
+ * or the current region's maximum when the region can't be changed on this connection.
+ */
+fun AppState.reachableSpeedMax(): Double? {
+    val model = identity?.modelSlug ?: return null
+    val region = settings.singleOrNull { it.name == "destination" } ?: return null
+    if (region.writable) return TuningRules.maxRegionSpeed(model, region.choices)
+    val selected = (staged["destination"] ?: values["destination"])?.toDoubleOrNull()?.toInt() ?: return null
+    return TuningRules.speedRange(model, selected)?.endInclusive
 }

@@ -82,6 +82,24 @@ class AppSmokeTest {
         ui.onNodeWithText("DEMO").assertIsDisplayed()
     }
 
+    @Test fun demoChangesRegionAndRaisesAssistSpeedOverBluetooth() {
+        openDemoSection("Bike & Geometry")
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("Europe · max 25 km/h").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithText("25 km/h").performClick()
+        ui.onNodeWithText("Range 15–32 km/h · increments of 1 km/h").assertIsDisplayed()
+        ui.onNode(hasSetTextAction()).performTextClearance()
+        ui.onNode(hasSetTextAction()).performTextInput("32")
+        // The editor names the region change before anything is staged.
+        ui.onNodeWithText("Market region changes to United States · max 32 km/h to allow 32 km/h.").assertIsDisplayed()
+        ui.onNodeWithText("Stage change").performClick()
+        ui.onNodeWithText("2 pending changes").assertIsDisplayed()
+        ui.onNodeWithText("Review").performClick()
+        ui.onNodeWithText("Apply in demo").performClick()
+        ui.waitUntil(5_000) { ui.onAllNodesWithText("2 pending changes").fetchSemanticsNodes().isEmpty() }
+        ui.onNodeWithText("United States · max 32 km/h").assertIsDisplayed()
+        ui.onNodeWithText("32 km/h").assertIsDisplayed()
+    }
+
     @Test fun demoEditsPhysicalWattsAndKeepsUnitsThroughReviewAndReadback() {
         openDemoSection("Bike & Geometry")
         ui.waitUntil(5_000) { ui.onAllNodesWithText("Market region").fetchSemanticsNodes().isNotEmpty() }
