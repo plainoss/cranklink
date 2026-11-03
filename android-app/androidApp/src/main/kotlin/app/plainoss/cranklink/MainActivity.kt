@@ -405,7 +405,7 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onO
         Card(colors = CardDefaults.cardColors(containerColor = Pine), shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("SHIMANO STEPS", color = Color(0xFFADC3B4), letterSpacing = 2.sp, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                    Text(listOfNotNull("SHIMANO STEPS", componentType(identity.model)?.uppercase()).joinToString(" · "), color = Color(0xFFADC3B4), letterSpacing = 2.sp, fontSize = 10.sp, modifier = Modifier.weight(1f))
                     if (demo) Text("Demo · changes stay in memory", Modifier.clip(RoundedCornerShape(40.dp)).background(Color(0xFFF1E6C5))
                         .padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 10.sp, color = Color(0xFF735E27), maxLines = 1)
                 }

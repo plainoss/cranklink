@@ -23,7 +23,7 @@ async function connectComponents(page: Page) {
 
 async function selectComponent(page: Page, slot: number, model: string) {
   await page.getByTestId("component-select").getByRole("button").click();
-  await page.getByRole("option", { name: `${model} · slot ${slot}`, exact: true }).click();
+  await page.getByRole("option", { name: new RegExp(` · ${model}( \\(slot ${slot}\\))?$`) }).click();
   await expect(page.getByTestId("identity-strip")).toContainText(model);
   await expect.poll(() => page.evaluate(() =>
     (window as any).cranklinkInstrumentController.getState().phase)).toBe("ready");
