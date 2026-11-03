@@ -4,93 +4,103 @@
 [![Web](https://github.com/plainoss/cranklink/actions/workflows/web.yml/badge.svg)](https://github.com/plainoss/cranklink/actions/workflows/web.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Diagnostics, settings, and bootloader recovery for Shimano STEPS drive units over the E-TUBE bus, via an SM-PCE02 adapter or a Bluetooth LE gateway. The web app and CLI also support model-specific settings for catalogued Di2 components, using the same Rust core.
+**cranklink** can change a Shimano STEPS e-bike motor's market region and flash its firmware, including on recent motor firmware. Connect wirelessly over Bluetooth through the bike's own display or wireless unit, or with a wired SM-PCE02 adapter. No dealer visit needed.
+
+The project began as the recovery of a bricked EP800-CRG motor that official tools and dealer service could not restore. It is unofficial and not made or endorsed by Shimano.
+
+## What you can change
+
+- **Market region:** the sales market the motor is set for, which sets its maximum assist speed. Works over Bluetooth and wired.
+- **Motor firmware:** flash the motor's firmware from your own firmware files, or recover a motor stuck in its bootloader.
+- **Assist feel:** how strong and how quick each assist mode is, plus wheel size.
+- **Brake/shift levers and handlebar switches:** what each button does, including swapping the assist and shift buttons on e-bike switches.
+- **Derailleurs:** how fast they shift several gears at once, and synchronized shifting.
+- **Wireless parts:** the Bluetooth passkey, and the radio mode on 12-speed wireless rear derailleurs.
+- **Display:** its settings and clock.
+- **Internal gear hub and Di2 battery:** hub adjustment and multi-shift limits.
+
+Not sure your parts are covered? See [Supported parts](#supported-parts).
+
+## Before you change anything
 
 > [!WARNING]
-> Unofficial, experimental, and not affiliated with or endorsed by Shimano. Writing settings or firmware can permanently damage drive units, displays, or batteries and voids warranties. Raising the assist speed limit can make the bike non-compliant with local e-bike law. Use at your own risk.
->
-> Firmware flashing has only been tested on a DU-EP800-CRG (identity `23/00`, board 1; see [terms](#terms)). cranklink checks the image's declared series, unit, and board, and the checksum of encrypted `.dat` containers, but cannot prove an image is correct for a given unit. Plaintext images, such as the EP800 M file, carry no checksum; writing one requires `--expect-sha256` with the SHA-256 of the file you verified. A wrong image can leave the motor unrecoverable, including by dealer tools.
+> Writing settings or firmware can permanently damage motors, displays or batteries, and voids warranties. Raising the assist speed limit can make your bike illegal to ride on public roads where you live. Use at your own risk.
 
-The project began as the recovery of a bricked EP800-CRG that official tools and dealer service could not restore.
+## Get started
 
-## Web app
+### Web app
 
 **[cranklink.plainoss.workers.dev](https://cranklink.plainoss.workers.dev/)**
 
 [![Web app, assist profile settings](docs/images/web-instrument.png)](https://cranklink.plainoss.workers.dev/)
 
-The core compiled to WebAssembly; all protocol work runs in the browser. Requires Chrome or Edge on desktop or Android (Safari and iOS lack WebUSB and Web Bluetooth), plus one of:
+Open it in Chrome or Edge on a computer or Android phone (Safari and iOS can't talk to Bluetooth or USB devices from a web page). Everything runs in your browser. Connect in one of two ways:
 
-- **SM-PCE02** over WebUSB or Web Serial. On Android, use WebUSB. Firmware recovery also needs an SM-PCE02, but runs only in the [CLI](#recover-a-motor-stuck-in-bootloader-mode): the web app cannot reach a motor stuck in its bootloader.
-- **Bluetooth**, via the bike's E-TUBE gateway (e.g. SC-EM800 or EW-WU111). Activate its connection mode before connecting and close other apps connected to the bike. The app includes model-specific pairing help: Di2 uses the appropriate function/Junction A button, while most STEPS displays open a short window after power-on or a button press. See [Bluetooth connection instructions](docs/bluetooth.md#connection-mode).
+- **Bluetooth:** put the bike's display or wireless unit (for example an SC-EM800 or EW-WU111) into connection mode, close other apps connected to the bike, and press **Connect**. The app shows how to do this for your parts; see also [connection mode](docs/bluetooth.md#connection-mode).
+- **Wired:** plug in an SM-PCE02 adapter. On Android, use WebUSB.
 
-When finished, use **Disconnect** in the web app's top bar so the bike can return to riding mode. The app shows disconnect progress, then keeps Bluetooth closure and the bike's return to normal operation distinct: wait for its display, buttons and shifting to respond normally before leaving the completion screen.
+After connecting, choose the part you want to change under **Active component**: motor, lever, derailleur, battery, hub or display. The app saves a backup before every write and checks the result afterwards.
 
-If connecting fails, choose **View details & logs** on the connection screen. Diagnostics remains available without a connection. **Copy diagnostic report** includes the full failure and cleanup details, command history, routing choice, browser and deployed build revision; if clipboard access fails, select and copy the report text. Logs remain in the current tab until reload.
+When you are done, press **Disconnect** and wait until the display, buttons and shifting respond normally again.
 
-After connecting, use **Active component** to choose a drive unit, lever, derailleur, power unit, hub actuator, or cycle computer. The app loads that component's schema, displays read-only fields, and saves model- and serial-bound backups before writes. Save or discard staged edits before changing components.
+If connecting fails, choose **View details & logs**, then **Copy diagnostic report** to share what went wrong.
 
-Firmware images are not bundled.
+### Android app
 
-Bluetooth detects supported STEPS and shifting-only master families before entering service mode, using the original connection. An unknown valid identity asks for a choice; **Bluetooth options** contains a manual override. This detection flow is awaiting phone/hardware validation; see the [validation sequence](docs/bluetooth.md#validate-automatic-detection-on-a-phone).
+Install **cranklink** from Google Play (`app.plainoss.cranklink`), Android 8.0 or later. It connects to STEPS e-bikes over Bluetooth and covers motor settings, with the same backups and checks as the web app. Demo mode lets you try it without a bike. Di2 parts and firmware flashing are web app and command line only. See the [Android app](android-app/README.md) for other ways to install it.
 
-## Android app
+### Command line tool
 
-The [Android app](android-app/README.md) provides a native Kotlin interface with a Kotlin Multiplatform session layer and the same Rust tuning engine as the web app. It connects to **Shimano STEPS e-bikes over Bluetooth LE only**, with staged edits, verified saves, and local backup import/export. Di2 component configuration and firmware flashing are outside the Android app's scope.
+For recovering a motor stuck in its bootloader, and for scripting, use the [command line tool](#command-line).
 
-Requires Android 8.0 or later. Releases are published on Google Play as `app.plainoss.cranklink` (see [Android releases](docs/android-releases.md)). You can also build the APK from [android-app/](android-app/README.md#build), or use the debug APK artifact from the [Android workflow](https://github.com/plainoss/cranklink/actions/workflows/android.yml). Demo mode uses sample settings and requires no bike. System Back confirms disconnect and waits for active writes. The Android BLE path has automated protocol and session tests and has been tested on a physical bike.
+---
 
-## Hardware & Firmware Compatibility Matrix
+## Supported parts
 
-| Drive Unit | Firmware | Display / Gateway | Transport | Assist Profiles (Tuning) | Region & Wheel Size | Firmware Recovery | Status & Guidance |
-| :--- | :--- | :--- | :--- | :---: | :---: | :---: | :--- |
-| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | **SC-EM800** | **Wireless (BLE)** | ✅ Tested on Bike | ✅ Tested on Bike | — | Confirmed on physical hardware. Full wireless tuning supported. |
-| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | Any / None | **Wired (USB)** | ✅ Tested on Bike | ✅ Tested on Bike | Yes | Confirmed on physical hardware. Full wired tuning & bootloader recovery. |
-| **DU-EP800** | 4.1.10 – 4.2.0 | Any | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Yes² | Supported wired & wireless; shares EP800-CRG identity (`23/00`). |
-| **DU-EP600 / EP600-CRG / EP801 / EP801-CRG / EP500** | 4.4.1 – 4.6.0 | **SC-EM800 / SC-EN600** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Modern generation motors. Protocol verified; community bike testing in progress. |
-| **DU-E5100** | All | Any | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region, speed limit (adjustable within 15–25 / 19–32 km/h), and maintenance settings supported. |
-| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | **SC-E8000** | **Wireless (BLE)** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Reading confirmed on bike. Direct wireless saving is in preview testing with automatic normal routing. Assist mode presets & Boost/Trail tuning supported. |
-| **DU-E8000 / E8080** | 4.1.0 – 4.6.0 | Any / None | **Wired (USB)** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Full wired support; no security code needed on D4.6. Assist mode presets & Boost/Trail tuning supported. |
-| **DU-E8000 / E8080** | ≥ 4.7.0 – 4.10.0 | **SC-E8000** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview) | Opt-in¹ | Handshake protocol verified. Wireless bike testing in progress. Assist mode presets & Boost/Trail tuning supported. |
-| **DU-E6002 / E6012** | ≥ 3.3.0 | Any (E6010 / E6100) | **Wireless / USB** | — | 🧪 In Testing (Preview) | Opt-in¹ | Region (EU/US/Korea) available on firmware 3.3.0 and newer. |
-| **DU-E7000** | All | **SC-E7000** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview)* | Opt-in¹ | Assist mode presets, Boost/Trail tuning, wheel size, and mounting angle supported (*fixed factory region). |
-| **DU-E6100 / E6110 / E6180** | All | **SC-E6100** | **Wireless / USB** | 🧪 In Testing (Preview) | 🧪 In Testing (Preview)* | Opt-in¹ | Assist pattern (Comfort/Sportive), wheel size, and mounting angle supported (*fixed factory region). |
-| **DU-E6000 / E6001 / E6010 / E6050** | All (3.2 – 3.9) | Any (SC-E6000) | **Wireless / USB** | — | 🧪 In Testing (Preview)* | Opt-in¹ | Wheel size (2000–2400 mm) and mounting angle adjustment supported (*fixed factory region). |
-| **DU-E5000 / E5080** | All | Any | **Wireless / USB** | — | — | — | Identification only; no settings supported. |
+The rest of this page is reference detail. You only need it to check a specific part, or to use the command line.
 
-**Status Key**:
-- **✅ Tested on Bike**: Confirmed and validated working on physical hardware.
-- **🧪 In Testing (Preview)**: Implemented and protocol-checked in software; physical bike confirmation in progress.
-- **—**: Setting is not applicable or not supported on this motor family.
+### Motors
 
-All families support component discovery and identification. Other catalogued drive units, including the E5000 and E5080, are identified by `units` only: cranklink has no settings for them and cannot flash them from their application. A `--recovery` write with `--allow-unverified-model` still erases and writes them but cannot be verified afterwards; see the [patcher guide](docs/ep800-speed-limit-patcher.md#supported-images). Field availability depends on firmware and device permissions; see [settings](docs/settings.md).
+| Motor | Motor firmware | What you can change | Status | Firmware recovery |
+| :--- | :--- | :--- | :--- | :--- |
+| **DU-EP800-CRG** | 4.1.10 – 4.2.0 | Assist tuning, region, wheel size | Tested on a bike, over Bluetooth (SC-EM800) and wired | Yes, tested |
+| **DU-EP800** | 4.1.10 – 4.2.0 | Assist tuning, region, wheel size | Preview | Yes² |
+| **DU-EP600, EP801, EP500** (and CRG versions) | 4.4.1 – 4.6.0 | Assist tuning, region, wheel size | Preview | Opt-in¹ |
+| **DU-E5100** | All | Region, assist speed limit, maintenance settings | Preview | Opt-in¹ |
+| **DU-E8000, E8080** | 4.1.0 – 4.10.0 | Assist presets, Boost/Trail levels, region, wheel size | Preview; reading tested on a bike | Opt-in¹ |
+| **DU-E7000** | All | Assist presets, Boost/Trail levels, wheel size, mounting angle | Preview | Opt-in¹ |
+| **DU-E6100, E6110, E6180** | All | Assist pattern (Comfort or Sportive), wheel size, mounting angle | Preview | Opt-in¹ |
+| **DU-E6002, E6012** | 3.3.0 and newer | Region (Europe, US, Korea) | Preview | Opt-in¹ |
+| **DU-E6000, E6001, E6010, E6050** | 3.2 – 3.9 | Wheel size, mounting angle | Preview | Opt-in¹ |
+| **DU-E5000, E5080** | All | Nothing; identified only | — | — |
 
-DU-E8000/E8080 exposes **Region & assist speed** from D4.1.0: Europe (nominal 25 km/h) or United States (32 km/h). D4.1.0 and newer E8000 firmware also exposes assist mode presets (Dynamic, Explorer, Custom) and Boost/Trail levels; DU-E7000 supports the same presets and assist levels, and DU-E6100 supports assist pattern selection (Comfort vs Sportive). On bikes with SC-E8000 displays, Cranklink automatically selects normal Bluetooth routing to avoid legacy bus master arbitration issues, allowing region, assist tuning, and wheel circumference writes with verified readback and backups. See [legacy assist tuning](docs/settings.md#legacy-assist-tuning-e8000-e7000-e6100).
+- **Tested on a bike:** confirmed on real hardware.
+- **Preview:** built and checked against the protocol in software; confirmation on real bikes is in progress.
+- ¹ Command line only, with `--allow-unverified-model`. Not run on hardware.
+- ² Shares the EP800-CRG's identity (`23/00`) and firmware, so the command line accepts it without `--allow-unverified-model`. Not run on hardware.
 
-The CLI's automatic route selection is a conservative policy. An explicit `--ble-master=normal` uses normal routing with the usual session and authentication checks; hardware support for those writes still needs validation.
+E7000, E6100 and older E6000-family motors keep their factory region. Which fields appear depends on the motor's firmware; see [settings](docs/settings.md), [market regions](docs/settings.md#market-regions) and [legacy assist tuning](docs/settings.md#legacy-assist-tuning-e8000-e7000-e6100).
 
-Connection setup and master-session teardown confirm the resulting slave mode even when an older gateway omits the immediate transition acknowledgement. Stock SC-E8000, SC-EM800, SC-E6100 and SC-E7000 firmware probes reproduce this behavior. The fix applies to every gateway through the shared connection code; full master connection on the reported E8000 bike remains unresolved, including a native test that established normal service before requesting master routing. See [hardware observations](docs/bluetooth.md#sc-e8000-406-native-hardware-observation).
+### Other parts
 
+| Part | What you can change | Models |
+| :--- | :--- | :--- |
+| Road and gravel Di2 levers (10 and 11-speed) | Button functions, top buttons, bike computer buttons (D-Fly) | Classic levers; top buttons and D-Fly on ST-R9150, R8050, RX815 |
+| E-bike handlebar switches | Button functions, swap assist and shift buttons | SW-E7000, SW-E6000, SW-E6010-L, SW-E8000-L |
+| Front and rear derailleurs (10, 11 and 12-speed) | Multi-shift speed, synchronized shifting | Di2 derailleurs |
+| 12-speed wireless rear derailleurs | Radio mode, pairing passkey | RD-R9250, R8150, R7150, RX825, RX827, RX717, RX828-SGS |
+| Wireless units and wireless displays | Bluetooth passkey | EW-WU101, EW-WU111, EW-EN100, wireless SC-E displays |
+| E-bike displays | Display settings, clock | SC-E8000, E6100, E7000, EM800, EN600, EN610 |
+| Internal gear hub shifting units | Hub adjustment | MU-S705, MU-UR500, UR510, UR520 |
+| Di2 batteries | Multi-shift limits | BT-DN110, BT-DN300 |
 
-The web app and CLI support classic and 11-speed Di2 lever/switch assignments (including top buttons and D-Fly channels on R9150/R8050/RX815), STEPS switch assignments and assist/shift mode swapping on SW-E7000/E6000/E6010-L/E8000-L, 10-, 11- and 12-speed front/rear derailleur multi-shift speed and synchronized shift settings, radio mode and passkey on 12-speed rear derailleurs (R9250/R8150/R7150/RX825 and RX827/RX717/RX828-SGS), passkey on EW-WU101/EW-WU111/EW-EN100 and wireless SC-E displays, SC-E8000/E6100/E7000/EM800/EN600/EN610 display settings and clock, MU-S705/MU-UR500/UR510/UR520 hub adjustment, and BT-DN110/BT-DN300 multi-shift limits. Wired and wireless 12-speed levers and SW-EN600/EM800 switches use other layouts and have no settings yet. Component coverage is selected from the live catalog identity; inspect `settings schema --model <COMPONENT>` for available fields. Catalogued components without an implemented layout show no available settings. These component layouts have protocol tests but have not been validated on hardware.
-
-Exact MU-UR500 and cycle-computer firmware execution, CLI and browser save/restore checks, and partial BT-DN110/WU111 PC-link handler execution are described in the [firmware simulator documentation](docs/firmware-simulator.md). For an in-depth reference on EP800 D4.2.0 memory layout, flash journal compaction, packet queues, and protocol state machines, see the [EP800 D4.2.0 Firmware Architecture Reference](docs/firmware-d420-architecture.md). E6002 D3.3.0/D3.4.0 additionally execute region SET and fresh-CPU storage reload under an explicit resident ROM model; this does not validate protected sessions or physical hardware. Ordinary BLE disconnect behavior and its hardware validation are described in [Bluetooth recovery](docs/bluetooth.md#disconnect-and-di2-recovery).
-
-¹ CLI only, with `--allow-unverified-model`. Not run on hardware. D (DCAS) writes have protocol tests; the RX (M) writer is documented for the EP800 family only and is untested for others.
-
-² Shares the tested EP800-CRG's identity (`23/00`) and firmware family, so the CLI admits it without `--allow-unverified-model`; not run on hardware.
-
-For how Cranklink discovers Di2 and e-bike components, interprets traffic and chooses component-specific operations, see [Understanding E-TUBE with Cranklink](docs/etube-protocol.md), including its [wire reference](docs/etube-protocol.md#wire-reference).
+Not supported yet: 12-speed levers (wired and wireless) and SW-EN600 and SW-EM800 switches. These layouts have protocol tests but have not been checked on real bikes. To see every field for a part, run `cranklink settings schema --model <MODEL>`.
 
 ## Command line
 
 ### Install
 
-The [rolling prerelease](https://github.com/plainoss/cranklink/releases/tag/rolling) provides the latest development binaries from `main` for Linux, macOS (Apple Silicon and Intel), and Windows, with BLE support and `.sha256` checksums. Every push to `main` rebuilds all four platforms; after tests, builds, and checksum verification pass, the workflow moves the `rolling` tag to the built commit and replaces the release assets. Older runs skip publishing if `main` has advanced. These binaries may contain unreleased changes.
-
-Pushing a `v*` tag publishes a separate versioned [release](https://github.com/plainoss/cranklink/releases). To refresh the rolling release manually, run **Build & Release CLI** with **Run workflow** on `main`. Pull requests and merge queue runs validate builds without publishing.
-
-The web validation and CLI release-preparation tests select the latest Node.js 22.x release, with 22.23.4 as the minimum to include the [Broccoli2Shell fix (CVE-2026-111497)](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). This selection controls workflow shell commands; JavaScript actions use the GitHub runner's separate embedded runtime.
+Download the latest build for Linux, macOS (Apple Silicon and Intel) or Windows from the [rolling prerelease](https://github.com/plainoss/cranklink/releases/tag/rolling), which is rebuilt from `main` and may contain unreleased changes, or a versioned [release](https://github.com/plainoss/cranklink/releases). Each binary has a `.sha256` checksum. macOS binaries are not notarized: if macOS blocks the binary, run `xattr -d com.apple.quarantine ./cranklink`. How releases are built is in [CLI releases](docs/cli-releases.md).
 
 To build from source (Rust 1.90+):
 
@@ -101,12 +111,7 @@ cargo build --release --locked --bin cranklink
 ./target/release/cranklink --help
 ```
 
-Bluetooth support is a default feature; add `--no-default-features` for a USB-only build. Linux BLE needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal.
-
-Native connections stop scanning as soon as the requested peripheral appears;
-explicit `ble scan` commands retain their full scan duration. See [Bluetooth](docs/bluetooth.md).
-
-The prebuilt binaries are all built on Linux, and CI runs only the Linux one. The macOS binaries are not notarized: if macOS blocks the extracted binary, run `xattr -d com.apple.quarantine ./cranklink`.
+Bluetooth support is included by default; add `--no-default-features` for a USB-only build. Linux Bluetooth needs a C compiler and BlueZ/D-Bus; macOS needs Bluetooth permission for the terminal. See [Bluetooth](docs/bluetooth.md).
 
 **Connecting the adapter**
 
@@ -164,13 +169,17 @@ cranklink --port usb -c ST-6870-L -s <SERIAL> settings read
 cranklink --port usb -c ST-6870-L -s <SERIAL> settings set switch-a-function 2 --backup lever-before.json
 ```
 
-See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use.
+See [settings](docs/settings.md) for protected fields, backups, and batch plans, and [Bluetooth](docs/bluetooth.md) for wireless use, including how cranklink picks a Bluetooth route for each write.
 
-Normal/slave BLE sessions close GATT directly so gateway firmware handles disconnect; explicit stop/reset commands left both tested bikes outside normal operation. The web app retains this service session between commands and distinguishes **Di2 shifting only (no STEPS motor)** from a **STEPS e-bike**, which can also use Di2 components. See the [Di2 BLE investigation](docs/di2-ble-investigation.md) for physical validation and remaining limits.
+### Flash firmware over Bluetooth
+
+The web app's firmware view and `firmware flash ble-pair` update a working motor's D and M firmware together through the bike's Bluetooth gateway. Bluetooth flashing is experimental and has not been run on hardware yet. Without `--allow-unverified-model` it accepts only EP800 board 1 motors on D 4.1.10, 4.1.11 or 4.2.0. A motor stuck in its bootloader can't be reached over Bluetooth; recover it with a wired SM-PCE02 as below. See [Bluetooth](docs/bluetooth.md#cli) for its options.
 
 ### Recover a motor stuck in bootloader mode
 
 Requires an intact bootloader, stable power, and your own firmware containers (`.dat`, not bundled). Only a DU-EP800-CRG (`23/00`, DCASX board 1) has been tested; a plain DU-EP800 reports the same identity and is admitted too. Other families need `--allow-unverified-model`, for dry runs too. Recovery cannot fix hardware damage or an erased bootloader. RX (M) recovery also needs a responding D application.
+
+cranklink checks the image's declared series, unit and board, and the checksum of encrypted `.dat` containers, but cannot prove an image is right for your motor. A wrong image can leave the motor unrecoverable, including by dealer tools. Plaintext images, such as the EP800 M file, carry no checksum, so writing one requires `--expect-sha256` with the SHA-256 of the file you verified.
 
 ```sh
 # 1. Inspect the containers offline (it prints each file's integrity and SHA-256,
@@ -195,7 +204,8 @@ Ordinary recovery compares the file's SHA-256 only when `--expect-sha256` is giv
 
 For RX, probe with `--target rx`, then run `firmware flash rx` with the M file as input and the D file as companion. M files such as `DUEP800-M.4.1.11.dat` are plaintext, so `--write` also needs `--expect-sha256 <SHA-256>` of the M file you verified (`firmware inspect` prints it and the integrity status, as `Companion SHA-256` and `Companion Integrity` when M is the companion; `--json` has them as `source_sha256` and `integrity`, `md5-verified-container` or `none`, with the companion's under `companion`).
 
-#### If a recovery step fails
+<details>
+<summary><strong>If a recovery step fails</strong></summary>
 
 Nothing is erased unless a write has started. Each case below says what cranklink prints and what to do.
 
@@ -206,13 +216,15 @@ Nothing is erased unless a write has started. Each case below says what cranklin
 - **The motor is slow to answer after a reset:** after any bootloader reset (a DCAS probe or dry run, the RX probe and dry run, the return after a completed DCAS or RX write, and `firmware probe --target dcas --recovery --reset`), the motor can take a few seconds to answer discovery again. Cranklink repeats discovery up to four times, about 24 s, until the motor answers, and journals the number of discoveries it took as `discoveries`. If no component answers, the error says so. Ordinary probes discover once. `--recovery --reset` succeeds only once a motor answers.
 - **A write finished but the application does not answer:** if the transfer finished with its checksum and reset acknowledged but the application does not answer, the write journals `verification-failed` and prints the same read-only `cranklink probe` check, followed, for D, by the `--recovery --reset` command for the bootloader's slot.
 
+</details>
+
 #### Other recovery tools
 
 For the EP800 failure that acknowledges Key 1 but floods empty `0x70` frames before Key 2, follow the [temporary bridge recovery guide](docs/ep800-hardware-recovery.md) using `firmware flash dcas --bridge-recovery`.
 
 For bootloader research on a working, powered EP800-CRG, `firmware dump-bootloader --output NEW_DIR` reads the 64 KiB resident window without flashing. See the [extraction instructions](docs/ep800-hardware-recovery.md#read-a-working-motors-bootloader).
 
-More options:
+### More options
 
 - `cranklink --help` and `cranklink <command> --help` list all commands and options.
 - `--json` gives machine-readable output. With it, a wired DCAS or RX dry run and a `ble-pair` dry run print one JSON object (`"dry_run": true`, the verified target and serial, and `requires_*` flags, each true when the `--write` command must carry that option, such as `--expect-sha256` for a plaintext image) instead of the text report, and `firmware probe` prints its JSON only once its checks pass.
@@ -233,15 +245,17 @@ More options:
 
 ## Documentation
 
-- [Settings](docs/settings.md): protected writes, backups, batch plans.
-- [Bluetooth](docs/bluetooth.md): CLI over a BLE gateway.
+- [Settings](docs/settings.md): market regions, protected writes, backups, batch plans.
+- [Bluetooth](docs/bluetooth.md): connection mode, CLI over a Bluetooth gateway, routing and disconnect behaviour, hardware observations.
 - [JSON-RPC session](docs/session.md): `cranklink session` methods, errors and framing for scripts.
-- [Understanding E-TUBE](docs/etube-protocol.md): discovery, routing and the wire reference.
+- [Understanding E-TUBE](docs/etube-protocol.md): how cranklink discovers parts, routing and the wire reference.
 - [EP800 hardware recovery](docs/ep800-hardware-recovery.md): temporary bridge recovery and bootloader extraction.
-- [Firmware simulator](docs/firmware-simulator.md): offline application tests, `sim.py resident` bootloader regressions, and hash-verified [Di2 firmware acquisition](docs/firmware-simulator.md#di2-research-inputs).
 - [Firmware patcher](docs/ep800-speed-limit-patcher.md): create and check supported motor images offline with `tools/patch_motor_speed.py`.
+- [Firmware simulator](docs/firmware-simulator.md): offline firmware tests, `sim.py resident` bootloader regressions, and hash-verified [Di2 firmware acquisition](docs/firmware-simulator.md#di2-research-inputs).
+- [EP800 D4.2.0 firmware architecture](docs/firmware-d420-architecture.md): memory layout, flash journal, packet queues and protocol state machines.
+- [CLI releases](docs/cli-releases.md): how the rolling and versioned CLI builds are published.
 - [Web app development](web-instrument/README.md): build, test, deploy.
-- [Android app development](android-app/README.md): BLE tuning app, native libraries, APK builds, and tests.
+- [Android app development](android-app/README.md): build, test, and [Play releases](docs/android-releases.md).
 
 ## License
 
