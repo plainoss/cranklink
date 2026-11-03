@@ -165,7 +165,7 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
   },
   "destination": {
     label: "Market Region",
-    description: "Selects the market specification and the assist-speed range the motor accepts. Choose the region that applies where you ride.",
+    description: "Selects the market specification and its maximum assist speed. Choose the region that applies where you ride.",
     section: "geometry",
     displayUnit: "",
   },
@@ -508,12 +508,12 @@ function enrichSetting(
     } else {
       if (modelSlug === "e6002") description = "Motor market selection. Choose the region that applies where the bike is ridden.";
       // E6002 exposes verified markets without a separate speed-limit setting.
-      // Other motors use the range enforced by the core, as the CLI prints it.
+      // Other motors show the maximum of the range enforced by the core, as the CLI prints it.
       choiceLabels = Object.fromEntries(spec.choices.flatMap((choice) => {
         if (modelSlug === "e6002") return E6002_DESTINATION_LABELS[choice] ? [[choice, E6002_DESTINATION_LABELS[choice]]] : [];
         const range = destinationSpeedRange(modelSlug, choice);
         const name = destinationName(modelSlug, choice) ?? `Region ${choice}`;
-        return range ? [[choice, `${name} · ${range.min}–${range.max} km/h`]] : [];
+        return range ? [[choice, `${name} · max ${range.max} km/h`]] : [];
       }));
     }
   }

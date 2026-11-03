@@ -18,9 +18,9 @@ The apps convert at the input/display boundary. Protocol values, CLI commands, s
 
 ## Market regions
 
-The market region sets which assist speeds (and, on some motors, maximum power) the motor allows. The CLI and backup files call it `destination` and store it as a number; the apps show the region name and its speed range.
+The market region sets which assist speeds (and, on some motors, maximum power) the motor allows. The CLI and backup files call it `destination` and store it as a number; the apps and the CLI show the region name and its maximum assist speed (for example "Europe · max 25 km/h"). The lower bound in the table below only limits the assist speed setting; assist still works below it.
 
-| Code | Region | Assist speed range | Motors |
+| Code | Region | Assist speed setting range | Motors |
 | --- | --- | --- | --- |
 | 0 | Europe | 15–25 km/h | All with a speed setting |
 | 1 | United States | 19–32 km/h | All with a speed setting |

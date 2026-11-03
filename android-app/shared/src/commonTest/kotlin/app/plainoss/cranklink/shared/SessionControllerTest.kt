@@ -273,11 +273,11 @@ class SessionControllerTest {
         assertEquals(listOf("Europe (EU)", "United States (US)", "Korea"),
             listOf("0", "1", "4").map { formatSettingValue("destination", it, "e6002") })
         assertFalse(settingPresentation("destination", "e6002").description.contains("speed", ignoreCase = true))
-        assertEquals("Region 4 · 15–25 km/h", formatSettingValue("destination", "4", "ep800-crg"))
-        assertEquals("Europe · 15–25 km/h", formatSettingValue("destination", "0", "ep800-crg"))
-        assertEquals("United States · 19–32 km/h", formatSettingValue("destination", "1", "ep800-crg"))
-        assertEquals("Japan · 14–24 km/h", formatSettingValue("destination", "2", "ep801"))
-        assertEquals("US Class 3 · 19–45 km/h", formatSettingValue("destination", "5", "ep801"))
+        assertEquals("Region 4 · max 25 km/h", formatSettingValue("destination", "4", "ep800-crg"))
+        assertEquals("Europe · max 25 km/h", formatSettingValue("destination", "0", "ep800-crg"))
+        assertEquals("United States · max 32 km/h", formatSettingValue("destination", "1", "ep800-crg"))
+        assertEquals("Japan · max 24 km/h", formatSettingValue("destination", "2", "ep801"))
+        assertEquals("US Class 3 · max 45 km/h", formatSettingValue("destination", "5", "ep801"))
         assertEquals("Region 4", formatSettingValue("destination", "4"))
     }
 
