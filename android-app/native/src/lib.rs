@@ -532,6 +532,17 @@ fn is_e8000_motor(motor: &Motor) -> bool {
         && matches!(motor.model_name.as_str(), "DU-E8000" | "DU-E8080")
 }
 
+/// Rider-facing names for the settings that need master routing, as the app labels them.
+fn master_setting_label(name: &str) -> &str {
+    match name {
+        "destination" => "Market region",
+        "tire-circumference" => "Wheel circumference",
+        "lamp" => "Wired light output",
+        "lighting-time" => "Lighting reserve",
+        other => other,
+    }
+}
+
 fn write_route<'a>(
     motor: &Motor,
     is_master_session: bool,
@@ -545,7 +556,8 @@ fn write_route<'a>(
                 is_e8000_motor(motor) && matches!(*name, "destination" | "tire-circumference");
             if !is_e8000_safe && settings::requires_ble_master_routing(name) {
                 bail!(
-                    "{name} requires a USB connection on this bike. Please connect using a USB PCE cable to modify {name}."
+                    "{} can't be changed over this Bluetooth connection on this bike. Change it with a wired SM-PCE02 adapter in the cranklink web app or command line.",
+                    master_setting_label(name)
                 );
             }
         }

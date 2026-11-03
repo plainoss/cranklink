@@ -233,19 +233,19 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
                 RestartBikeCard(vm.controller::acknowledgeRestart)
             }
             when {
-                screen == Backup -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && !demo && state.staged.isEmpty(),
+                screen == Backup -> BackupsScreen(backups, backupInfo, state.identity, connected && !busy && state.staged.isEmpty(), canExport = !demo,
                     onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     onExport = { file -> exportFile = file; exportLauncher.launch(file) },
                     onRestore = { restoreFile = it }, settings = state.settings,
                     restoreHint = when {
                         !connected -> "Connect your bike to restore a backup."
-                        demo -> "Restoring is unavailable in the demo. Connect a real bike to restore."
                         state.staged.isNotEmpty() -> "Save or discard staged changes before restoring a backup."
+                        demo -> "Demo backups stay in memory and disappear when you leave the demo."
                         else -> null
                     })
                 !connected -> WelcomeScreen(busy, onScan = { scan() }, onDemo = { screen = Home; vm.startDemo() }, onBackups = { screen = Backup })
-                screen == Home -> OverviewScreen(state, demo, !busy, onOpen = { screen = it }, onRefresh = vm::refresh, onStage = vm.controller::stage)
-                else -> TuneScreen(TuneSections.firstOrNull { it.id == screen } ?: TuneSections.first(), state, enabled = !busy, onStage = vm.controller::stage)
+                screen == Home -> OverviewScreen(state, demo, !busy, onOpen = { screen = it }, onRefresh = vm::refresh, onStage = vm.controller::stage, onPreview = vm.controller::preview)
+                else -> TuneScreen(TuneSections.firstOrNull { it.id == screen } ?: TuneSections.first(), state, enabled = !busy, onStage = vm.controller::stage, onPreview = vm.controller::preview)
             }
         }
     }
@@ -371,7 +371,7 @@ private fun CranklinkApp(vm: AppViewModel, state: AppState) {
             Text("${info?.let { settingPresentation(it.setting, it.model).label } ?: file}\nRestore value: ${info?.let { formatSettingValue(it.setting, it.before, it.model) } ?: "Unknown"}\nMotor: ${info?.model ?: "Unknown"}\nSerial: ${info?.serial ?: "Unknown"}\n\n$undo")
         },
         confirmButton = { Button(onClick = { restoreFile = null; vm.restore(file) },
-            enabled = !busy && !demo && state.staged.isEmpty() && backupInfo[file]?.let { it.matches(state.identity) && it.writable(state.settings) } == true) { Text("Restore & verify") } },
+            enabled = !busy && state.staged.isEmpty() && backupInfo[file]?.let { it.matches(state.identity) && it.writable(state.settings) } == true) { Text("Restore & verify") } },
         dismissButton = { TextButton(onClick = { restoreFile = null }) { Text("Cancel") } },
     ) }
 }
@@ -394,7 +394,8 @@ private fun WelcomeScreen(busy: Boolean, onScan: () -> Unit, onDemo: () -> Unit,
 }
 
 @Composable
-private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onOpen: (String) -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit) {
+private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onOpen: (String) -> Unit, onRefresh: () -> Unit, onStage: (String, String) -> Unit,
+                           onPreview: (String, String) -> Result<String?>) {
     val identity = state.identity ?: return
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
     fun editable(name: String) = state.settings.find { it.name == name }
@@ -457,7 +458,7 @@ private fun OverviewScreen(state: AppState, demo: Boolean, enabled: Boolean, onO
         }
         Text(state.status, color = Muted, fontSize = 12.sp)
     }
-    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
+    editing?.let { SettingEditor(it, state, onStage, onPreview) { editing = null } }
 }
 
 @Composable
@@ -499,7 +500,8 @@ private fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun TuneScreen(tuneSection: TuneSection, state: AppState, enabled: Boolean, onStage: (String, String) -> Unit) {
+private fun TuneScreen(tuneSection: TuneSection, state: AppState, enabled: Boolean, onStage: (String, String) -> Unit,
+                       onPreview: (String, String) -> Result<String?>) {
     val section = tuneSection.id
     var profile by rememberSaveable { mutableIntStateOf(1) }
     var editing by remember { mutableStateOf<TuningSetting?>(null) }
@@ -559,12 +561,16 @@ private fun TuneScreen(tuneSection: TuneSection, state: AppState, enabled: Boole
         } else items(filtered, key = { it.name }) { spec -> SettingCard(spec, state, enabled, onUndo = { undo(spec) }) { editing = spec } }
         item { Text("Edits are staged until you review and save them.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp)) }
     }
-    editing?.let { SettingEditor(it, state, onStage) { editing = null } }
+    editing?.let { SettingEditor(it, state, onStage, onPreview) { editing = null } }
 }
 
 @Composable
-private fun SettingEditor(setting: TuningSetting, state: AppState, onStage: (String, String) -> Unit, onDone: () -> Unit) {
+private fun SettingEditor(setting: TuningSetting, state: AppState, onStage: (String, String) -> Unit,
+                          onPreview: (String, String) -> Result<String?>, onDone: () -> Unit) {
+    // Assist speed can only go as high as a region this connection may select.
+    val sliderMax = if (setting.name == "speed-limit") state.reachableSpeedMax()?.coerceIn(setting.displayMin, setting.displayMax) else null
     EditSettingDialog(setting, state.staged[setting.name] ?: state.values[setting.name] ?: "", state.identity?.modelSlug,
+        sliderMax = sliderMax, preview = { value -> onPreview(setting.name, value) },
         onDismiss = onDone, onStage = { value -> onStage(setting.name, value); onDone() },
         onUndo = if (setting.name in state.staged) { { onStage(setting.name, state.values[setting.name] ?: ""); onDone() } } else null)
 }
@@ -605,13 +611,20 @@ private fun displayValue(setting: TuningSetting, value: String, model: String?):
     formatSettingValue(setting.name, value, model)
 
 @Composable
-private fun EditSettingDialog(setting: TuningSetting, current: String, model: String?, onDismiss: () -> Unit, onStage: (String) -> Unit, onUndo: (() -> Unit)?) {
+private fun EditSettingDialog(setting: TuningSetting, current: String, model: String?, sliderMax: Double? = null,
+                              preview: (String) -> Result<String?> = { Result.success(null) },
+                              onDismiss: () -> Unit, onStage: (String) -> Unit, onUndo: (() -> Unit)?) {
     var value by remember(setting.name) { mutableStateOf(setting.inputText(current)) }
     var edited by remember(setting.name) { mutableStateOf(false) }
     // Check while typing, as the web controls do, instead of only after Stage is pressed.
-    val validation = remember(setting, value) { runCatching { setting.backendInput(value) } }
+    // Linked rules (a faster speed needs another market region) are checked here too,
+    // so their effect or refusal shows next to the control rather than after it closes.
+    val validation = remember(setting, value) {
+        runCatching { setting.backendInput(value) }.mapCatching { input -> input to preview(input).getOrThrow() }
+    }
+    val effect = validation.getOrNull()?.second?.takeIf { edited }
     val inputError = if (edited) validation.exceptionOrNull()?.let { it.message ?: "Enter a supported value." } else null
-    val stage = { validation.getOrNull()?.let(onStage) }
+    val stage = { validation.getOrNull()?.first?.let(onStage) }
     val currentNumber = if (setting.valueType == "number") setting.inputText(current).toDoubleOrNull() else null
     val outside = currentNumber != null && (currentNumber < setting.displayMin || currentNumber > setting.displayMax)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(setting.label) }, text = {
@@ -636,20 +649,22 @@ private fun EditSettingDialog(setting: TuningSetting, current: String, model: St
                     keyboardActions = KeyboardActions(onDone = { edited = true; stage() }))
                 if (setting.valueType == "number") {
                     val suffix = if (setting.unit.isBlank()) "" else if (setting.unit in listOf("%", "°")) setting.unit else " ${setting.unit}"
-                    Text("Range ${formatInput(setting.displayMin)}–${formatInput(setting.displayMax)}$suffix · increments of ${formatInput(setting.displayStep)}$suffix", fontSize = 12.sp, color = Muted)
-                    if (setting.displayMax > setting.displayMin && value.toFloatOrNull() != null) Slider(
-                        value = value.toFloat().coerceIn(setting.displayMin.toFloat(), setting.displayMax.toFloat()),
+                    val top = sliderMax ?: setting.displayMax
+                    Text("Range ${formatInput(setting.displayMin)}–${formatInput(top)}$suffix · increments of ${formatInput(setting.displayStep)}$suffix", fontSize = 12.sp, color = Muted)
+                    if (top > setting.displayMin && value.toFloatOrNull() != null) Slider(
+                        value = value.toFloat().coerceIn(setting.displayMin.toFloat(), top.toFloat()),
                         onValueChange = { next ->
                             val steps = kotlin.math.round((next - setting.displayMin) / setting.displayStep)
-                            value = formatInput((setting.displayMin + steps * setting.displayStep).coerceIn(setting.displayMin, setting.displayMax))
+                            value = formatInput((setting.displayMin + steps * setting.displayStep).coerceIn(setting.displayMin, top))
                             edited = true
-                        }, valueRange = setting.displayMin.toFloat()..setting.displayMax.toFloat())
+                        }, valueRange = setting.displayMin.toFloat()..top.toFloat())
                     // Keep the bike's actual reading visible when the slider has to stop at its bounds.
                     if (outside) Text("The current value, ${displayValue(setting, current, model)}, is outside the range cranklink can write, so the slider stops at its end.",
                         fontSize = 12.sp, color = Color(0xFF8A5A14))
                 }
                 if (setting.name == "tire-circumference") TirePresets(setting, value) { value = it; edited = true }
             }
+            if (effect != null) Text(effect, color = Pine, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             if (setting.name == "speed-limit") Text("If your market region doesn't allow this speed, the region switches to one that does. You'll see both changes in the review before saving.", color = Muted, fontSize = 12.sp)
             if (setting.name == "destination") Text("If your assist speed isn't allowed in this region, it changes to the closest speed that is. You'll see both changes in the review before saving.", color = Muted, fontSize = 12.sp)
             Text("This updates your staged changes. The bike is written only after review.", color = Muted, fontSize = 12.sp)
@@ -685,7 +700,7 @@ private fun listText(items: List<String>): String =
 private fun formatInput(value: Double): String = if (value == value.toLong().toDouble()) value.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')
 
 @Composable
-private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit,
+private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>, identity: MotorIdentity?, canRestore: Boolean, canExport: Boolean, onImport: () -> Unit, onExport: (String) -> Unit, onRestore: (String) -> Unit,
                           settings: List<TuningSetting>, restoreHint: String?) {
     val dates = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
     LazyColumn(contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -719,7 +734,7 @@ private fun BackupsScreen(files: List<String>, metadata: Map<String, BackupInfo>
                     reason?.let { Text(it, color = Color(0xFF8A5A14), fontSize = 12.sp) }
                 } else Text("Backup details unavailable. Export to inspect the file.", color = Muted, fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onExport(file) }) { Icon(Icons.Default.FileUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(7.dp)); Text("Export") }
+                    if (canExport) TextButton(onClick = { onExport(file) }) { Icon(Icons.Default.FileUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(7.dp)); Text("Export") }
                     OutlinedButton(onClick = { onRestore(file) }, enabled = canRestore && info != null && info.matches(identity) && info.writable(settings)) { Text("Restore") }
                 }
             }

@@ -449,6 +449,31 @@ class SessionControllerTest {
     }
 
     @Test
+    fun aLockedRegionIsNeverStagedOnTheRidersBehalf() = runTest {
+        // Without master routing the region can't be written, so a faster speed
+        // must not pull in a region change that Save would then reject.
+        val controller = SessionController(FakeBackend(fixture().withIdentity("master_routing", JsonPrimitive(false))))
+        controller.connect(master = false)
+        controller.stage("speed-limit", "32")
+        assertTrue(controller.state.value.staged.isEmpty())
+        assertEquals("Market region can't be changed over this connection, so assist speed must stay within 15–25 km/h.",
+            controller.state.value.error)
+        assertEquals(25.0, controller.state.value.reachableSpeedMax())
+        controller.stage("speed-limit", "20")
+        assertEquals(mapOf("speed-limit" to "20"), controller.state.value.staged)
+        controller.stage("destination", "1")
+        assertTrue(controller.state.value.error!!.startsWith("Market region can't be changed over this Bluetooth connection"))
+    }
+
+    @Test
+    fun decimalStepsFormatWithoutFloatingPointTails() {
+        assertEquals("33.38", formatNumber(15 + 1838 * 0.01))
+        assertEquals("25", formatNumber(25.0))
+        assertEquals("-5", formatNumber(-5.0))
+        assertEquals("13.75", formatNumber(13.75))
+    }
+
+    @Test
     fun regionChangeFitsTheAssistSpeedIntoItsRange() = runTest {
         val controller = SessionController(FakeBackend())
         controller.connect()

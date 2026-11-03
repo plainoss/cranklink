@@ -56,7 +56,7 @@ System Back asks before disconnecting a connected bike and discarding pending ed
 
 Each staged setting and each row of the review can be undone on its own, and the review marks changes to factory limits. If a save stops part-way, the app says how many changes reached the bike and which one stopped.
 
-**Demo mode** uses a separate in-memory EP800 bike. Demo reads and edits do not call JNI, scan for devices, connect to Bluetooth, or write bike settings. Its values and changes are temporary.
+**Demo mode** uses a separate in-memory DU-EP800 that behaves like one connected over Bluetooth as bus master: market region, wheel size, assist speed up to the region's limit, assist profiles and factory bounds can all be changed, and each demo save makes a backup that can be restored. Its settings schema is generated from the core's EP800 Bluetooth schema (`shared/.../DemoSchema.kt`; `cargo test --manifest-path android-app/native/Cargo.toml` fails when it is stale). Demo reads and edits do not call JNI, scan for devices, connect to Bluetooth, or write bike settings. Its values, changes and backups are temporary.
 
 ## Settings and backups
 
