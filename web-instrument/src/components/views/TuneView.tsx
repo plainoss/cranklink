@@ -144,7 +144,7 @@ function GeometrySection() {
       <SettingRow name="speed-limit" showValue>
         <SettingSlider name="speed-limit" />
         <p className="text-xs text-stone-500" data-testid="speed-destination-hint">
-          If the speed needs a different region, that region change is staged too. Both appear in the review before saving.
+          If your market region doesn't allow this speed, the region switches to one that does. You'll see both changes in the review before saving.
         </p>
         <SpeedPresets />
       </SettingRow>
