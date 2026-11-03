@@ -741,7 +741,7 @@ class SessionControllerTest {
         assertEquals("Not set", formatSettingValue("maintenance-date", "unset"))
         assertEquals("On", formatSettingValue("lamp", "1"))
         assertEquals("Disabled", formatSettingValue("walk-assist", "0"))
-        assertEquals("Sport", formatSettingValue("assist-pattern", "6"))
+        assertEquals("Profile 2", formatSettingValue("assist-pattern", "6"))
         assertEquals("Comfort", formatSettingValue("assist-pattern", "0", "e6100"))
         assertEquals("Sportive", formatSettingValue("assist-pattern", "1", "e6100"))
         assertEquals("Dynamic", formatSettingValue("assist-pattern", "2", "e8000"))
@@ -837,7 +837,7 @@ class SessionControllerTest {
             schema("maintenance-month", 1, 12),
         )), "ep800-crg").associateBy { it.name }
         assertEquals(listOf("5", "6"), settings.getValue("assist-pattern").editChoices("ep800-crg"))
-        assertEquals(listOf("Standard", "Sport"),
+        assertEquals(listOf("Profile 1", "Profile 2"),
             settings.getValue("assist-pattern").editChoices("ep800-crg").map { formatSettingValue("assist-pattern", it, "ep800-crg") })
         assertEquals(listOf("0", "1"), settings.getValue("profile1.display").editChoices("ep800-crg"))
         assertEquals(listOf("0", "1", "2"), settings.getValue("lamp").editChoices("ep800-crg"))

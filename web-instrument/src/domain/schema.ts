@@ -219,11 +219,11 @@ const ANNOTATIONS: Record<string, SettingAnnotation> = {
     choiceLabels: { 0: "Disabled", 2: "Enabled" },
   },
   "assist-pattern": {
-    label: "Assist Pattern",
-    description: "Selects the motor's base assistance pattern. This affects how support is delivered alongside the individual profile settings.",
+    label: "Active Assist Profile",
+    description: "Which of the two assist profiles the motor rides with. Each profile keeps its own torque, assist character and start response.",
     section: "profiles",
     displayUnit: "",
-    choiceLabels: { 5: "Standard", 6: "Sport" },
+    choiceLabels: { 5: "Profile 1", 6: "Profile 2" },
   },
   "boost-level": {
     label: "Boost Assist Level",
@@ -520,6 +520,7 @@ function enrichSetting(
 
   if (spec.name === "assist-pattern") {
     if (modelSlug === "e6100") {
+      label = "Assist Pattern";
       description = "Selects between smooth, gradual assist ramp-up (Comfort) or responsive, higher initial torque delivery (Sportive).";
       choiceLabels = { 0: "Comfort", 1: "Sportive" };
     } else if (modelSlug === "e8000" || modelSlug === "e7000") {

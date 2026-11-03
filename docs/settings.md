@@ -109,6 +109,8 @@ cranklink --port usb settings restore e8000-region-before.json --backup e8000-re
 
 Automatic CLI routing selects master for region, wheel and lamp writes. On bikes with SC-E8000 displays, the web and Android apps automatically select normal Bluetooth routing, allowing region and wheel circumference saves/restores with verified readback and backups. Settings requiring bus master routing (such as lamp output) or bikes requiring master separation (such as DU-EP800 on SC-E7000/EW-EN100 displays) provide clear guidance to connect using a USB PCE cable. See [Bluetooth routing](bluetooth.md#connection-mode).
 
+On EP-series drive units (EP800, EP600, EP801, EP500), `assist-pattern` selects the active assist profile: `5` Profile 1 or `6` Profile 2. The apps label it **Active assist profile**; each profile keeps its own `profile1.*` or `profile2.*` torque, assist character and start response.
+
 ## Legacy assist tuning (E8000, E7000, E6100)
 
 Older e-MTB and trekking drive units use dedicated assist opcodes rather than dual profile structures:

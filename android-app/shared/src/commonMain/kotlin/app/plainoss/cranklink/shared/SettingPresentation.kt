@@ -136,7 +136,7 @@ private fun namedChoiceLabel(name: String, number: Double, model: String?): Stri
         "assist-pattern" -> when (model) {
             "e6100" -> mapOf(0 to "Comfort", 1 to "Sportive")[choice]
             "e8000", "e7000" -> mapOf(2 to "Dynamic", 3 to "Explorer", 4 to "Custom")[choice]
-            else -> mapOf(5 to "Standard", 6 to "Sport")[choice]
+            else -> mapOf(5 to "Profile 1", 6 to "Profile 2")[choice]
         }
         "boost-level", "trail-level" -> mapOf(0 to "Low", 1 to "Medium", 2 to "High")[choice]
         "destination" -> marketLabel(model, choice)
@@ -217,8 +217,8 @@ private val standardPresentations = mapOf(
         "Installation angle of the motor in the frame. Match this value to the motor's physical mounting angle.", "°"),
     "destination" to SettingPresentation("Market region",
         "Selects the market region and its permitted assist-speed range. Choose the region where the bike is ridden."),
-    "assist-pattern" to SettingPresentation("Assist pattern",
-        "Selects the motor response pattern shared by both assist profiles."),
+    "assist-pattern" to SettingPresentation("Active assist profile",
+        "Which of the two assist profiles the motor rides with. Each profile keeps its own torque, assist character and start response."),
     "boost-level" to SettingPresentation("Boost assist level",
         "Assistance output level for Boost mode."),
     "trail-level" to SettingPresentation("Trail assist level",
