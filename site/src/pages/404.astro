@@ -1,0 +1,25 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Page not found · cranklink" noindex>
+  <main id="main" class="wrap missing-page">
+    <p class="eyebrow">cranklink / 404</p>
+    <h1>Page not found.</h1>
+    <p>
+      The page may have moved. The project homepage links to the apps, source
+      and documentation.
+    </p>
+    <a class="button" href="/">
+      Back to cranklink <span aria-hidden="true">→</span>
+    </a>
+  </main>
+</Base>
+<style>
+  .missing-page {
+    padding-block: 100px;
+  }
+  p {
+    max-width: 560px;
+  }
+</style>

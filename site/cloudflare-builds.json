@@ -1,0 +1,36 @@
+{
+  "production_branch": "main",
+  "production_settings": {
+    "root_directory": "site",
+    "build_command": "npm run build:cloudflare",
+    "deploy_command": "npx wrangler deploy",
+    "path_includes": [
+      "site/*",
+      "README.md",
+      "docs/images/*",
+      "docs/images/ep800-recovery/*"
+    ],
+    "environment_variables": {
+      "SKIP_DEPENDENCY_INSTALL": { "value": "1", "is_secret": false },
+      "NODE_VERSION": { "value": "22.23.4", "is_secret": false },
+      "SITE_NOINDEX": { "value": "0", "is_secret": false }
+    }
+  },
+  "previews_enabled": true,
+  "previews_base_config": {
+    "root_directory": "site",
+    "build_command": "npm run build:cloudflare",
+    "deploy_command": "npx wrangler preview",
+    "path_includes": [
+      "site/*",
+      "README.md",
+      "docs/images/*",
+      "docs/images/ep800-recovery/*"
+    ],
+    "environment_variables": {
+      "SKIP_DEPENDENCY_INSTALL": { "value": "1", "is_secret": false },
+      "NODE_VERSION": { "value": "22.23.4", "is_secret": false },
+      "SITE_NOINDEX": { "value": "1", "is_secret": false }
+    }
+  }
+}

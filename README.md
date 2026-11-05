@@ -255,6 +255,7 @@ For bootloader research on a working, powered EP800-CRG, `firmware dump-bootload
 - [EP800 D4.2.0 firmware architecture](docs/firmware-d420-architecture.md): memory layout, flash journal, packet queues and protocol state machines.
 - [CLI releases](docs/cli-releases.md): how the rolling and versioned CLI builds are published.
 - [Web app development](web-instrument/README.md): build, test, deploy.
+- [Project website](site/README.md): Astro site development, [Cloudflare hosting and CI](docs/project-site.md).
 - [Android app development](android-app/README.md): build, test, and [Play releases](docs/android-releases.md).
 
 ## License

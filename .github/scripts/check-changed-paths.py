@@ -68,6 +68,15 @@ ANDROID_PATTERNS = [
     ".github/scripts/check-changed-paths.py",
 ]
 
+SITE_PATTERNS = [
+    "site/**",
+    "README.md",
+    "docs/images/web-instrument.png",
+    "docs/images/ep800-recovery/opened-motor-cleaned.png",
+    ".github/workflows/site.yml",
+    ".github/scripts/check-changed-paths.py",
+]
+
 
 def get_base_sha() -> str:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
@@ -130,12 +139,17 @@ def matches_any(file_path: str, patterns: list[str]) -> bool:
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("cli", "web", "android"):
-        print("Usage: check-changed-paths.py [cli|web|android] [--force]", file=sys.stderr)
+    if len(sys.argv) < 2 or sys.argv[1] not in ("cli", "web", "android", "site"):
+        print("Usage: check-changed-paths.py [cli|web|android|site] [--force]", file=sys.stderr)
         sys.exit(1)
 
     target = sys.argv[1]
-    patterns = {"cli": CLI_PATTERNS, "web": WEB_PATTERNS, "android": ANDROID_PATTERNS}[target]
+    patterns = {
+        "cli": CLI_PATTERNS,
+        "web": WEB_PATTERNS,
+        "android": ANDROID_PATTERNS,
+        "site": SITE_PATTERNS,
+    }[target]
 
     # Publishing needs a complete, tested set of binaries even for docs-only pushes.
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
