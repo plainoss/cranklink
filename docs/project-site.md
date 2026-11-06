@@ -47,6 +47,8 @@ Use the URL returned by Wrangler. Rebuild without `SITE_NOINDEX=1` before a prod
 
 The initial review build is hosted at <https://astro-project-site-cranklink-site.plainoss.workers.dev/>. It is marked noindex. The production URL is reserved for deployment from the reviewed `main` branch; creating this preview does not merge the PR.
 
+Workers Builds was connected to `plainoss/cranklink` on 2026-11-06 using its existing Cloudflare GitHub authorization and build token. Production and preview settings below are saved in the dashboard. An initial version was uploaded to enable repository connection; it was not deployed to production.
+
 ## Automatic production and preview builds
 
 Connect **only the new `cranklink-site` Worker** to the existing GitHub repository in Cloudflare's **Settings → Builds**. Configure production branch `main`, enable previews for non-production branches, and apply the checked-in [build settings reference](../site/cloudflare-builds.json):
