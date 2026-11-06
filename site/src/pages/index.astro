@@ -1,0 +1,252 @@
+---
+import Base from "../layouts/Base.astro";
+import Header from "../components/Header.astro";
+import AppLinks from "../components/AppLinks.astro";
+import FooterSections from "../components/FooterSections.astro";
+import { Image } from "astro:assets";
+import screenshot from "../../../docs/images/web-instrument.png";
+import motorPhoto from "../../../docs/images/ep800-recovery/opened-motor-cleaned.png";
+---
+
+<Base>
+  <div class="wrap">
+    <Header />
+    <main id="main">
+      <section class="fieldhero">
+        <div class="intro">
+          <p class="eyebrow">Independent tools / MIT licensed</p>
+          <h1>
+            Your bike.
+            <br />
+            Your settings.
+          </h1>
+          <p class="lead">
+            Open-source diagnostics, settings and recovery tools for Shimano
+            STEPS and Di2.
+          </p>
+          <AppLinks />
+          <div class="textlinks">
+            <a href="#compatibility">Check compatibility ↓</a>
+            <a href="https://github.com/plainoss/cranklink/releases">
+              CLI downloads ↗
+            </a>
+            <a href="https://github.com/plainoss/cranklink">View source ↗</a>
+          </div>
+        </div>
+        <figure class="fieldvisual">
+          <div class="visualtop">
+            <span>WEB APP</span>
+            <span>RUST → WASM → BROWSER</span>
+          </div>
+          <div class="screen">
+            <Image
+              src={screenshot}
+              widths={[480, 800, 1200]}
+              sizes="(max-width: 900px) calc(100vw - 44px), 560px"
+              width={1200}
+              format="webp"
+              loading="eager"
+              fetchpriority="high"
+              alt="Cranklink web app showing assist profile settings using simulator data"
+            />
+          </div>
+          <figcaption class="caption">
+            01 / Assist profiles in the web app. Simulator data shown.
+          </figcaption>
+        </figure>
+      </section>
+      <div class="rail">
+        <span>Browser app</span>
+        <span>Android app</span>
+        <span>Command-line tool</span>
+        <span>One shared Rust core</span>
+      </div>
+      <section class="section">
+        <div class="sectionhead">
+          <div>
+            <p class="eyebrow">What you can do</p>
+            <h2>Your settings. Your tools.</h2>
+          </div>
+          <p>
+            Change supported settings, use the platform you prefer, and modify
+            the tool itself. The source and protocol documentation are open; the
+            code is MIT-licensed.
+          </p>
+        </div>
+        <div class="features">
+          <article>
+            <span class="num">01 / CONFIGURE</span>
+            <h3>Go beyond the usual controls.</h3>
+            <p>
+              Change assist profiles, speed limits, wheel circumference and
+              other supported settings, including factory fields. Availability
+              depends on the component and firmware.
+            </p>
+            <a href="https://github.com/plainoss/cranklink/blob/main/docs/settings.md">
+              Explore supported settings ↗
+            </a>
+          </article>
+          <article>
+            <span class="num">02 / CHOOSE & ADAPT</span>
+            <h3>Use your own setup.</h3>
+            <p>
+              Use the web app, Android app, or CLI on Linux, macOS and Windows.
+              Build from source and adapt the code to your needs.
+            </p>
+            <a href="https://github.com/plainoss/cranklink">Get the source ↗</a>
+          </article>
+          <article>
+            <span class="num">03 / RECOVER</span>
+            <h3>A way back from bootloader.</h3>
+            <p>
+              CLI recovery over SM-PCE02 USB. Tested on an EP800-CRG; requires
+              an intact bootloader and your own firmware.
+            </p>
+            <a href="https://github.com/plainoss/cranklink#recover-a-motor-stuck-in-bootloader-mode">
+              Recovery documentation ↗
+            </a>
+          </article>
+        </div>
+      </section>
+      <section class="story section">
+        <div>
+          <p class="eyebrow">How it started</p>
+          <h2>
+            One bricked motor.
+            <br />
+            An open notebook.
+          </h2>
+          <p>
+            Cranklink began with an EP800-CRG that official tools and dealer
+            service could not restore. The recovery work grew into a shared Rust
+            core, browser and native tools, and public protocol documentation.
+          </p>
+        </div>
+        <figure>
+          <Image
+            src={motorPhoto}
+            widths={[480, 800, 1200]}
+            sizes="(max-width: 760px) calc(100vw - 44px), 560px"
+            width={1200}
+            format="webp"
+            loading="lazy"
+            alt="Opened EP800 motor and exposed electronics from the project's hardware recovery work"
+          />
+          <figcaption class="caption">02 / Inside an EP800 motor.</figcaption>
+        </figure>
+      </section>
+      <FooterSections />
+    </main>
+  </div>
+</Base>
+<style>
+  .fieldhero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: center;
+    padding: 76px 0 70px;
+  }
+  .intro .eyebrow {
+    margin-bottom: 24px;
+  }
+  .fieldhero h1 {
+    margin-bottom: 24px;
+  }
+  .fieldvisual {
+    min-width: 0;
+    background: #e7e9dd;
+    padding: 24px 22px 20px;
+    transform: rotate(-1deg);
+  }
+  .visualtop {
+    display: flex;
+    justify-content: space-between;
+    font: 9px monospace;
+    color: #526047;
+    margin-bottom: 20px;
+    gap: 12px;
+  }
+  .screen {
+    box-shadow: 0 12px 25px #1e322617;
+    border: 1px solid #d8dacd;
+    overflow: hidden;
+  }
+  .screen img {
+    width: 100%;
+  }
+  .rail {
+    display: flex;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-top: 1px solid var(--line);
+    font: 11px monospace;
+    color: var(--muted);
+  }
+  .rail span:before {
+    content: "↳";
+    margin-right: 14px;
+    color: var(--accent);
+  }
+  .story {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 100px;
+    align-items: center;
+  }
+  .story p {
+    max-width: 445px;
+  }
+  .story a {
+    font-size: 13px;
+  }
+  .story img {
+    width: 100%;
+    height: 300px;
+    object-fit: cover;
+    filter: saturate(0.5);
+  }
+  @media (min-width: 1000px) {
+    .fieldhero .actions {
+      flex-wrap: nowrap;
+    }
+    .fieldhero .button {
+      white-space: nowrap;
+      gap: 15px;
+      padding: 15px 17px;
+    }
+  }
+  @media (max-width: 900px) {
+    .fieldhero {
+      grid-template-columns: 1fr;
+      padding-top: 50px;
+      gap: 42px;
+    }
+    .fieldvisual {
+      max-width: 650px;
+      transform: none;
+    }
+    .story {
+      gap: 35px;
+    }
+    .rail {
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+  }
+  @media (max-width: 760px) {
+    .story {
+      grid-template-columns: 1fr;
+    }
+    .fieldhero {
+      padding-bottom: 40px;
+    }
+    .rail span {
+      width: 45%;
+      font-size: 10px;
+    }
+    .story img {
+      height: 250px;
+    }
+  }
+</style>

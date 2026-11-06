@@ -1,0 +1,24 @@
+---
+const web = "https://cranklink.plainoss.workers.dev/";
+const play =
+  "https://play.google.com/store/apps/details?id=app.plainoss.cranklink";
+interface Props {
+  compact?: boolean;
+}
+const { compact = false } = Astro.props;
+---
+
+<div class="actions">
+  <a class="button" href={web}>
+    Open web app <span aria-hidden="true">↗</span>
+  </a>
+  <a class="button secondary" href={play}>
+    Get it on Google Play <span aria-hidden="true">↗</span>
+  </a>
+</div>
+{!compact && (
+  <p class="requirements">
+    Web: Chrome or Edge on desktop / Android. &nbsp; Android app: STEPS over
+    Bluetooth LE.
+  </p>
+)}

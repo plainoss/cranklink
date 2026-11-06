@@ -1,0 +1,104 @@
+---
+import AppLinks from "./AppLinks.astro";
+import FullCompatibility from "./FullCompatibility.astro";
+import { motors } from "../lib/catalogue";
+
+const overview = motors.rows.filter((row) =>
+  ["DU-EP800-CRG", "DU-EP600", "DU-E8000"].some((model) =>
+    row[0].startsWith(model),
+  ),
+);
+const status = (value: string) =>
+  value.startsWith("Tested")
+    ? "Tested on a bike"
+    : value.startsWith("Preview")
+      ? "Preview"
+      : value;
+---
+
+<section class="section" id="compatibility">
+  <div class="sectionhead">
+    <div>
+      <p class="eyebrow">Hardware & validation</p>
+      <h2>Supported hardware.</h2>
+    </div>
+    <p>
+      Support depends on the model, firmware, connection and operation.
+      Implemented support and testing on a physical bike are listed separately.
+    </p>
+  </div>
+  <div
+    class="tablewrap"
+    tabindex="0"
+    role="region"
+    aria-label="Hardware compatibility overview"
+  >
+    <table>
+      <caption class="inline-note">
+        Selected examples — expand the full tables for other components and
+        support details.
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Drive unit</th>
+          <th scope="col">Firmware</th>
+          <th scope="col">Settings status</th>
+          <th scope="col">Recovery (CLI / USB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {overview.map((row) => (
+          <tr>
+            <th scope="row">{row[0]}</th>
+            <td>{row[1]}</td>
+            <td>
+              <span
+                class:list={["status", { good: row[3].startsWith("Tested") }]}
+              >
+                {status(row[3])}
+              </span>
+            </td>
+            <td>{row[4]}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  <FullCompatibility />
+  <p class="sectionnote">
+    <a href="https://github.com/plainoss/cranklink#supported-parts">
+      Support reference on GitHub ↗
+    </a>{" "}
+    &nbsp; · &nbsp; Di2 settings are available in the web app and CLI; hardware
+    validation is pending.
+  </p>
+</section>
+<section class="section closing">
+  <div>
+    <p class="eyebrow">Use it. Read it. Contribute.</p>
+    <h2>An open project, in progress.</h2>
+    <p>Source code, protocol notes and issue reports live on GitHub.</p>
+    <a href="https://github.com/plainoss/cranklink" class="repository-link">
+      Explore the repository ↗
+    </a>
+  </div>
+  <AppLinks compact />
+</section>
+<p class="notice">
+  Unofficial and experimental. Independent of Shimano. Writing settings or
+  firmware can permanently damage hardware and void warranties. Assist speed
+  changes may make a bike non-compliant with local law. Firmware images are not
+  bundled.{" "}
+  <a href="https://github.com/plainoss/cranklink#cranklink">
+    Read the project warnings.
+  </a>
+</p>
+<footer class="footer">
+  <span>cranklink / An independent open-source project</span>
+  <div>
+    <a href="https://github.com/plainoss/cranklink/blob/main/LICENSE">
+      MIT license
+    </a>
+    <a href="https://github.com/plainoss/cranklink/issues">Report an issue ↗</a>
+  </div>
+</footer>
