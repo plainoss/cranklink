@@ -1,0 +1,65 @@
+# Workers Builds handles production and branch previews. Validation needs no
+# Cloudflare credentials and runs for fork PRs and the merge queue as well.
+name: Validate Project Site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build and test project site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check changed paths
+        id: filter
+        run: python3 .github/scripts/check-changed-paths.py site
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.has_changes == 'true'
+        with:
+          node-version: "^22.23.4"
+          check-latest: true
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Check, test and build static site
+        if: steps.filter.outputs.has_changes == 'true'
+        working-directory: site
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+      - name: Install Chromium
+        if: steps.filter.outputs.has_changes == 'true'
+        working-directory: site
+        run: npx playwright install --with-deps chromium
+      - name: Test production site without JavaScript
+        if: steps.filter.outputs.has_changes == 'true'
+        working-directory: site
+        run: npm run test:browser
+      - uses: actions/upload-artifact@v6
+        if: failure() && steps.filter.outputs.has_changes == 'true'
+        with:
+          name: project-site-browser-results
+          path: site/test-results/
+          if-no-files-found: ignore
+      - name: Log skip summary
+        if: steps.filter.outputs.has_changes != 'true'
+        run: echo "No project site, source compatibility or image changes; skipped site validation." >> "$GITHUB_STEP_SUMMARY"

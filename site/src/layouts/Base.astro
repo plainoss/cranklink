@@ -1,0 +1,48 @@
+---
+import "../styles/global.css";
+import screenshot from "../../../docs/images/web-instrument.png";
+
+interface Props {
+  title?: string;
+  description?: string;
+  noindex?: boolean;
+}
+const {
+  title = "cranklink — Your bike. Your settings.",
+  description = "Open-source diagnostics, settings and recovery tools for Shimano STEPS and Di2. Use the web app, Android app or CLI on Linux, macOS and Windows.",
+  noindex = false,
+} = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const image = new URL(screenshot.src, Astro.site);
+const preventIndexing = noindex || process.env.SITE_NOINDEX === "1";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    {preventIndexing && <meta name="robots" content="noindex" />}
+    <meta name="theme-color" content="#f5f4ed" />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={image} />
+    <meta
+      property="og:image:alt"
+      content="The cranklink web app showing assist profiles with simulator data"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a href="#main" class="skip">
+      Skip to content
+    </a>
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,320 @@
+---
+import { motors, parts } from "../lib/catalogue";
+---
+
+<details class="full-compatibility">
+  <summary>
+    <span class="disclosure-title">
+      Full compatibility tables
+      <span class="disclosure-meta">
+        {motors.rows.length} motor families · {parts.rows.length} other
+        component groups
+      </span>
+    </span>
+  </summary>
+  <div class="expanded-matrix">
+    <p class="matrix-intro">
+      Android supports STEPS drive units over Bluetooth LE. Di2 component
+      settings are available in the web app and CLI. Bootloader recovery
+      requires the CLI and an SM-PCE02 USB adapter.
+    </p>
+    <p class="scroll-help">
+      Scroll across to see every column. Motor and component names stay visible.
+    </p>
+    <div
+      class="matrix-scroll"
+      tabindex="0"
+      role="region"
+      aria-labelledby="motor-matrix-caption"
+    >
+      <table class="matrix-table motors">
+        <caption id="motor-matrix-caption">Motors</caption>
+        <thead>
+          <tr>
+            {motors.columns.map((column) => (
+              <th scope="col">{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {motors.rows.map((row) => (
+            <tr>
+              <th scope="row">{row[0]}</th>
+              {row.slice(1).map((cell) => (
+                <td>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <dl class="matrix-key">
+      <div>
+        <dt>Tested on a bike</dt>
+        <dd>Confirmed on physical hardware.</dd>
+      </div>
+      <div>
+        <dt>Preview</dt>
+        <dd>
+          Implemented and checked against the protocol in software; physical
+          bike confirmation is in progress.
+        </dd>
+      </div>
+      <div>
+        <dt>—</dt>
+        <dd>Not applicable or not supported.</dd>
+      </div>
+    </dl>
+    <div class="matrix-footnotes">
+      <p>
+        ¹ Command line only, with <code>--allow-unverified-model</code>. Not run
+        on hardware.
+      </p>
+      <p>
+        ² DU-EP800 shares the EP800-CRG’s identity (<code>23/00</code>) and
+        firmware, so the CLI accepts it without{" "}
+        <code>--allow-unverified-model</code>. Recovery has not been run on that
+        model’s hardware.
+      </p>
+      <p>
+        E7000, E6100 and older E6000-family motors keep their factory region.
+        Available fields depend on firmware and device permissions. Recovery
+        requires an intact bootloader and your own firmware files.
+      </p>
+    </div>
+    <div
+      class="matrix-scroll"
+      tabindex="0"
+      role="region"
+      aria-labelledby="parts-matrix-caption"
+    >
+      <table class="matrix-table parts">
+        <caption id="parts-matrix-caption">
+          Other components · web app and CLI
+        </caption>
+        <thead>
+          <tr>
+            {parts.columns.map((column) => (
+              <th scope="col">{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {parts.rows.map((row) => (
+            <tr>
+              <th scope="row">{row[0]}</th>
+              {row.slice(1).map((cell) => (
+                <td>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div class="matrix-footnotes component-notes">
+      <p>
+        12-speed levers (wired and wireless) and SW-EN600 / SW-EM800 switches
+        have no settings support yet. Implemented component layouts have
+        protocol tests but have not been validated on physical hardware.
+      </p>
+      <p>
+        Tables are built from the repository README.{" "}
+        <a href="https://github.com/plainoss/cranklink#supported-parts">
+          Full source & support notes ↗
+        </a>{" "}
+        ·{" "}
+        <a href="https://github.com/plainoss/cranklink/blob/main/docs/settings.md">
+          Settings reference ↗
+        </a>
+      </p>
+    </div>
+  </div>
+</details>
+<style>
+  .full-compatibility {
+    border-block: 1px solid var(--line);
+    margin-top: 30px;
+  }
+  summary {
+    cursor: pointer;
+    padding: 24px 12px 24px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::after {
+    content: "+";
+    font: 25px monospace;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  details[open] > summary::after {
+    content: "−";
+  }
+  summary:hover .disclosure-title {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .disclosure-title {
+    font-size: 17px;
+    letter-spacing: -0.02em;
+  }
+  .disclosure-meta {
+    display: block;
+    font: 10px/1.7 monospace;
+    color: var(--muted);
+    margin-top: 8px;
+    letter-spacing: 0;
+  }
+  .expanded-matrix {
+    padding-bottom: 25px;
+  }
+  .matrix-intro {
+    max-width: 820px;
+    font-size: 13px;
+    margin: 0 0 15px;
+  }
+  .scroll-help {
+    font: 10px/1.7 monospace;
+    margin: 0 0 12px;
+  }
+  .matrix-scroll {
+    overflow: auto;
+    max-width: 100%;
+    max-height: 580px;
+    border: 1px solid var(--line);
+    isolation: isolate;
+  }
+  .matrix-scroll:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+  }
+  .matrix-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+    font-size: 12px;
+  }
+  .motors {
+    min-width: 1080px;
+  }
+  .parts {
+    min-width: 920px;
+  }
+  .matrix-table caption {
+    text-align: left;
+    padding: 15px 18px;
+    background: var(--paper);
+    color: var(--muted);
+    font: 12px/1.6 monospace;
+  }
+  .matrix-table th,
+  .matrix-table td {
+    padding: 18px;
+    vertical-align: top;
+    line-height: 1.65;
+  }
+  .matrix-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--paper);
+    z-index: 2;
+    border-top: 1px solid var(--line);
+  }
+  .matrix-table th:first-child {
+    position: sticky;
+    left: 0;
+    width: 210px;
+    background: var(--paper);
+    border-right: 1px solid var(--line);
+    z-index: 1;
+    padding-left: 18px;
+  }
+  .matrix-table thead th:first-child {
+    z-index: 3;
+  }
+  .matrix-table tbody th {
+    font-size: 12px;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .motors thead th:nth-child(2) {
+    width: 150px;
+  }
+  .motors thead th:nth-child(3) {
+    width: 300px;
+  }
+  .motors thead th:nth-child(4) {
+    width: 260px;
+  }
+  .motors thead th:nth-child(5) {
+    width: 160px;
+  }
+  .matrix-key {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 25px;
+    margin: 24px 0;
+  }
+  .matrix-key dt {
+    font: 11px monospace;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .matrix-key dd {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .matrix-footnotes {
+    padding-block: 18px;
+  }
+  .matrix-footnotes p {
+    font-size: 11px;
+    margin: 0 0 12px;
+    max-width: 950px;
+  }
+  .matrix-footnotes p:last-child {
+    margin-bottom: 0;
+  }
+  .matrix-footnotes code {
+    overflow-wrap: anywhere;
+  }
+  .component-notes {
+    padding-bottom: 0;
+  }
+  @media (max-width: 760px) {
+    .disclosure-title {
+      font-size: 16px;
+    }
+    .disclosure-meta {
+      font-size: 9px;
+    }
+    .matrix-table th:first-child {
+      width: 135px;
+      padding-left: 15px;
+    }
+    .matrix-scroll {
+      max-height: 480px;
+    }
+    .matrix-key {
+      grid-template-columns: 1fr;
+      gap: 15px;
+    }
+    .matrix-key dt {
+      margin-bottom: 4px;
+    }
+    .matrix-table th,
+    .matrix-table td {
+      padding: 15px;
+    }
+  }
+</style>

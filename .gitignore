@@ -35,6 +35,14 @@ __pycache__/
 # Wrangler local state
 web-instrument/.wrangler/
 
+# Astro project website
+site/node_modules/
+site/dist/
+site/.astro/
+site/.wrangler/
+site/test-results/
+site/playwright-report/
+
 # Android / Kotlin Multiplatform build products and local SDK configuration
 android-app/.gradle/
 android-app/.kotlin/
