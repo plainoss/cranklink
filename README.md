@@ -49,6 +49,8 @@ If connecting fails, choose **View details & logs**, then **Copy diagnostic repo
 
 Install **cranklink** from Google Play (`app.plainoss.cranklink`), Android 8.0 or later. It connects to STEPS e-bikes over Bluetooth and covers motor settings, with the same backups and checks as the web app. Demo mode lets you try it without a bike. Di2 parts and firmware flashing are web app and command line only. See the [Android app](android-app/README.md) for other ways to install it.
 
+On first launch, a short warranty and component-damage warning requires acknowledgment before continuing.
+
 ### Command line tool
 
 For recovering a motor stuck in its bootloader, and for scripting, use the [command line tool](#command-line).

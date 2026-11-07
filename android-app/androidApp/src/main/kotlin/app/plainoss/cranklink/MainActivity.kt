@@ -103,6 +103,23 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CranklinkApp(vm: AppViewModel, state: AppState) {
     val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("safety", android.content.Context.MODE_PRIVATE) }
+    var riskAccepted by remember { mutableStateOf(preferences.getBoolean("risk_accepted", false)) }
+    if (!riskAccepted) {
+        AlertDialog(
+            onDismissRequest = {},
+            icon = { Icon(Icons.Default.Warning, null, tint = Pine) },
+            title = { Text("Before you start") },
+            text = { Text("Changing bike settings may void your warranty or damage components. Proceed at your own risk.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    preferences.edit().putBoolean("risk_accepted", true).apply()
+                    riskAccepted = true
+                }) { Text("I understand") }
+            },
+        )
+        return
+    }
     val demo by vm.demo.collectAsStateWithLifecycle()
     val nearby by vm.nearby.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
