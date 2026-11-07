@@ -20,11 +20,29 @@ class AppSmokeTest {
 
     /** The demo opens on Overview; settings live one tap away in its Tuning list. */
     private fun openDemoSection(title: String) {
+        if (ui.onAllNodesWithText("I understand").fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithText("I understand").performClick()
+        }
         ui.onNodeWithText("Open demo").performScrollTo().performClick()
         // A row stays disabled until the demo's settings are read.
         val row = hasText(title) and isEnabled()
         ui.waitUntil(5_000) { ui.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
         ui.onNode(row).performScrollTo().performClick()
+    }
+
+    @Test fun startupWarningRequiresAcknowledgmentAndRemembersIt() {
+        val preferences = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSharedPreferences("safety", android.content.Context.MODE_PRIVATE)
+        assertTrue(preferences.edit().clear().commit())
+        ui.activityRule.scenario.recreate()
+        ui.onNodeWithText("Changing bike settings may void your warranty or damage components. Proceed at your own risk.")
+            .assertIsDisplayed()
+        ui.onNodeWithText("Open demo").assertDoesNotExist()
+        ui.onNodeWithText("I understand").assertIsDisplayed().performClick()
+        ui.onNodeWithText("Open demo").assertExists()
+        ui.activityRule.scenario.recreate()
+        ui.onNodeWithText("Before you start").assertDoesNotExist()
+        ui.onNodeWithText("Open demo").assertExists()
     }
 
     @Test fun systemBackConfirmsDisconnectWithoutLosingPendingEdits() {

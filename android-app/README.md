@@ -46,6 +46,8 @@ Signed release bundles are built by `tools/android-release/build.sh` and publish
 
 ## Use
 
+On first launch, acknowledge the short warning that changing bike settings may void your warranty or damage components. The app remembers acknowledgment until its data is cleared.
+
 1. Close other apps connected to the bike and activate its Bluetooth connection window. See the [gateway connection instructions](../docs/bluetooth.md#connection-mode).
 2. Grant the app's requested Bluetooth permissions, scan, choose the bike, and enter its six-digit E-TUBE passkey. Older Android versions also require location permission for BLE scanning.
 3. Connect and let the app authenticate, identify the drive unit, and read its supported settings. Model, serial, and firmware versions appear with the tuning controls.
