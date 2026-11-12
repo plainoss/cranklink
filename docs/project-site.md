@@ -22,8 +22,8 @@ The checked-in [Wrangler configuration](../site/wrangler.jsonc) uses:
 | --- | --- |
 | Account | `Mb@w69b.com's Account` (`23c1f13b65435621ea7d33fcc009b521`), which owns the `plainoss.app` zone |
 | Worker | `cranklink-site` |
-| Production URL | `https://cranklink.plainoss.app/` (Worker custom domain) |
-| workers.dev URL | `https://cranklink-site.mb-23c.workers.dev/` |
+| Production URL | `https://cranklink.plainoss.app/` (custom domain declared in `routes`) |
+| workers.dev URL | `https://cranklink-site.mb-23c.workers.dev/` (kept enabled, with preview URLs) |
 | Static assets | `site/dist/` |
 | HTML routing | Force trailing slashes; serve `404.html` for missing pages |
 | Server adapter / Worker script | None |
@@ -48,7 +48,7 @@ npm run deploy:preview -- --name astro-project-site
 
 Use the URL returned by Wrangler. Rebuild without `SITE_NOINDEX=1` before a production deployment. Keep the canonical URL pointed at the intended production origin even for review previews.
 
-On 2026-11-12 the Worker was created in the `plainoss.app` account by a manual `wrangler deploy` of `main` built with `SITE_URL=https://cranklink.plainoss.app`. Workers Builds in that account reuses its existing Cloudflare GitHub authorization for the `plainoss` organization and deploys from `main` after merge.
+On 2026-11-12 the Worker was created in the `plainoss.app` account by a manual `wrangler deploy` of `main` built with `SITE_URL=https://cranklink.plainoss.app`, which also attached the custom domain. Workers Builds in that account reuses its existing Cloudflare GitHub authorization for the `plainoss` organization and deploys from `main` after merge.
 
 ## Automatic production and preview builds
 
