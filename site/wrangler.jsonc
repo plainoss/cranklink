@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "cranklink-site",
-  "account_id": "23c1f13b65435621ea7d33fcc009b521",
+  "account_id": "60d502e306ecf0bdad0bb3719d83b30c",
   "compatibility_date": "2026-11-05",
   "routes": [{ "pattern": "cranklink.plainoss.app", "custom_domain": true }],
   // Keep the workers.dev and branch preview URLs alongside the custom domain.

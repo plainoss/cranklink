@@ -21,6 +21,6 @@ The site is served at `https://cranklink.plainoss.app/`, the default `SITE_URL`.
 
 The Worker name, account and static routing are in `wrangler.jsonc`. `public/_headers` supplies a script-free CSP and immutable caching for hashed assets. It does not add the browser app's COOP/COEP requirements to this site. `404.astro` is served as a real 404 by Workers static assets.
 
-The Worker lives in the Cloudflare account that owns the `plainoss.app` zone, with `cranklink.plainoss.app` as its custom domain. Cloudflare Workers Builds is connected to `plainoss/cranklink`: `main` is the production branch, and other branches build previews. Both use `site/` as the root and watch the site, root README and source images. Preview builds set `SITE_NOINDEX=1`.
+The Worker lives in the `plainoss` Cloudflare account, which also owns the `plainoss.app` zone, with `cranklink.plainoss.app` as its custom domain. Cloudflare Workers Builds is connected to `plainoss/cranklink`: `main` is the production branch, and other branches build previews. Both use `site/` as the root and watch the site, root README and source images. Preview builds set `SITE_NOINDEX=1`.
 
 See [the implementation and hosting plan](../docs/project-site.md) for CI, Cloudflare Workers Builds and deployment setup. `cloudflare-builds.json` records the desired dashboard/API settings; it is a setup reference, not a file Wrangler reads automatically.
