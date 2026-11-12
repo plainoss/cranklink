@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "cranklink-site",
-  "account_id": "60d502e306ecf0bdad0bb3719d83b30c",
+  "account_id": "23c1f13b65435621ea7d33fcc009b521",
   "compatibility_date": "2026-11-05",
   // Entirely static Astro output. No Worker script or server adapter is needed.
   "assets": {

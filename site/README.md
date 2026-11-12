@@ -17,10 +17,10 @@ Browser tests run with JavaScript disabled on desktop and phone viewports. Set `
 
 The complete motor and other-component tables are imported from the root `README.md` at build time. `src/lib/compatibility.ts` validates their headings, columns and row shape; source-format changes fail the build rather than silently producing stale or mislabelled data. Images are imported from `docs/images/` and optimized by Astro. No copied compatibility JSON, external fonts, client runtime, or accounts are required.
 
-Set `SITE_URL=https://your-domain.example` when building for a custom domain. This controls canonical, Open Graph, sitemap and robots URLs. It must be an HTTP(S) origin with no path, query or fragment. `SITE_NOINDEX=1` marks review builds noindex and disallows crawling; production defaults to indexing.
+The site is served at `https://cranklink.plainoss.app/`, the default `SITE_URL`. Override `SITE_URL` to build for another origin. It controls canonical, Open Graph, sitemap and robots URLs. It must be an HTTP(S) origin with no path, query or fragment. `SITE_NOINDEX=1` marks review builds noindex and disallows crawling; production defaults to indexing.
 
 The Worker name, account and static routing are in `wrangler.jsonc`. `public/_headers` supplies a script-free CSP and immutable caching for hashed assets. It does not add the browser app's COOP/COEP requirements to this site. `404.astro` is served as a real 404 by Workers static assets.
 
-Cloudflare Workers Builds is connected to `plainoss/cranklink`: `main` is the production branch, and other branches build previews. Both use `site/` as the root and watch the site, root README and source images. Preview builds set `SITE_NOINDEX=1`. The initial Worker version was uploaded without activating a production deployment; production publication awaits the reviewed merge.
+The Worker lives in the Cloudflare account that owns the `plainoss.app` zone, with `cranklink.plainoss.app` as its custom domain. Cloudflare Workers Builds is connected to `plainoss/cranklink`: `main` is the production branch, and other branches build previews. Both use `site/` as the root and watch the site, root README and source images. Preview builds set `SITE_NOINDEX=1`.
 
 See [the implementation and hosting plan](../docs/project-site.md) for CI, Cloudflare Workers Builds and deployment setup. `cloudflare-builds.json` records the desired dashboard/API settings; it is a setup reference, not a file Wrangler reads automatically.

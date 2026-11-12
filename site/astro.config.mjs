@@ -1,8 +1,6 @@
 import { defineConfig } from "astro/config";
 
-const site = new URL(
-  process.env.SITE_URL || "https://cranklink-site.plainoss.workers.dev",
-);
+const site = new URL(process.env.SITE_URL || "https://cranklink.plainoss.app");
 if (
   !["https:", "http:"].includes(site.protocol) ||
   site.pathname !== "/" ||
