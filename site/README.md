@@ -1,6 +1,6 @@
 # Cranklink project website
 
-The static Astro website uses the reviewed Field notes design: “Your bike. Your settings.”, early web app and Google Play links, supported settings, platform choice, source modification, recovery, and expandable hardware compatibility. It is separate from the browser application in `web-instrument/`.
+The static Astro website uses the Field notes design. The homepage leads with use: an assist speed and region picker, Bluetooth versus wired connection, the other settings by group, safety notes and expandable hardware compatibility, with firmware and command line examples below the fold. The pickers and tabs are radio inputs styled with CSS `:has()`, so they work without JavaScript; homepage content is in `src/lib/home.ts`. It is separate from the browser application in `web-instrument/`.
 
 From `site/`, with Node.js 22.23.4 or newer:
 
