@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("apps appear before the screenshot and compatibility opens with the keyboard", async ({
+test("speed picker, connection and settings views work without JavaScript", async ({
   page,
 }) => {
   const response = await page.goto("/");
@@ -8,9 +8,9 @@ test("apps appear before the screenshot and compatibility opens with the keyboar
   expect(response?.headers()["content-security-policy"]).toContain(
     "default-src 'none'",
   );
-  const hero = page.locator(".fieldhero");
+  const hero = page.locator(".hero");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Your bike.Your settings.",
+    "Raise your e-bike's assist speed. From your phone. Free.",
   );
   await expect(
     hero.getByRole("link", { name: "Open web app" }),
@@ -21,16 +21,37 @@ test("apps appear before the screenshot and compatibility opens with the keyboar
     "href",
     "https://play.google.com/store/apps/details?id=app.plainoss.cranklink",
   );
-  expect(
-    await hero
-      .getByRole("link", { name: "Get it on Google Play" })
-      .evaluate((el) =>
-        Boolean(
-          el.compareDocumentPosition(document.querySelector(".fieldvisual")!) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-        ),
-      ),
-  ).toBe(true);
+
+  const picker = page.locator("#speed");
+  await expect(picker.getByText("45", { exact: true })).toBeVisible();
+  await picker.getByRole("radio", { name: "EP8", exact: true }).check();
+  await expect(picker.getByText("45", { exact: true })).toBeHidden();
+  await expect(picker.getByText("km/h assist in United States")).toHaveCount(4);
+  await picker.getByRole("radio", { name: "Europe · 25" }).check();
+  await expect(picker.locator(".result:visible")).toHaveCount(1);
+  await expect(picker.locator(".result:visible")).toContainText(
+    "25km/h assist in Europe",
+  );
+
+  const connect = page.locator("#connect");
+  await expect(connect.getByText("Nothing else to buy")).toBeVisible();
+  await connect.getByRole("radio", { name: "Wired (SM-PCE02)" }).check();
+  await expect(connect.getByText("Nothing else to buy")).toBeHidden();
+  await expect(
+    connect.getByText("A Shimano SM-PCE02 USB adapter"),
+  ).toBeVisible();
+
+  const settings = page.locator("#settings");
+  await settings.getByRole("radio", { name: /^Lights/ }).check();
+  await expect(
+    settings.getByRole("cell", { name: "1.35 to 27 W" }),
+  ).toBeVisible();
+
+  const cli = page.locator("#cli");
+  await cli
+    .getByRole("radio", { name: "Recover a bricked motor (USB)" })
+    .check();
+  await expect(cli.getByText("--target dcas --recovery")).toBeVisible();
 
   const disclosure = page.locator("details.full-compatibility");
   const summary = disclosure.locator("summary");
